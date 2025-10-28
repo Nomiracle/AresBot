@@ -19,6 +19,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
 from cryptography.fernet import Fernet
 import logging
+import sys
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('binance').setLevel(logging.WARNING)
@@ -122,8 +123,6 @@ def init_db(recreate=True):
     conn.close()
     print(f"[{datetime.now().isoformat()}] ✅ 数据库初始化完成：{DB_FILE}")
 
-# 根据你的要求，不保留当前数据库 -> 重新创建
-init_db(recreate=True)
 
 # ----------------------------
 # HTML 模板（在原模板基础上加入新项）
@@ -1226,13 +1225,35 @@ def change_password():
 # 启动应用
 # ----------------------------
 if __name__ == '__main__':
-    print("=" * 60)
-    print("🔒 AresBot v3.0 - 启动中...")
-    print("=" * 60)
-    print("🌐 访问地址: http://localhost:5000")
-    print("👤 默认账户: admin / admin123")
-    print("=" * 60)
-    print("✅ 数据库已重建（aresbot.db），包含 sell_offset_percent 与 simulate_trading 字段")
-    print("✅ 默认 simulate_trading = 1（模拟模式）")
-    print("=" * 60)
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # 检查命令行参数，如果包含 '--recreate-db'，则设置为 True
+    RECREATE_DB_ON_START = '--recreate-db' in sys.argv
+    
+    # 仅在主进程中执行数据库初始化和打印启动信息
+    # sys.argv 检查是判断当前是否是子进程（重载器子进程会添加一个额外的参数）
+    # 或者可以使用 Flask 提供的更标准的方法，但在 init_db 这种全局操作上，这种方式简单有效
+    # 另一种更严格的检查是 if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+    
+    if len(sys.argv) == 1 or (len(sys.argv) == 2 and sys.argv[1] == '--recreate-db'):
+        
+        # 1. 数据库初始化
+        init_db(recreate=RECREATE_DB_ON_START)
+
+        # 2. 打印启动信息
+        print("=" * 60)
+        print("🔒 AresBot v3.0 - 启动中...")
+        print("=" * 60)
+        print("🌐 访问地址: http://localhost:5000")
+        print("👤 默认账户: admin / admin123")
+        print("=" * 60)
+        
+        if RECREATE_DB_ON_START:
+            print("✅ 数据库已重建（aresbot.db），包含 sell_offset_percent 与 simulate_trading 字段")
+        else:
+            print(f"ℹ️ 数据库 (aresbot.db) 已加载或创建，**旧数据被保留**。")
+            print("ℹ️ 如需重建数据库，请在命令行中增加 '--recreate-db' 标志。")
+            
+        print("✅ 默认 simulate_trading = 1（模拟模式）")
+        print("=" * 60)
+
+    # 启动 Flask 应用
+    app.run(debug=False, host='0.0.0.0', port=5000)
