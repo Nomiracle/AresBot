@@ -852,89 +852,119 @@ user_bots = {}  # username -> {'running':bool, 'thread':Thread, 'client':Client,
 # ----------------------------
 # 交易主循环
 # ----------------------------
+
 def trading_loop(username):
     bot_data = user_bots.get(username)
     if not bot_data:
         return
 
     print(f"[{datetime.now().isoformat()}] ▶️ 交易循环已启动 (user={username})")
+    
+    # 假设 DB_FILE, user_bots, get_user_id, client, BinanceAPIException, time, sqlite3, datetime 已在别处导入和定义
+
     while bot_data['running']:
         try:
             config = bot_data['config']
             client = bot_data['client']
+            user_id = get_user_id(username)
 
-            # 获取当前价格
+            # ---------------------------
+            # 1. 获取当前价格并计算目标价
+            # ---------------------------
             ticker = client.get_symbol_ticker(symbol=config['symbol'])
             current_price = float(ticker['price'])
             offset = config['offset_percent'] / 100.0
             target_price = current_price * (1 + offset)
-            # 保留两位小数（根据你原代码）
+            # 保留两位小数
             target_price = round(target_price, 2)
 
             bot_data['current_price'] = current_price
             bot_data['target_price'] = target_price
 
-            print(f"[{datetime.now().isoformat()}] {username} - {config['symbol']} - 当前价: ${current_price} -> 计划挂买价: ${target_price}")
+                        # ----------------------------------------
+            # 2. 下单开关 (可根据配置或外部条件设置)
+            # ----------------------------------------
+            # 假设 config 中有一个开关来控制是否允许买入和重新挂单
+            is_buy_enabled = (config.get('simulate_trading', 1) != 1) 
 
-            user_id = get_user_id(username)
+            # 关键日志：价格信息
+            print(f"[{datetime.now().isoformat()}] {username} - {config['symbol']} - 当前价: ${current_price} -> 计划挂买价: ${target_price}. 是否可以下单: {is_buy_enabled}")
 
-            # ----------------------------
-            # 下买单（根据 simulate_trading 标志）
-            # 我们在每个循环尝试一次下买单（根据策略），真实策略可以改为更复杂的触发条件
-            # ----------------------------
-            if config.get('simulate_trading', 1) == 1:
-                # 模拟模式：立即视为买单已成交（可改为 PLACED -> FILLED 模拟流程）
-                buy_order_id = f"SIM_BUY_{int(time.time()*1000)}"
-                buy_price = target_price
-                # 插入 BUY 已成交记录
-                conn = sqlite3.connect(DB_FILE)
-                c = conn.cursor()
-                c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, timestamp)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                          (user_id, config['symbol'], str(buy_price), str(config['quantity']),
-                           'BUY', 'FILLED', buy_order_id, datetime.now().isoformat()))
-                conn.commit()
-                conn.close()
-                print(f"[{datetime.now().isoformat()}] ✅ 模拟买单已记录 (user={username}, price={buy_price}, qty={config['quantity']}, order_id={buy_order_id})")
-                print(f"[{datetime.now().isoformat()}] ℹ️ 模拟买单视为成交，准备挂卖单...")
 
-                # 计算卖单价格并挂卖单（模拟）
-                sell_offset = config.get('sell_offset_percent', 0.5) / 100.0
-                sell_price = round(buy_price * (1 + sell_offset), 2)
-                sell_order_id = f"SIM_SELL_{int(time.time()*1000)}"
-                conn = sqlite3.connect(DB_FILE)
-                c = conn.cursor()
-                c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, timestamp)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                          (user_id, config['symbol'], str(sell_price), str(config['quantity']),
-                           'SELL', 'PLACED', sell_order_id, datetime.now().isoformat()))
-                conn.commit()
-                conn.close()
-                print(f"[{datetime.now().isoformat()}] ✅ 模拟卖单已挂 (user={username}, price={sell_price}, qty={config['quantity']}, order_id={sell_order_id})")
-                print(f"[{datetime.now().isoformat()}] ✅ 订单记录已保存到 DB (user={username})")
+            
 
-            else:
-                # 真实交易模式：尝试下限价买单（GTC）
-                try:
-                    buy_price_str = f"{target_price:.2f}"
-                    print(f"[{datetime.now().isoformat()}] ℹ️ 真实下单 - 尝试下限价买单 (price={buy_price_str}, qty={config['quantity']})")
+            # ----------------------------------------
+            # 真实交易模式：检查、取消、重新挂单逻辑
+            # ----------------------------------------
+
+            # 2.1 检查并取消所有未完成的挂单
+            try:
+                open_orders = client.get_open_orders(symbol=config['symbol'])
+                
+                if open_orders:
+                    # 关键日志：发现挂单
+                    open_ids = ', '.join([str(o['orderId']) for o in open_orders])
+                    print(f"[{datetime.now().isoformat()}] ⚠️ [CHECK] 发现 {len(open_orders)} 笔未完成订单 (ID: {open_ids})，准备**取消并重新挂单**。")
+
+                    for order in open_orders:
+                        try:
+                            client.cancel_order(symbol=config['symbol'], orderId=order['orderId'])
+                            # 关键日志：取消成功
+                            print(f"[{datetime.now().isoformat()}] ✅ [CANCEL] 成功取消订单 ID: {order['orderId']}")
+                            
+                            # 移除 pending_buys 中对应的订单（如果在列表中）
+                            bot_data['pending_buys'] = [
+                                p for p in bot_data.get('pending_buys', []) 
+                                if p['order_id'] != str(order['orderId'])
+                            ]
+                            
+                        except BinanceAPIException as e:
+                            # 关键日志：取消失败
+                            print(f"[{datetime.now().isoformat()}] ❌ [CANCEL ERR] 取消订单 ID: {order['orderId']} 异常: {e}")
+                        except Exception as e:
+                            print(f"[{datetime.now().isoformat()}] ❌ [CANCEL ERR] 取消订单 ID: {order['orderId']} 错误: {e}")
+                else:
+                    # 关键日志：未发现挂单
+                    print(f"[{datetime.now().isoformat()}] ✅ [CHECK] 未发现未完成订单，准备执行**限价买单**。")
+
+            except BinanceAPIException as e:
+                print(f"[{datetime.now().isoformat()}] ❌ [CHECK ERR] 查询未完成订单异常: {e}")
+                # 如果查询失败，为安全起见，本次不执行下单
+                time.sleep(config.get('interval', 1))
+                continue
+            except Exception as e:
+                print(f"[{datetime.now().isoformat()}] ❌ [CHECK ERR] 查询未完成订单错误: {e}")
+                time.sleep(config.get('interval', 1))
+                continue
+
+
+            # 2.2 挂出新的限价买单（统一执行一次下单）
+            try:
+                buy_price_str = f"{target_price:.2f}"
+                # 关键日志：新下单信息
+                print(f"[{datetime.now().isoformat()}] ➡️ [EXECUTE] 尝试下新限价买单: 方向=BUY, 价格={buy_price_str}, 数量={config['quantity']}")
+                
+                if is_buy_enabled:
                     order = client.order_limit_buy(
                         symbol=config['symbol'],
                         quantity=config['quantity'],
                         price=buy_price_str,
                         timeInForce='GTC'
                     )
-                    # orderId returned by binance is order['orderId']
                     real_order_id = str(order.get('orderId') or order.get('orderId'))
+                    # 数据库操作：插入新订单记录
                     conn = sqlite3.connect(DB_FILE)
                     c = conn.cursor()
                     c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, timestamp)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                              (user_id, config['symbol'], buy_price_str, str(config['quantity']),
-                               'BUY', 'PLACED', real_order_id, datetime.now().isoformat()))
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                                (user_id, config['symbol'], buy_price_str, str(config['quantity']),
+                                'BUY', 'PLACED', real_order_id, datetime.now().isoformat()))
                     conn.commit()
                     conn.close()
-                    print(f"[{datetime.now().isoformat()}] ✅ 真实买单已下 (order_id={real_order_id})，已写入 DB，等待撮合...")
+                    
+                    # 关键日志：下单成功
+                    print(f"[{datetime.now().isoformat()}] ✅ [SUCCESS] 真实买单已下。**新订单ID={real_order_id}**，已写入 DB，等待撮合...")
+                    
                     # 加入 pending buys 列表以便轮询检查成交状态
                     bot_data.setdefault('pending_buys', []).append({
                         'order_id': real_order_id,
@@ -943,31 +973,41 @@ def trading_loop(username):
                         'symbol': config['symbol'],
                         'user_id': user_id
                     })
-                except BinanceAPIException as e:
-                    print(f"[{datetime.now().isoformat()}] ❌ Binance 下单异常: {e}")
-                except Exception as e:
-                    print(f"[{datetime.now().isoformat()}] ❌ 下单错误: {e}")
+                else:
+                    # 关键日志：跳过下单
+                    print(f"[{datetime.now().isoformat()}] ⏸️ [SWITCH OFF] 下单逻辑被禁用 (enable_buy_logic=False)，跳过本次挂单操作。")
+
+            except BinanceAPIException as e:
+                # 关键日志：下单失败
+                print(f"[{datetime.now().isoformat()}] ❌ [FAILURE] Binance 下单异常: {e} (Symbol: {config['symbol']})")
+            except Exception as e:
+                # 关键日志：下单失败
+                print(f"[{datetime.now().isoformat()}] ❌ [FAILURE] 下单错误: {e}")
+
 
             # ----------------------------
-            # 处理 pending_buys：轮询订单状态，若成交则挂卖单
+            # 3. 处理 pending_buys：轮询订单状态，若成交则挂卖单（逻辑不变）
             # ----------------------------
             pending = bot_data.get('pending_buys', [])
             if pending:
                 remaining = []
                 for pb in pending:
                     try:
-                        # 询问币安订单状态
                         order_info = client.get_order(symbol=pb['symbol'], orderId=int(pb['order_id']))
                         status = order_info.get('status')
-                        print(f"[{datetime.now().isoformat()}] ℹ️ 轮询订单 {pb['order_id']} 状态: {status}")
+                        
+                        # 关键日志：轮询状态
+                        print(f"[{datetime.now().isoformat()}] 🔄 [POLL] 轮询订单 {pb['order_id']} 状态: {status}")
+                        
                         if status == 'FILLED':
+                            # ... (成交后挂卖单的逻辑保持不变) ...
                             buy_price = float(order_info.get('price')) if order_info.get('price') else pb['price']
-                            # 如果 price 字段为空（有时限价订单返回空），使用我们记录的 pb['price']
                             if not buy_price:
                                 buy_price = pb['price']
-                            # 计算卖单价格
+                            
                             sell_offset = config.get('sell_offset_percent', 0.5) / 100.0
                             sell_price = round(buy_price * (1 + sell_offset), 2)
+                            
                             try:
                                 # 挂卖单
                                 sell_order = client.order_limit_sell(
@@ -977,31 +1017,32 @@ def trading_loop(username):
                                     timeInForce='GTC'
                                 )
                                 sell_order_id = str(sell_order.get('orderId'))
+                                
+                                # 数据库更新买单状态和插入卖单记录
                                 conn = sqlite3.connect(DB_FILE)
                                 c = conn.cursor()
-                                # 插入卖单记录
                                 c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, timestamp)
                                              VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                                           (pb['user_id'], pb['symbol'], str(sell_price), str(pb['quantity']),
                                            'SELL', 'PLACED', sell_order_id, datetime.now().isoformat()))
-                                # 更新买单状态为 FILLED（防止重复处理）
                                 c.execute("""UPDATE orders SET status=? WHERE order_id=?""", ('FILLED', pb['order_id']))
                                 conn.commit()
                                 conn.close()
-                                print(f"[{datetime.now().isoformat()}] ✅ 买单 {pb['order_id']} 已成交，自动挂卖单 {sell_order_id} @ {sell_price}")
+                                
+                                # 关键日志：卖单挂单成功
+                                print(f"[{datetime.now().isoformat()}] ✅ [FILLED] 买单 {pb['order_id']} 已成交，自动挂卖单 **{sell_order_id}** @ {sell_price}")
                             except BinanceAPIException as e:
-                                print(f"[{datetime.now().isoformat()}] ❌ 卖单下单异常: {e}")
+                                print(f"[{datetime.now().isoformat()}] ❌ [SELL ERR] 卖单下单异常: {e}")
                             except Exception as e:
-                                print(f"[{datetime.now().isoformat()}] ❌ 卖单下单错误: {e}")
+                                print(f"[{datetime.now().isoformat()}] ❌ [SELL ERR] 卖单下单错误: {e}")
                         else:
                             # 未成交，保留继续轮询
                             remaining.append(pb)
                     except BinanceAPIException as e:
-                        print(f"[{datetime.now().isoformat()}] ❌ 查询订单 {pb['order_id']} 状态异常: {e}")
-                        # 在很多异常情况下，我们仍然保留该 pending，等待下一次轮询
+                        print(f"[{datetime.now().isoformat()}] ❌ [POLL ERR] 查询订单 {pb['order_id']} 状态异常: {e}")
                         remaining.append(pb)
                     except Exception as e:
-                        print(f"[{datetime.now().isoformat()}] ❌ 轮询订单错误: {e}")
+                        print(f"[{datetime.now().isoformat()}] ❌ [POLL ERR] 轮询订单错误: {e}")
                         remaining.append(pb)
 
                 bot_data['pending_buys'] = remaining
@@ -1010,8 +1051,8 @@ def trading_loop(username):
             time.sleep(config.get('interval', 1))
 
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ 交易循环主流程错误: {e}")
-            # 防止 tight-loop 错误导致高 CPU，稍微休眠
+            # 关键日志：主循环错误
+            print(f"[{datetime.now().isoformat()}] ❌ [LOOP ERR] 交易循环主流程错误: {e}")
             time.sleep(1)
 
     print(f"[{datetime.now().isoformat()}] ◼️ 交易循环已停止 (user={username})")
