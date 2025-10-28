@@ -1,6 +1,10 @@
 """
-AresBot - 币安自动交易机器人
-加密存储版本 - Python 3.12.6
+AresBot - 币安自动交易机器人 v3.0
+- 重建数据库（aresbot.db 会被删除并重新创建）
+- 支持 sell_offset_percent 与 simulate_trading 标志位（默认 simulate_trading = 1）
+- 买单成交后自动挂卖单（卖单价格 = 买单价格 * (1 + sell_offset_percent/100)）
+- 模拟/真实交易通过标志位区分
+- 关键日志输出
 """
 
 from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
@@ -14,17 +18,20 @@ from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
 from cryptography.fernet import Fernet
-import base64
-from hashlib import sha256
+import logging
+logging.getLogger('werkzeug').setLevel(logging.ERROR)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('binance').setLevel(logging.WARNING)
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# 加密密钥管理
+# ----------------------------
+# 加密密钥管理 (Fernet)
+# ----------------------------
 ENCRYPTION_KEY_FILE = 'encryption.key'
 
 def get_or_create_encryption_key():
-    """获取或创建加密密钥"""
     if os.path.exists(ENCRYPTION_KEY_FILE):
         with open(ENCRYPTION_KEY_FILE, 'rb') as f:
             return f.read()
@@ -38,13 +45,11 @@ ENCRYPTION_KEY = get_or_create_encryption_key()
 cipher_suite = Fernet(ENCRYPTION_KEY)
 
 def encrypt_data(data):
-    """加密数据"""
     if data is None:
         return None
     return cipher_suite.encrypt(data.encode()).decode()
 
 def decrypt_data(encrypted_data):
-    """解密数据"""
     if encrypted_data is None:
         return None
     try:
@@ -52,22 +57,31 @@ def decrypt_data(encrypted_data):
     except:
         return None
 
-# 全局变量 - 存储每个用户的运行状态
-user_bots = {}  # {username: {'running': bool, 'thread': Thread, 'client': Client, 'config': dict}}
+# ----------------------------
+# 数据库初始化（重建数据库）
+# ----------------------------
+DB_FILE = 'aresbot.db'
 
-# 数据库初始化
-def init_db():
-    conn = sqlite3.connect('aresbot.db')
+def init_db(recreate=True):
+    # 如果用户选择不保留当前数据库，这里会删除并新建
+    if recreate and os.path.exists(DB_FILE):
+        try:
+            os.remove(DB_FILE)
+            print(f"[{datetime.now().isoformat()}] ✅ 旧数据库 {DB_FILE} 已删除，准备重建。")
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ 无法删除旧数据库: {e}")
+
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    
+
     # 用户表
     c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                  username TEXT UNIQUE NOT NULL, 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  username TEXT UNIQUE NOT NULL,
                   password TEXT NOT NULL,
                   created_at TEXT NOT NULL)''')
-    
-    # 用户配置表（加密存储）
+
+    # 用户配置表（加密存储） - 新增 sell_offset_percent 与 simulate_trading
     c.execute('''CREATE TABLE IF NOT EXISTS user_configs
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   user_id INTEGER NOT NULL,
@@ -75,12 +89,14 @@ def init_db():
                   api_secret TEXT NOT NULL,
                   symbol TEXT NOT NULL,
                   offset_percent REAL NOT NULL,
+                  sell_offset_percent REAL NOT NULL DEFAULT 0.5,
                   quantity REAL NOT NULL,
                   interval INTEGER NOT NULL,
                   testnet INTEGER DEFAULT 1,
+                  simulate_trading INTEGER DEFAULT 1,
                   updated_at TEXT NOT NULL,
                   FOREIGN KEY (user_id) REFERENCES users(id))''')
-    
+
     # 订单表（加密存储敏感信息）
     c.execute('''CREATE TABLE IF NOT EXISTS orders
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,20 +109,25 @@ def init_db():
                   order_id TEXT,
                   timestamp TEXT NOT NULL,
                   FOREIGN KEY (user_id) REFERENCES users(id))''')
-    
-    # 创建默认管理员账户
+
+    # 创建默认管理员账户（如果不存在）
     try:
         c.execute("INSERT INTO users (username, password, created_at) VALUES (?, ?, ?)",
                   ('admin', generate_password_hash('admin123'), datetime.now().isoformat()))
         conn.commit()
+        print(f"[{datetime.now().isoformat()}] ✅ 默认 admin 账号已创建（admin/admin123）")
     except sqlite3.IntegrityError:
         pass
-    
+
     conn.close()
+    print(f"[{datetime.now().isoformat()}] ✅ 数据库初始化完成：{DB_FILE}")
 
-init_db()
+# 根据你的要求，不保留当前数据库 -> 重新创建
+init_db(recreate=True)
 
-# HTML模板
+# ----------------------------
+# HTML 模板（在原模板基础上加入新项）
+# ----------------------------
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html>
@@ -281,7 +302,7 @@ HTML_TEMPLATE = '''
         <div class="header">
             <div>
                 <h1>⚔️ AresBot 控制台 <span class="security-badge">🔒 加密存储</span></h1>
-                <p class="subtitle">币安自动交易机器人 v2.0 - 所有数据均已加密</p>
+                <p class="subtitle">币安自动交易机器人 v3.0 - 默认模拟模式 (simulate_trading=1)</p>
             </div>
             <div class="user-info">
                 <span>👤 {{ username }}</span>
@@ -290,7 +311,7 @@ HTML_TEMPLATE = '''
         </div>
         
         <div class="warning">
-            ⚠️ <strong>风险提示：</strong>自动交易存在风险，请谨慎设置参数。建议先在测试网络测试。
+            ⚠️ <strong>风险提示：</strong>自动交易存在风险，请谨慎设置参数。建议先在测试网络或模拟模式下测试。
         </div>
         
         <div id="status" class="status stopped">
@@ -337,6 +358,10 @@ HTML_TEMPLATE = '''
                     <input type="number" id="offsetPercent" value="-0.1" step="0.01">
                 </div>
                 <div class="input-group">
+                    <label>卖单加价百分比 (%)</label>
+                    <input type="number" id="sellOffsetPercent" value="0.5" step="0.01">
+                </div>
+                <div class="input-group">
                     <label>购买数量</label>
                     <input type="number" id="quantity" value="0.001" step="0.0001">
                 </div>
@@ -349,6 +374,13 @@ HTML_TEMPLATE = '''
                     <select id="testnet">
                         <option value="1">测试网络</option>
                         <option value="0">生产环境</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>交易模式</label>
+                    <select id="simulateTrading">
+                        <option value="1">模拟交易（默认）</option>
+                        <option value="0">真实交易</option>
                     </select>
                 </div>
             </div>
@@ -433,9 +465,11 @@ HTML_TEMPLATE = '''
                 api_secret: document.getElementById('apiSecret').value,
                 symbol: document.getElementById('symbol').value,
                 offset_percent: parseFloat(document.getElementById('offsetPercent').value),
+                sell_offset_percent: parseFloat(document.getElementById('sellOffsetPercent').value),
                 quantity: parseFloat(document.getElementById('quantity').value),
                 interval: parseInt(document.getElementById('interval').value),
-                testnet: parseInt(document.getElementById('testnet').value)
+                testnet: parseInt(document.getElementById('testnet').value),
+                simulate_trading: parseInt(document.getElementById('simulateTrading').value)
             };
             
             if(!config.api_key || !config.api_secret) {
@@ -470,9 +504,11 @@ HTML_TEMPLATE = '''
                 api_secret: document.getElementById('apiSecret').value,
                 symbol: document.getElementById('symbol').value,
                 offset_percent: parseFloat(document.getElementById('offsetPercent').value),
+                sell_offset_percent: parseFloat(document.getElementById('sellOffsetPercent').value),
                 quantity: parseFloat(document.getElementById('quantity').value),
                 interval: parseInt(document.getElementById('interval').value),
-                testnet: parseInt(document.getElementById('testnet').value)
+                testnet: parseInt(document.getElementById('testnet').value),
+                simulate_trading: parseInt(document.getElementById('simulateTrading').value)
             };
             
             if(!config.api_key || !config.api_secret) {
@@ -498,9 +534,11 @@ HTML_TEMPLATE = '''
                         document.getElementById('apiSecret').value = data.config.api_secret || '';
                         document.getElementById('symbol').value = data.config.symbol;
                         document.getElementById('offsetPercent').value = data.config.offset_percent;
+                        document.getElementById('sellOffsetPercent').value = data.config.sell_offset_percent || 0.5;
                         document.getElementById('quantity').value = data.config.quantity;
                         document.getElementById('interval').value = data.config.interval;
                         document.getElementById('testnet').value = data.config.testnet;
+                        document.getElementById('simulateTrading').value = data.config.simulate_trading;
                         alert('配置加载成功！');
                     } else {
                         alert(data.message);
@@ -520,7 +558,8 @@ HTML_TEMPLATE = '''
                             <div class="order-item">
                                 <strong>${order.symbol}</strong> - ${order.side}<br>
                                 价格: $${order.price} | 数量: ${order.quantity}<br>
-                                状态: ${order.status} | 时间: ${order.timestamp}
+                                状态: ${order.status} | 时间: ${order.timestamp}<br>
+                                订单ID: ${order.order_id || '-'}
                             </div>
                         `).join('');
                     }
@@ -639,10 +678,11 @@ LOGIN_TEMPLATE = '''
 </html>
 '''
 
-# 数据库操作函数
+# ----------------------------
+# DB helper functions
+# ----------------------------
 def get_user_id(username):
-    """获取用户ID"""
-    conn = sqlite3.connect('aresbot.db')
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT id FROM users WHERE username=?", (username,))
     result = c.fetchone()
@@ -650,112 +690,246 @@ def get_user_id(username):
     return result[0] if result else None
 
 def save_user_config(username, config):
-    """保存用户配置（加密）"""
     user_id = get_user_id(username)
     if not user_id:
         return False
-    
-    conn = sqlite3.connect('aresbot.db')
+
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    
-    # 加密敏感数据
+
     encrypted_api_key = encrypt_data(config['api_key'])
     encrypted_api_secret = encrypt_data(config['api_secret'])
-    
-    # 检查是否已有配置
+
     c.execute("SELECT id FROM user_configs WHERE user_id=?", (user_id,))
     exists = c.fetchone()
-    
+
     if exists:
         c.execute("""UPDATE user_configs 
-                     SET api_key=?, api_secret=?, symbol=?, offset_percent=?, 
-                         quantity=?, interval=?, testnet=?, updated_at=?
+                     SET api_key=?, api_secret=?, symbol=?, offset_percent=?, sell_offset_percent=?, 
+                         quantity=?, interval=?, testnet=?, simulate_trading=?, updated_at=?
                      WHERE user_id=?""",
                   (encrypted_api_key, encrypted_api_secret, config['symbol'],
-                   config['offset_percent'], config['quantity'], config['interval'],
-                   config.get('testnet', 1), datetime.now().isoformat(), user_id))
+                   config['offset_percent'], config.get('sell_offset_percent', 0.5),
+                   config['quantity'], config['interval'],
+                   config.get('testnet', 1), config.get('simulate_trading', 1),
+                   datetime.now().isoformat(), user_id))
     else:
         c.execute("""INSERT INTO user_configs 
-                     (user_id, api_key, api_secret, symbol, offset_percent, quantity, interval, testnet, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     (user_id, api_key, api_secret, symbol, offset_percent, sell_offset_percent, quantity, interval, testnet, simulate_trading, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                   (user_id, encrypted_api_key, encrypted_api_secret, config['symbol'],
-                   config['offset_percent'], config['quantity'], config['interval'],
-                   config.get('testnet', 1), datetime.now().isoformat()))
-    
+                   config['offset_percent'], config.get('sell_offset_percent', 0.5),
+                   config['quantity'], config['interval'],
+                   config.get('testnet', 1), config.get('simulate_trading', 1),
+                   datetime.now().isoformat()))
+
     conn.commit()
     conn.close()
+    print(f"[{datetime.now().isoformat()}] ✅ 配置已保存到 DB (user={username})")
     return True
 
 def load_user_config(username):
-    """加载用户配置（解密）"""
     user_id = get_user_id(username)
     if not user_id:
         return None
-    
-    conn = sqlite3.connect('aresbot.db')
+
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT * FROM user_configs WHERE user_id=?", (user_id,))
     result = c.fetchone()
     conn.close()
-    
+
     if not result:
         return None
-    
-    # 解密数据
+
+    # result columns: id, user_id, api_key, api_secret, symbol, offset_percent, sell_offset_percent, quantity, interval, testnet, simulate_trading, updated_at
     return {
         'api_key': decrypt_data(result[2]),
         'api_secret': decrypt_data(result[3]),
         'symbol': result[4],
         'offset_percent': result[5],
-        'quantity': result[6],
-        'interval': result[7],
-        'testnet': result[8]
+        'sell_offset_percent': result[6],
+        'quantity': result[7],
+        'interval': result[8],
+        'testnet': result[9],
+        'simulate_trading': result[10]
     }
 
-# 交易机器人逻辑
+# ----------------------------
+# 全局变量：每用户机器人数据
+# ----------------------------
+user_bots = {}  # username -> {'running':bool, 'thread':Thread, 'client':Client, 'config':dict, 'current_price':float, 'target_price':float, 'pending_buys':[]}
+
+# ----------------------------
+# 交易主循环
+# ----------------------------
 def trading_loop(username):
-    """每个用户独立的交易循环"""
     bot_data = user_bots.get(username)
     if not bot_data:
         return
-    
+
+    print(f"[{datetime.now().isoformat()}] ▶️ 交易循环已启动 (user={username})")
     while bot_data['running']:
         try:
             config = bot_data['config']
             client = bot_data['client']
-            
+
             # 获取当前价格
             ticker = client.get_symbol_ticker(symbol=config['symbol'])
             current_price = float(ticker['price'])
-            
-            # 计算目标价格
-            offset = config['offset_percent'] / 100
+            offset = config['offset_percent'] / 100.0
             target_price = current_price * (1 + offset)
+            # 保留两位小数（根据你原代码）
             target_price = round(target_price, 2)
-            
-            # 更新状态供前端显示
+
             bot_data['current_price'] = current_price
             bot_data['target_price'] = target_price
-            
-            print(f"[{datetime.now()}] {username} - {config['symbol']} - 当前价: ${current_price}, 挂单价: ${target_price}")
-            
-            # 保存订单记录（实际环境取消注释下单代码）
-            user_id = get_user_id(username)
-            conn = sqlite3.connect('aresbot.db')
-            c = conn.cursor()
-            c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, timestamp) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                      (user_id, config['symbol'], str(target_price), str(config['quantity']), 
-                       'BUY', 'SIMULATED', datetime.now().isoformat()))
-            conn.commit()
-            conn.close()
-            
-        except Exception as e:
-            print(f"[{username}] 错误: {e}")
-        
-        time.sleep(config['interval'])
 
-# 路由
+            print(f"[{datetime.now().isoformat()}] {username} - {config['symbol']} - 当前价: ${current_price} -> 计划挂买价: ${target_price}")
+
+            user_id = get_user_id(username)
+
+            # ----------------------------
+            # 下买单（根据 simulate_trading 标志）
+            # 我们在每个循环尝试一次下买单（根据策略），真实策略可以改为更复杂的触发条件
+            # ----------------------------
+            if config.get('simulate_trading', 1) == 1:
+                # 模拟模式：立即视为买单已成交（可改为 PLACED -> FILLED 模拟流程）
+                buy_order_id = f"SIM_BUY_{int(time.time()*1000)}"
+                buy_price = target_price
+                # 插入 BUY 已成交记录
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, timestamp)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                          (user_id, config['symbol'], str(buy_price), str(config['quantity']),
+                           'BUY', 'FILLED', buy_order_id, datetime.now().isoformat()))
+                conn.commit()
+                conn.close()
+                print(f"[{datetime.now().isoformat()}] ✅ 模拟买单已记录 (user={username}, price={buy_price}, qty={config['quantity']}, order_id={buy_order_id})")
+                print(f"[{datetime.now().isoformat()}] ℹ️ 模拟买单视为成交，准备挂卖单...")
+
+                # 计算卖单价格并挂卖单（模拟）
+                sell_offset = config.get('sell_offset_percent', 0.5) / 100.0
+                sell_price = round(buy_price * (1 + sell_offset), 2)
+                sell_order_id = f"SIM_SELL_{int(time.time()*1000)}"
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, timestamp)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                          (user_id, config['symbol'], str(sell_price), str(config['quantity']),
+                           'SELL', 'PLACED', sell_order_id, datetime.now().isoformat()))
+                conn.commit()
+                conn.close()
+                print(f"[{datetime.now().isoformat()}] ✅ 模拟卖单已挂 (user={username}, price={sell_price}, qty={config['quantity']}, order_id={sell_order_id})")
+                print(f"[{datetime.now().isoformat()}] ✅ 订单记录已保存到 DB (user={username})")
+
+            else:
+                # 真实交易模式：尝试下限价买单（GTC）
+                try:
+                    buy_price_str = f"{target_price:.2f}"
+                    print(f"[{datetime.now().isoformat()}] ℹ️ 真实下单 - 尝试下限价买单 (price={buy_price_str}, qty={config['quantity']})")
+                    order = client.order_limit_buy(
+                        symbol=config['symbol'],
+                        quantity=config['quantity'],
+                        price=buy_price_str,
+                        timeInForce='GTC'
+                    )
+                    # orderId returned by binance is order['orderId']
+                    real_order_id = str(order.get('orderId') or order.get('orderId'))
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, timestamp)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                              (user_id, config['symbol'], buy_price_str, str(config['quantity']),
+                               'BUY', 'PLACED', real_order_id, datetime.now().isoformat()))
+                    conn.commit()
+                    conn.close()
+                    print(f"[{datetime.now().isoformat()}] ✅ 真实买单已下 (order_id={real_order_id})，已写入 DB，等待撮合...")
+                    # 加入 pending buys 列表以便轮询检查成交状态
+                    bot_data.setdefault('pending_buys', []).append({
+                        'order_id': real_order_id,
+                        'price': float(buy_price_str),
+                        'quantity': config['quantity'],
+                        'symbol': config['symbol'],
+                        'user_id': user_id
+                    })
+                except BinanceAPIException as e:
+                    print(f"[{datetime.now().isoformat()}] ❌ Binance 下单异常: {e}")
+                except Exception as e:
+                    print(f"[{datetime.now().isoformat()}] ❌ 下单错误: {e}")
+
+            # ----------------------------
+            # 处理 pending_buys：轮询订单状态，若成交则挂卖单
+            # ----------------------------
+            pending = bot_data.get('pending_buys', [])
+            if pending:
+                remaining = []
+                for pb in pending:
+                    try:
+                        # 询问币安订单状态
+                        order_info = client.get_order(symbol=pb['symbol'], orderId=int(pb['order_id']))
+                        status = order_info.get('status')
+                        print(f"[{datetime.now().isoformat()}] ℹ️ 轮询订单 {pb['order_id']} 状态: {status}")
+                        if status == 'FILLED':
+                            buy_price = float(order_info.get('price')) if order_info.get('price') else pb['price']
+                            # 如果 price 字段为空（有时限价订单返回空），使用我们记录的 pb['price']
+                            if not buy_price:
+                                buy_price = pb['price']
+                            # 计算卖单价格
+                            sell_offset = config.get('sell_offset_percent', 0.5) / 100.0
+                            sell_price = round(buy_price * (1 + sell_offset), 2)
+                            try:
+                                # 挂卖单
+                                sell_order = client.order_limit_sell(
+                                    symbol=pb['symbol'],
+                                    quantity=pb['quantity'],
+                                    price=f"{sell_price:.2f}",
+                                    timeInForce='GTC'
+                                )
+                                sell_order_id = str(sell_order.get('orderId'))
+                                conn = sqlite3.connect(DB_FILE)
+                                c = conn.cursor()
+                                # 插入卖单记录
+                                c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, timestamp)
+                                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                                          (pb['user_id'], pb['symbol'], str(sell_price), str(pb['quantity']),
+                                           'SELL', 'PLACED', sell_order_id, datetime.now().isoformat()))
+                                # 更新买单状态为 FILLED（防止重复处理）
+                                c.execute("""UPDATE orders SET status=? WHERE order_id=?""", ('FILLED', pb['order_id']))
+                                conn.commit()
+                                conn.close()
+                                print(f"[{datetime.now().isoformat()}] ✅ 买单 {pb['order_id']} 已成交，自动挂卖单 {sell_order_id} @ {sell_price}")
+                            except BinanceAPIException as e:
+                                print(f"[{datetime.now().isoformat()}] ❌ 卖单下单异常: {e}")
+                            except Exception as e:
+                                print(f"[{datetime.now().isoformat()}] ❌ 卖单下单错误: {e}")
+                        else:
+                            # 未成交，保留继续轮询
+                            remaining.append(pb)
+                    except BinanceAPIException as e:
+                        print(f"[{datetime.now().isoformat()}] ❌ 查询订单 {pb['order_id']} 状态异常: {e}")
+                        # 在很多异常情况下，我们仍然保留该 pending，等待下一次轮询
+                        remaining.append(pb)
+                    except Exception as e:
+                        print(f"[{datetime.now().isoformat()}] ❌ 轮询订单错误: {e}")
+                        remaining.append(pb)
+
+                bot_data['pending_buys'] = remaining
+
+            # 休眠到下次循环
+            time.sleep(config.get('interval', 1))
+
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ 交易循环主流程错误: {e}")
+            # 防止 tight-loop 错误导致高 CPU，稍微休眠
+            time.sleep(1)
+
+    print(f"[{datetime.now().isoformat()}] ◼️ 交易循环已停止 (user={username})")
+
+# ----------------------------
+# Flask 路由
+# ----------------------------
 @app.route('/')
 def index():
     if 'user' not in session:
@@ -767,18 +941,18 @@ def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
-        
-        conn = sqlite3.connect('aresbot.db')
+
+        conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("SELECT password FROM users WHERE username=?", (username,))
         result = c.fetchone()
         conn.close()
-        
+
         if result and check_password_hash(result[0], password):
             session['user'] = username
             return redirect(url_for('index'))
         return render_template_string(LOGIN_TEMPLATE, error='用户名或密码错误')
-    
+
     return render_template_string(LOGIN_TEMPLATE)
 
 @app.route('/logout')
@@ -793,10 +967,8 @@ def logout():
 def api_status():
     if 'user' not in session:
         return jsonify({'running': False})
-    
     username = session['user']
     bot_data = user_bots.get(username, {})
-    
     return jsonify({
         'running': bot_data.get('running', False),
         'symbol': bot_data.get('config', {}).get('symbol', '-'),
@@ -808,70 +980,67 @@ def api_status():
 def api_start():
     if 'user' not in session:
         return jsonify({'success': False, 'message': '未授权'}), 401
-    
+
     username = session['user']
-    
-    # 检查是否已在运行
+
     if username in user_bots and user_bots[username].get('running'):
         return jsonify({'success': False, 'message': '机器人已在运行中'})
-    
+
     config = request.json
-    
-    # 验证必填字段
     if not config.get('api_key') or not config.get('api_secret'):
         return jsonify({'success': False, 'message': 'API密钥不能为空'}), 400
-    
+
     try:
-        # 创建币安客户端
         testnet = bool(config.get('testnet', 1))
         client = Client(config['api_key'], config['api_secret'], testnet=testnet)
-        
+
         # 测试连接
         client.ping()
-        
-        # 初始化用户机器人数据
+
+        # 初始化机器人数据结构
         user_bots[username] = {
             'running': True,
             'client': client,
             'config': config,
             'current_price': None,
-            'target_price': None
+            'target_price': None,
+            'pending_buys': []
         }
-        
-        # 启动交易线程
+
+        # 启动线程
         thread = threading.Thread(target=trading_loop, args=(username,), daemon=True)
         thread.start()
         user_bots[username]['thread'] = thread
-        
-        return jsonify({'success': True, 'message': f'机器人已启动 ({"测试网络" if testnet else "生产环境"})'})
+
+        print(f"[{datetime.now().isoformat()}] ▶️ 机器人已启动 (user={username}, mode={'SIM' if config.get('simulate_trading',1)==1 else 'REAL'})")
+        return jsonify({'success': True, 'message': f'机器人已启动 ({"模拟" if config.get("simulate_trading",1)==1 else "实盘"})'})
     except Exception as e:
+        print(f"[{datetime.now().isoformat()}] ❌ 启动失败: {e}")
         return jsonify({'success': False, 'message': f'启动失败: {str(e)}'}), 500
 
 @app.route('/api/stop', methods=['POST'])
 def api_stop():
     if 'user' not in session:
         return jsonify({'success': False, 'message': '未授权'}), 401
-    
+
     username = session['user']
-    
     if username not in user_bots or not user_bots[username].get('running'):
         return jsonify({'success': False, 'message': '机器人未在运行'})
-    
+
     user_bots[username]['running'] = False
+    print(f"[{datetime.now().isoformat()}] ◼️ 机器人停止请求 (user={username})")
     return jsonify({'success': True, 'message': '机器人已停止'})
 
 @app.route('/api/config/save', methods=['POST'])
 def api_save_config():
     if 'user' not in session:
         return jsonify({'success': False, 'message': '未授权'}), 401
-    
+
     username = session['user']
     config = request.json
-    
-    # 验证必填字段
     if not config.get('api_key') or not config.get('api_secret'):
         return jsonify({'success': False, 'message': 'API密钥不能为空'}), 400
-    
+
     if save_user_config(username, config):
         return jsonify({'success': True, 'message': '配置已加密保存到服务器'})
     else:
@@ -881,10 +1050,9 @@ def api_save_config():
 def api_load_config():
     if 'user' not in session:
         return jsonify({'success': False, 'message': '未授权'}), 401
-    
+
     username = session['user']
     config = load_user_config(username)
-    
     if config:
         return jsonify({'success': True, 'config': config})
     else:
@@ -894,17 +1062,17 @@ def api_load_config():
 def api_orders():
     if 'user' not in session:
         return jsonify({'orders': []}), 401
-    
+
     username = session['user']
     user_id = get_user_id(username)
-    
-    conn = sqlite3.connect('aresbot.db')
+
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("""SELECT symbol, price, quantity, side, status, timestamp 
-                 FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 50""", (user_id,))
+    c.execute("""SELECT symbol, price, quantity, side, status, order_id, timestamp
+                 FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 100""", (user_id,))
     orders = c.fetchall()
     conn.close()
-    
+
     order_list = [
         {
             'symbol': o[0],
@@ -912,22 +1080,25 @@ def api_orders():
             'quantity': o[2],
             'side': o[3],
             'status': o[4],
-            'timestamp': o[5]
+            'order_id': o[5],
+            'timestamp': o[6]
         }
         for o in orders
     ]
-    
+
     return jsonify({'orders': order_list})
 
+# ----------------------------
+# 启动应用
+# ----------------------------
 if __name__ == '__main__':
     print("=" * 60)
-    print("🔒 AresBot v2.0 - 加密存储版 启动中...")
+    print("🔒 AresBot v3.0 - 启动中...")
     print("=" * 60)
     print("🌐 访问地址: http://localhost:5000")
     print("👤 默认账户: admin / admin123")
     print("=" * 60)
-    print("✅ 数据加密功能已启用")
-    print("✅ 用户配置独立存储")
-    print("✅ 所有敏感信息加密保护")
+    print("✅ 数据库已重建（aresbot.db），包含 sell_offset_percent 与 simulate_trading 字段")
+    print("✅ 默认 simulate_trading = 1（模拟模式）")
     print("=" * 60)
     app.run(debug=True, host='0.0.0.0', port=5000)
