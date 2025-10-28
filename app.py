@@ -414,6 +414,9 @@ HTML_TEMPLATE = '''
                 <p>• 服务端保存，随时恢复</p>
                 <p>• 支持多设备同步</p>
             </div>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+            <h3>🔑 账户安全</h3>
+            <a href="/change_password" class="btn btn-warning" style="width: auto;">重置我的密码</a>
         </div>
     </div>
     
@@ -677,6 +680,93 @@ LOGIN_TEMPLATE = '''
 </body>
 </html>
 '''
+
+CHANGE_PASSWORD_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>AresBot - 重置密码</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Arial, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .box {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            width: 100%;
+            max-width: 450px;
+        }
+        h1 { text-align: center; margin-bottom: 30px; color: #333; }
+        .input-group { margin-bottom: 20px; }
+        .input-group label { display: block; margin-bottom: 5px; color: #555; font-weight: 600; }
+        .input-group input { 
+            width: 100%; 
+            padding: 12px; 
+            border: 2px solid #ddd; 
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .btn { 
+            width: 100%; 
+            padding: 12px; 
+            background: #667eea; 
+            color: white; 
+            border: none; 
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+        .btn:hover { background: #5568d3; }
+        .btn-secondary { background: #ccc; color: #333; }
+        .btn-secondary:hover { background: #bbb; }
+        .message { 
+            margin-bottom: 15px; 
+            padding: 10px; 
+            border-radius: 6px; 
+            text-align: center;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h1>🔑 重置密码 (用户: {{ username }})</h1>
+        {% if message %}
+        <div class="message {{ type }}">{{ message }}</div>
+        {% endif %}
+        <form method="POST">
+            <div class="input-group">
+                <label>旧密码</label>
+                <input type="password" name="old_password" required>
+            </div>
+            <div class="input-group">
+                <label>新密码</label>
+                <input type="password" name="new_password" required>
+            </div>
+            <div class="input-group">
+                <label>确认新密码</label>
+                <input type="password" name="confirm_password" required>
+            </div>
+            <button type="submit" class="btn">提交修改</button>
+        </form>
+        <a href="/" class="btn btn-secondary">返回控制台</a>
+    </div>
+</body>
+</html>
+'''
+
 
 # ----------------------------
 # DB helper functions
@@ -1087,6 +1177,50 @@ def api_orders():
     ]
 
     return jsonify({'orders': order_list})
+
+@app.route('/change_password', methods=['GET', 'POST'])
+def change_password():
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
+    username = session['user']
+    message = None
+    msg_type = None
+
+    if request.method == 'POST':
+        old_password = request.form['old_password']
+        new_password = request.form['new_password']
+        confirm_password = request.form['confirm_password']
+
+        if new_password != confirm_password:
+            message = '新密码和确认密码不一致！'
+            msg_type = 'error'
+        elif len(new_password) < 6:
+            message = '新密码长度至少需要6位。'
+            msg_type = 'error'
+        else:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT password FROM users WHERE username=?", (username,))
+            result = c.fetchone()
+
+            if result and check_password_hash(result[0], old_password):
+                # 验证通过，更新密码
+                new_hashed_password = generate_password_hash(new_password)
+                c.execute("UPDATE users SET password=? WHERE username=?", (new_hashed_password, username))
+                conn.commit()
+                conn.close()
+                message = '✅ 密码修改成功！请使用新密码重新登录。'
+                msg_type = 'success'
+                # 立即退出登录，要求使用新密码重新登录
+                session.pop('user', None)
+                return render_template_string(CHANGE_PASSWORD_TEMPLATE, username=username, message=message, type=msg_type)
+            else:
+                conn.close()
+                message = '旧密码错误。'
+                msg_type = 'error'
+
+    return render_template_string(CHANGE_PASSWORD_TEMPLATE, username=username, message=message, type=msg_type)
 
 # ----------------------------
 # 启动应用
