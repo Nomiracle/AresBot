@@ -12,7 +12,9 @@ def trading_loop(username):
         return
 
     print(f"[{datetime.now().isoformat()}] ▶️ 交易循环已启动 (user={username})")
-
+    
+    price_precision = None
+    quantity_precision = None
     while bot_data['running']:
         try:
             config = bot_data['config']
@@ -20,17 +22,24 @@ def trading_loop(username):
             user_id = get_user_id(username)
 
             ticker = client.get_symbol_ticker(symbol=config['symbol'])
+
+             # 只在第一次循环中查询交易精度
+            if price_precision is None or quantity_precision is None:
+                info = client.get_symbol_info(symbol=config['symbol'])
+                price_precision = info['quotePrecision']      # 报价精度
+                quantity_precision = info['baseAssetPrecision']  # 数量精度
+
             current_price = float(ticker['price'])
             offset = config['offset_percent'] / 100.0
             target_price = current_price * (1 + offset)
-            target_price = round(target_price, 2)
+            target_price = round(target_price, price_precision)
 
             bot_data['current_price'] = current_price
             bot_data['target_price'] = target_price
 
             is_buy_enabled = (config.get('simulate_trading', 1) != 1)
 
-            print(f"[{datetime.now().isoformat()}] {username} - {config['symbol']} - 当前价: ${current_price} -> 计划挂买价: ${target_price}. 是否可以下单: {is_buy_enabled}")
+            print(f"[{datetime.now().isoformat()}] {username} - {config['symbol']} - 当前价: ${current_price} -> 计划挂买价: ${target_price}. 是否可以下单: {is_buy_enabled} 报价精度：{price_precision} 数量精度：{quantity_precision}")
 
             try:
                 open_orders = client.get_open_orders(symbol=config['symbol'])
@@ -66,7 +75,7 @@ def trading_loop(username):
                 continue
 
             try:
-                buy_price_str = f"{target_price:.2f}"
+                buy_price_str = f"{target_price}"
                 print(f"[{datetime.now().isoformat()}] ➡️ [EXECUTE] 尝试下新限价买单: 方向=BUY, 价格={buy_price_str}, 数量={config['quantity']}")
 
                 if is_buy_enabled:
