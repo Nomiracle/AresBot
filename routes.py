@@ -1,13 +1,13 @@
 import sqlite3
 import threading
 from datetime import datetime
-from flask import request, jsonify, session, redirect, url_for, render_template_string
+from flask import request, jsonify, session, redirect, url_for, render_template
 from werkzeug.security import check_password_hash, generate_password_hash
 from binance.client import Client
 
 from config import DB_FILE
 from database import save_user_config, load_user_config, get_user_orders, get_user_id
-from templates import HTML_TEMPLATE, LOGIN_TEMPLATE, CHANGE_PASSWORD_TEMPLATE
+
 from trading import trading_loop, user_bots
 
 
@@ -16,7 +16,7 @@ def register_routes(app):
     def index():
         if 'user' not in session:
             return redirect(url_for('login'))
-        return render_template_string(HTML_TEMPLATE, username=session['user'])
+        return render_template('index.html', username=session['user'])
 
     @app.route('/login', methods=['GET', 'POST'])
     def login():
@@ -33,9 +33,10 @@ def register_routes(app):
             if result and check_password_hash(result[0], password):
                 session['user'] = username
                 return redirect(url_for('index'))
-            return render_template_string(LOGIN_TEMPLATE, error='用户名或密码错误')
+            return render_template('login.html', error='用户名或密码错误')
 
-        return render_template_string(LOGIN_TEMPLATE)
+        return render_template('login.html')
+            
 
     @app.route('/logout')
     def logout():
@@ -180,10 +181,10 @@ def register_routes(app):
                     message = '✅ 密码修改成功！请使用新密码重新登录。'
                     msg_type = 'success'
                     session.pop('user', None)
-                    return render_template_string(CHANGE_PASSWORD_TEMPLATE, username=username, message=message, type=msg_type)
+                    return render_template('change_password.html', username=username, message=message, type=msg_type)
                 else:
                     conn.close()
                     message = '旧密码错误。'
                     msg_type = 'error'
 
-        return render_template_string(CHANGE_PASSWORD_TEMPLATE, username=username, message=message, type=msg_type)
+        return render_template('change_password.html', username=username, message=message, type=msg_type)
