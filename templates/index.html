@@ -449,6 +449,7 @@
 
     <script>
       let currentTab = "trading";
+      let desiredSymbolFromConfig = null;
 
       function switchTab(tabName) {
         document
@@ -584,6 +585,7 @@
                 data.config.api_key || "";
               document.getElementById("apiSecret").value =
                 data.config.api_secret || "";
+              desiredSymbolFromConfig = data.config.symbol;
               document.getElementById("symbol").value = data.config.symbol;
               document.getElementById("offsetPercent").value =
                 data.config.offset_percent;
@@ -675,6 +677,10 @@
         // 恢复之前选中的值
         if (currentValue && pairs.find((p) => p.symbol === currentValue)) {
           select.value = currentValue;
+        }
+        // 若有来自已保存配置的期望symbol，优先设置
+        if (desiredSymbolFromConfig) {
+          select.value = desiredSymbolFromConfig;
         }
       }
 
@@ -863,10 +869,14 @@
       }
 
       window.onload = function () {
+        // 页面加载时即加载交易对列表，确保“交易配置”页的下拉框完整
+        loadTradingPairs();
+        // 同时尝试加载已保存配置，二者互不依赖，通过 desiredSymbolFromConfig 对齐最终选择
         fetch("/api/config/load")
           .then((r) => r.json())
           .then((data) => {
             if (data.success) {
+              desiredSymbolFromConfig = data.config.symbol || desiredSymbolFromConfig;
               console.log("已保存配置可用");
             }
           });
