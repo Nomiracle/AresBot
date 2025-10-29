@@ -1,6 +1,6 @@
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import request, jsonify, session, redirect, url_for, render_template
 from werkzeug.security import check_password_hash, generate_password_hash
 from binance.client import Client
@@ -28,16 +28,110 @@ def register_routes(app):
 
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
+            # 登录尝试表
+            c.execute("CREATE TABLE IF NOT EXISTS login_attempts (username TEXT PRIMARY KEY, attempts INTEGER DEFAULT 0, blocked_until INTEGER)")
+            # 读取封禁状态
+            c.execute("SELECT attempts, blocked_until FROM login_attempts WHERE username=?", (username,))
+            row = c.fetchone()
+            attempts = row[0] if row else 0
+            blocked_until = row[1] if row else None
+
+            now_ts = int(datetime.utcnow().timestamp())
+            if blocked_until and blocked_until > now_ts:
+                # 仍在封禁期
+                remaining = blocked_until - now_ts
+                minutes = max(1, remaining // 60)
+                conn.close()
+                return render_template('login.html', error=f'尝试次数过多，请在 {minutes} 分钟后再试')
+
+            # 正常验证用户
             c.execute("SELECT password FROM users WHERE username=?", (username,))
             result = c.fetchone()
-            conn.close()
 
             if result and check_password_hash(result[0], password):
+                # 登录成功：清除尝试计数与封禁
+                if row:
+                    c.execute("UPDATE login_attempts SET attempts=0, blocked_until=NULL WHERE username=?", (username,))
+                else:
+                    c.execute("INSERT OR REPLACE INTO login_attempts(username, attempts, blocked_until) VALUES(?, 0, NULL)", (username,))
+                conn.commit()
+                conn.close()
                 session['user'] = username
                 return redirect(url_for('index'))
-            return render_template('login.html', error='用户名或密码错误')
+
+            # 登录失败：增加计数，达到3次则封禁10分钟
+            attempts = attempts + 1
+            if attempts >= 3:
+                unblock_ts = int((datetime.utcnow() + timedelta(minutes=10)).timestamp())
+                c.execute("INSERT OR REPLACE INTO login_attempts(username, attempts, blocked_until) VALUES(?, ?, ?)", (username, 0, unblock_ts))
+                conn.commit()
+                conn.close()
+                return render_template('login.html', error='连续失败过多，已锁定 10 分钟')
+            else:
+                if row:
+                    c.execute("UPDATE login_attempts SET attempts=? WHERE username=?", (attempts, username))
+                else:
+                    c.execute("INSERT INTO login_attempts(username, attempts, blocked_until) VALUES(?, ?, NULL)", (username, attempts))
+                conn.commit()
+                conn.close()
+                return render_template('login.html', error='用户名或密码错误')
 
         return render_template('login.html')
+    
+    @app.route('/register', methods=['GET', 'POST'])
+    def register():
+        if request.method == 'POST':
+            username = request.form.get('username', '').strip()
+            password = request.form.get('password', '')
+            confirm_password = request.form.get('confirm_password', '')
+
+            error = None
+            if not username or not password:
+                error = '用户名和密码不能为空'
+            elif len(username) < 3:
+                error = '用户名长度至少需要3位'
+            elif len(password) < 6:
+                error = '密码长度至少需要6位'
+            elif password != confirm_password:
+                error = '两次输入的密码不一致'
+
+            if error:
+                return render_template('register.html', error=error)
+
+            try:
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                # 与 database.init_db 保持一致的 users 表结构（包含 created_at 非空列）
+                c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, created_at TEXT NOT NULL)")
+                # 用户数量限制：最多100个
+                c.execute("SELECT COUNT(*) FROM users")
+                row = c.fetchone()
+                total_users = (row[0] if row else 0)
+                if total_users >= 100:
+                    conn.close()
+                    return render_template('register.html', error='注册人数已达上限 (100)')
+                # 检查是否已存在
+                c.execute("SELECT id FROM users WHERE username=?", (username,))
+                if c.fetchone():
+                    conn.close()
+                    return render_template('register.html', error='用户名已存在')
+
+                hashed = generate_password_hash(password)
+                from datetime import datetime
+                c.execute("INSERT INTO users(username, password, created_at) VALUES(?, ?, ?)", (username, hashed, datetime.now().isoformat()))
+                conn.commit()
+                conn.close()
+
+                session['user'] = username
+                return redirect(url_for('index'))
+            except Exception as e:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                return render_template('register.html', error='注册失败: ' + str(e))
+
+        return render_template('register.html')
             
 
     @app.route('/logout')

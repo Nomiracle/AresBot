@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>AresBot 注册</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .box {
+      background: white;
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+      width: 100%;
+      max-width: 420px;
+    }
+    h1 { text-align: center; margin-bottom: 30px; color: #333; }
+    .input-group { margin-bottom: 16px; }
+    .input-group label { display: block; margin-bottom: 6px; color: #555; font-weight: 600; }
+    .input-group input {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    .btn {
+      width: 100%;
+      padding: 12px;
+      background: #28a745;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .btn:hover { background: #218838; }
+    .link { display: block; margin-top: 12px; text-align: center; color: #667eea; text-decoration: none; }
+    .link:hover { text-decoration: underline; }
+    .error { color: #dc3545; margin-bottom: 15px; text-align: center; }
+    .security-badge { display:inline-block; background:#28a745; color:#fff; padding:4px 8px; border-radius:4px; font-size:11px; margin-left:5px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>⚔️ AresBot <span class="security-badge">🔒 加密</span></h1>
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+    <form method="POST">
+      <div class="input-group">
+        <label>用户名</label>
+        <input type="text" name="username" required autofocus>
+      </div>
+      <div class="input-group">
+        <label>密码</label>
+        <input type="password" name="password" required>
+      </div>
+      <div class="input-group">
+        <label>确认密码</label>
+        <input type="password" name="confirm_password" required>
+      </div>
+      <button type="submit" class="btn">注册</button>
+    </form>
+    <a class="link" href="/login">返回登录</a>
+  </div>
+</body>
+</html>
