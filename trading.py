@@ -2,7 +2,7 @@ import time
 from datetime import datetime
 from binance.exceptions import BinanceAPIException
 from database import get_user_id, insert_order, update_order_status
-
+import math
 user_bots = {}
 
 
@@ -13,8 +13,12 @@ def trading_loop(username):
 
     print(f"[{datetime.now().isoformat()}] ▶️ 交易循环已启动 (user={username})")
     
-    price_precision = None
-    quantity_precision = None
+
+    price_filter = None
+    lot_filter = None
+    tick_size = None
+    step_size = None
+
     while bot_data['running']:
         try:
             config = bot_data['config']
@@ -23,23 +27,37 @@ def trading_loop(username):
 
             ticker = client.get_symbol_ticker(symbol=config['symbol'])
 
-             # 只在第一次循环中查询交易精度
-            if price_precision is None or quantity_precision is None:
+            # 只在第一次循环中查询交易精度与过滤规则
+            if price_filter is None or lot_filter is None:
                 info = client.get_symbol_info(symbol=config['symbol'])
-                price_precision = info['quotePrecision']      # 报价精度
-                quantity_precision = info['baseAssetPrecision']  # 数量精度
+                price_filter = next(f for f in info['filters'] if f['filterType'] == 'PRICE_FILTER')
+                lot_filter = next(f for f in info['filters'] if f['filterType'] == 'LOT_SIZE')
 
+                tick_size = float(price_filter['tickSize'])
+                step_size = float(lot_filter['stepSize'])
+
+                print(f"[{datetime.now().isoformat()}] 🎯 交易规则加载完成：tick_size={tick_size}, step_size={step_size}")
+
+            # 当前价格与目标价格
             current_price = float(ticker['price'])
             offset = config['offset_percent'] / 100.0
             target_price = current_price * (1 + offset)
-            target_price = round(target_price, price_precision)
+
+            # 按 Binance 限制对齐价格精度
+            aligned_price = math.floor(target_price / tick_size) * tick_size
+            aligned_price = round(aligned_price, int(abs(math.log10(tick_size))))
+
+            # 数量对齐
+            quantity = float(config['quantity'])
+            aligned_quantity = math.floor(quantity / step_size) * step_size
+            aligned_quantity = round(aligned_quantity, int(abs(math.log10(step_size))))
 
             bot_data['current_price'] = current_price
-            bot_data['target_price'] = target_price
+            bot_data['target_price'] = aligned_price
+            target_price = aligned_price
 
             is_buy_enabled = (config.get('simulate_trading', 1) != 1)
-
-            print(f"[{datetime.now().isoformat()}] {username} - {config['symbol']} - 当前价: ${current_price} -> 计划挂买价: ${target_price}. 是否可以下单: {is_buy_enabled} 报价精度：{price_precision} 数量精度：{quantity_precision}")
+            print(f"[{datetime.now().isoformat()}] {username} - {config['symbol']} - 当前价: ${current_price} -> 计划挂买价: ${target_price}（数量: {aligned_quantity}）. 是否可以下单: {is_buy_enabled}")
 
             try:
                 open_orders = client.get_open_orders(symbol=config['symbol'])
