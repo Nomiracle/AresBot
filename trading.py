@@ -3,23 +3,34 @@ from datetime import datetime
 from binance.exceptions import BinanceAPIException
 from database import get_user_id, insert_order, update_order_status
 import math
+
+# 结构调整：支持每个用户多个交易对的机器人
+# user_bots = {
+#   username: {
+#       'bots': {
+#           symbol: { 'running': bool, 'client': Client, 'config': {...}, 'current_price': float, 'target_price': float, 'pending_buys': [...], 'thread': Thread }
+#       }
+#   }
+# }
 user_bots = {}
 
 
-def trading_loop(username):
-    bot_data = user_bots.get(username)
+def trading_loop(username, symbol):
+    user_data = user_bots.get(username)
+    if not user_data:
+        return
+    bot_data = user_data.get('bots', {}).get(symbol)
     if not bot_data:
         return
 
-    print(f"[{datetime.now().isoformat()}] ▶️ 交易循环已启动 (user={username})")
-    
+    print(f"[{datetime.now().isoformat()}] ▶️ 交易循环已启动 (user={username}, symbol={symbol})")
 
     price_filter = None
     lot_filter = None
     tick_size = None
     step_size = None
 
-    while bot_data['running']:
+    while bot_data.get('running'):
         try:
             config = bot_data['config']
             client = bot_data['client']
@@ -178,4 +189,4 @@ def trading_loop(username):
             print(f"[{datetime.now().isoformat()}] ❌ [LOOP ERR] 交易循环主流程错误: {e}")
             time.sleep(1)
 
-    print(f"[{datetime.now().isoformat()}] ◼️ 交易循环已停止 (user={username})")
+    print(f"[{datetime.now().isoformat()}] ◼️ 交易循环已停止 (user={username}, symbol={symbol})")

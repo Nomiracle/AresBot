@@ -44,7 +44,10 @@ def register_routes(app):
     def logout():
         username = session.get('user')
         if username and username in user_bots:
-            user_bots[username]['running'] = False
+            user_data = user_bots.get(username, {})
+            bots = user_data.get('bots', {}) if isinstance(user_data, dict) else {}
+            for b in bots.values():
+                b['running'] = False
         session.pop('user', None)
         return redirect(url_for('login'))
 
@@ -53,13 +56,20 @@ def register_routes(app):
         if 'user' not in session:
             return jsonify({'running': False})
         username = session['user']
-        bot_data = user_bots.get(username, {})
-        return jsonify({
-            'running': bot_data.get('running', False),
-            'symbol': bot_data.get('config', {}).get('symbol', '-'),
-            'price': bot_data.get('current_price'),
-            'target_price': bot_data.get('target_price', '-')
-        })
+        user_data = user_bots.get(username, {})
+        running = False
+        symbol = '-'
+        price = None
+        target_price = '-'
+        if isinstance(user_data, dict):
+            for sym, b in user_data.get('bots', {}).items():
+                if b.get('running'):
+                    running = True
+                    symbol = sym
+                    price = b.get('current_price')
+                    target_price = b.get('target_price', '-')
+                    break
+        return jsonify({'running': running, 'symbol': symbol, 'price': price, 'target_price': target_price})
 
     @app.route('/api/start', methods=['POST'])
     def api_start():
@@ -67,13 +77,11 @@ def register_routes(app):
             return jsonify({'success': False, 'message': '未授权'}), 401
 
         username = session['user']
-
-        if username in user_bots and user_bots[username].get('running'):
-            return jsonify({'success': False, 'message': '机器人已在运行中'})
-
-        config = request.json
+        config = request.json or {}
         if not config.get('api_key') or not config.get('api_secret'):
             return jsonify({'success': False, 'message': 'API密钥不能为空'}), 400
+        if not config.get('symbol'):
+            return jsonify({'success': False, 'message': '缺少symbol'}), 400
 
         try:
             testnet = bool(config.get('testnet', 1))
@@ -81,7 +89,13 @@ def register_routes(app):
 
             client.ping()
 
-            user_bots[username] = {
+            symbol = config['symbol']
+            if username not in user_bots or not isinstance(user_bots.get(username), dict):
+                user_bots[username] = {'bots': {}}
+            if symbol in user_bots[username]['bots'] and user_bots[username]['bots'][symbol].get('running'):
+                return jsonify({'success': False, 'message': '该交易对机器人已运行'})
+
+            user_bots[username]['bots'][symbol] = {
                 'running': True,
                 'client': client,
                 'config': config,
@@ -90,12 +104,12 @@ def register_routes(app):
                 'pending_buys': []
             }
 
-            thread = threading.Thread(target=trading_loop, args=(username,), daemon=True)
+            thread = threading.Thread(target=trading_loop, args=(username, symbol), daemon=True)
             thread.start()
-            user_bots[username]['thread'] = thread
+            user_bots[username]['bots'][symbol]['thread'] = thread
 
-            print(f"[{datetime.now().isoformat()}] ▶️ 机器人已启动 (user={username}, mode={'SIM' if config.get('simulate_trading',1)==1 else 'REAL'})")
-            return jsonify({'success': True, 'message': f'机器人已启动 ({"模拟" if config.get("simulate_trading",1)==1 else "实盘"})'})
+            print(f"[{datetime.now().isoformat()}] ▶️ 机器人已启动 (user={username}, symbol={symbol}, mode={'SIM' if config.get('simulate_trading',1)==1 else 'REAL'})")
+            return jsonify({'success': True, 'message': f'{symbol} 机器人已启动 ({"模拟" if config.get("simulate_trading",1)==1 else "实盘"})'})
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ 启动失败: {e}")
             return jsonify({'success': False, 'message': f'启动失败: {str(e)}'}), 500
@@ -106,12 +120,18 @@ def register_routes(app):
             return jsonify({'success': False, 'message': '未授权'}), 401
 
         username = session['user']
-        if username not in user_bots or not user_bots[username].get('running'):
+        # 停止该用户的所有机器人（兼容旧接口）
+        user_data = user_bots.get(username, {})
+        stopped_any = False
+        if isinstance(user_data, dict):
+            for b in user_data.get('bots', {}).values():
+                if b.get('running'):
+                    b['running'] = False
+                    stopped_any = True
+        if not stopped_any:
             return jsonify({'success': False, 'message': '机器人未在运行'})
-
-        user_bots[username]['running'] = False
-        print(f"[{datetime.now().isoformat()}] ◼️ 机器人停止请求 (user={username})")
-        return jsonify({'success': True, 'message': '机器人已停止'})
+        print(f"[{datetime.now().isoformat()}] ◼️ 机器人停止请求 (user={username}, all symbols)")
+        return jsonify({'success': True, 'message': '所有机器人已停止'})
 
     @app.route('/api/config/save', methods=['POST'])
     def api_save_config():
@@ -255,3 +275,96 @@ def register_routes(app):
             return jsonify({'success': True, 'message': '交易对更新成功'})
         else:
             return jsonify({'success': False, 'message': '更新失败或交易对已存在'})
+
+    @app.route('/api/bots')
+    def api_bots():
+        if 'user' not in session:
+            return jsonify({'success': False, 'bots': []}), 401
+        username = session['user']
+        user_data = user_bots.get(username, {})
+        bots = []
+        if isinstance(user_data, dict):
+            for sym, b in user_data.get('bots', {}).items():
+                bots.append({
+                    'symbol': sym,
+                    'running': bool(b.get('running')),
+                    'current_price': b.get('current_price'),
+                    'target_price': b.get('target_price'),
+                    'config': b.get('config', {})
+                })
+        return jsonify({'success': True, 'bots': bots})
+
+    @app.route('/api/bot/start', methods=['POST'])
+    def api_bot_start():
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未授权'}), 401
+        username = session['user']
+        config = request.json or {}
+        if not config or not config.get('symbol'):
+            return jsonify({'success': False, 'message': '缺少symbol'}), 400
+        if not config.get('api_key') or not config.get('api_secret'):
+            return jsonify({'success': False, 'message': 'API密钥不能为空'}), 400
+        try:
+            testnet = bool(config.get('testnet', 1))
+            client = Client(config['api_key'], config['api_secret'], testnet=testnet)
+            client.ping()
+            symbol = config['symbol']
+            if username not in user_bots or not isinstance(user_bots.get(username), dict):
+                user_bots[username] = {'bots': {}}
+            if symbol in user_bots[username]['bots'] and user_bots[username]['bots'][symbol].get('running'):
+                return jsonify({'success': False, 'message': '该交易对机器人已运行'})
+            user_bots[username]['bots'][symbol] = {
+                'running': True,
+                'client': client,
+                'config': config,
+                'current_price': None,
+                'target_price': None,
+                'pending_buys': []
+            }
+            thread = threading.Thread(target=trading_loop, args=(username, symbol), daemon=True)
+            thread.start()
+            user_bots[username]['bots'][symbol]['thread'] = thread
+            return jsonify({'success': True, 'message': f'{symbol} 机器人已启动'})
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] 启动失败: {e}")
+            return jsonify({'success': False, 'message': f'启动失败: {str(e)}'}), 500
+
+    @app.route('/api/bot/stop', methods=['POST'])
+    def api_bot_stop():
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未授权'}), 401
+        username = session['user']
+        data = request.json or {}
+        symbol = data.get('symbol')
+        if not symbol:
+            return jsonify({'success': False, 'message': '缺少symbol'}), 400
+        user_data = user_bots.get(username, {})
+        bot = None
+        if isinstance(user_data, dict):
+            bot = user_data.get('bots', {}).get(symbol)
+        if not bot or not bot.get('running'):
+            return jsonify({'success': False, 'message': '机器人未在运行'})
+        bot['running'] = False
+        return jsonify({'success': True, 'message': f'{symbol} 机器人已停止'})
+
+    @app.route('/api/bot/update', methods=['POST'])
+    def api_bot_update():
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未授权'}), 401
+        username = session['user']
+        data = request.json or {}
+        symbol = data.get('symbol')
+        if not symbol:
+            return jsonify({'success': False, 'message': '缺少symbol'}), 400
+        user_data = user_bots.get(username, {})
+        bot = None
+        if isinstance(user_data, dict):
+            bot = user_data.get('bots', {}).get(symbol)
+        if not bot:
+            return jsonify({'success': False, 'message': '机器人不存在'})
+        cfg = bot.get('config', {})
+        for k in ['offset_percent', 'sell_offset_percent', 'quantity', 'interval', 'simulate_trading', 'testnet']:
+            if k in data and data[k] is not None:
+                cfg[k] = data[k]
+        bot['config'] = cfg
+        return jsonify({'success': True, 'message': f'{symbol} 配置已更新'})

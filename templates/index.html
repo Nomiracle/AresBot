@@ -281,6 +281,7 @@
           交易配置
         </button>
         <button class="tab" onclick="switchTab('pairs')">交易对管理</button>
+        <button class="tab" onclick="switchTab('bots')">挂单机器人</button>
         <button class="tab" onclick="switchTab('history')">订单历史</button>
         <button class="tab" onclick="switchTab('security')">安全设置</button>
       </div>
@@ -409,6 +410,14 @@
         </div>
       </div>
 
+      <div id="bots-tab" class="tab-content">
+        <h3>挂单机器人</h3>
+        <p style="color:#666; margin: 8px 0 12px;">展示每个交易对的机器人状态与参数，可在线编辑参数并保存。需要启动新机器人请在“交易配置”页选择交易对并点击“启动机器人”。</p>
+        <div id="botsList" class="order-history">
+          <p>加载中...</p>
+        </div>
+      </div>
+
       <div id="history-tab" class="tab-content">
         <h3>订单历史记录</h3>
         <div id="orderHistory" class="order-history">
@@ -457,6 +466,8 @@
           loadOrderHistory();
         } else if (tabName === "pairs") {
           loadTradingPairs();
+        } else if (tabName === "bots") {
+          loadBots();
         }
       }
 
@@ -749,6 +760,105 @@
           .then((data) => {
             alert(data.message);
             if (data.success) loadTradingPairs();
+          });
+      }
+
+      // 机器人管理
+      let botsCache = {};
+
+      function loadBots() {
+        fetch("/api/bots")
+          .then((r) => r.json())
+          .then((data) => {
+            const container = document.getElementById("botsList");
+            if (!data.success || data.bots.length === 0) {
+              container.innerHTML = "<p>暂无机器人</p>";
+              botsCache = {};
+              return;
+            }
+            botsCache = Object.fromEntries(data.bots.map(b => [b.symbol, b]));
+            container.innerHTML = data.bots
+              .map((bot) => {
+                const mode = (bot.config && parseInt(bot.config.simulate_trading) === 1) ? '模拟' : '实盘';
+                const cp = bot.current_price != null ? ('$' + Number(bot.current_price).toFixed(2)) : '-';
+                const tp = bot.target_price != null ? ('$' + bot.target_price) : '-';
+                return `
+                  <div class="pair-item" id="bot-${bot.symbol}">
+                    <div class="pair-info">
+                      <strong>${bot.symbol}</strong> — 状态: ${bot.running ? '运行中' : '已停止'}<br>
+                      当前价: ${cp} | 目标价: ${tp}<br>
+                      参数: 偏移 ${bot.config.offset_percent}% | 卖加价 ${bot.config.sell_offset_percent || 0.5}% | 数量 ${bot.config.quantity} | 间隔 ${bot.config.interval}s | 模式 ${mode}
+                    </div>
+                    <div class="pair-actions">
+                      <button class="btn btn-primary btn-sm" onclick="editBot('${bot.symbol}')">✏️ 编辑</button>
+                      <button class="btn btn-danger btn-sm" onclick="stopBotSymbol('${bot.symbol}')">⏹️ 停止</button>
+                    </div>
+                  </div>
+                `;
+              })
+              .join("");
+          });
+      }
+
+      function editBot(symbol) {
+        const bot = botsCache[symbol];
+        if (!bot) return;
+        const div = document.getElementById(`bot-${symbol}`);
+        const cfg = bot.config || {};
+        div.innerHTML = `
+          <div class="edit-mode">
+            <div style="flex:1; display:grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap:10px;">
+              <label>偏移% <input type="number" id="edit-offset-${symbol}" value="${cfg.offset_percent}" step="0.01"></label>
+              <label>卖加价% <input type="number" id="edit-selloffset-${symbol}" value="${cfg.sell_offset_percent || 0.5}" step="0.01"></label>
+              <label>数量 <input type="number" id="edit-qty-${symbol}" value="${cfg.quantity}" step="0.0001"></label>
+              <label>间隔(秒) <input type="number" id="edit-interval-${symbol}" value="${cfg.interval}" min="1"></label>
+              <label>模式
+                <select id="edit-sim-${symbol}">
+                  <option value="1" ${parseInt(cfg.simulate_trading)===1?'selected':''}>模拟</option>
+                  <option value="0" ${parseInt(cfg.simulate_trading)!==1?'selected':''}>实盘</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="pair-actions">
+            <button class="btn btn-success btn-sm" onclick="saveBot('${symbol}')">💾 保存</button>
+            <button class="btn btn-secondary btn-sm" onclick="loadBots()">❌ 取消</button>
+          </div>
+        `;
+      }
+
+      function saveBot(symbol) {
+        const payload = {
+          symbol,
+          offset_percent: parseFloat(document.getElementById(`edit-offset-${symbol}`).value),
+          sell_offset_percent: parseFloat(document.getElementById(`edit-selloffset-${symbol}`).value),
+          quantity: parseFloat(document.getElementById(`edit-qty-${symbol}`).value),
+          interval: parseInt(document.getElementById(`edit-interval-${symbol}`).value),
+          simulate_trading: parseInt(document.getElementById(`edit-sim-${symbol}`).value)
+        };
+        fetch("/api/bot/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        })
+          .then(r => r.json())
+          .then(data => {
+            alert(data.message);
+            if (data.success) loadBots();
+          });
+      }
+
+      function stopBotSymbol(symbol) {
+        if (!confirm(`确定停止 ${symbol} 机器人吗？`)) return;
+        fetch("/api/bot/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symbol })
+        })
+          .then(r => r.json())
+          .then(data => {
+            alert(data.message);
+            if (data.success) loadBots();
           });
       }
 
