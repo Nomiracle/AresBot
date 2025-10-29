@@ -2,8 +2,9 @@ import sys
 import logging
 from flask import Flask
 
-from config import get_flask_secret_key
+from config import get_flask_secret_key,PORT
 from database import init_db
+from migrate_db import migrate_database
 from routes import register_routes
 
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
@@ -24,7 +25,7 @@ if __name__ == '__main__':
         print("=" * 60)
         print("🔒 AresBot v3.0 - 启动中...")
         print("=" * 60)
-        print("🌐 访问地址: http://localhost:5000")
+        print("🌐 访问地址: http://localhost:"+str(PORT))
         print("👤 默认账户: admin / admin123")
         print("=" * 60)
 
@@ -37,4 +38,10 @@ if __name__ == '__main__':
         print("✅ 默认 simulate_trading = 1（模拟模式）")
         print("=" * 60)
 
-    app.run(debug=False, host='0.0.0.0', port=5000)
+        try:
+            migrate_database()
+        except Exception as e:
+            print(f"\n❌ 迁移失败: {e}")
+            print("请检查错误信息并重试")
+
+    app.run(debug=False, host='0.0.0.0', port=PORT)

@@ -5,7 +5,7 @@ from werkzeug.security import generate_password_hash
 from config import DB_FILE
 from crypto_utils import encrypt_data, decrypt_data
 
-def init_db(recreate=True):
+def init_db(recreate=False):
     if recreate and os.path.exists(DB_FILE):
         try:
             os.remove(DB_FILE)
@@ -15,6 +15,8 @@ def init_db(recreate=True):
 
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    
+    db_existed = not recreate and os.path.exists(DB_FILE)
 
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,6 +51,16 @@ def init_db(recreate=True):
                   timestamp TEXT NOT NULL,
                   FOREIGN KEY (user_id) REFERENCES users(id))''')
 
+    # 新增：交易对管理表
+    c.execute('''CREATE TABLE IF NOT EXISTS trading_pairs
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user_id INTEGER NOT NULL,
+                  symbol TEXT NOT NULL,
+                  display_name TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  FOREIGN KEY (user_id) REFERENCES users(id),
+                  UNIQUE(user_id, symbol))''')
+
     try:
         c.execute("INSERT INTO users (username, password, created_at) VALUES (?, ?, ?)",
                   ('admin', generate_password_hash('admin123'), datetime.now().isoformat()))
@@ -56,6 +68,27 @@ def init_db(recreate=True):
         print(f"[{datetime.now().isoformat()}] ✅ 默认 admin 账号已创建（admin/admin123）")
     except sqlite3.IntegrityError:
         pass
+
+    # 为 admin 用户添加默认交易对
+    try:
+        c.execute("SELECT id FROM users WHERE username=?", ('admin',))
+        admin_id = c.fetchone()[0]
+        default_pairs = [
+            ('BTCUSDT', 'BTC/USDT'),
+            ('ETHUSDT', 'ETH/USDT'),
+            ('BNBUSDT', 'BNB/USDT'),
+            ('ADAUSDT', 'ADA/USDT'),
+            ('SOLUSDT', 'SOL/USDT')
+        ]
+        for symbol, name in default_pairs:
+            try:
+                c.execute("INSERT INTO trading_pairs (user_id, symbol, display_name, created_at) VALUES (?, ?, ?, ?)",
+                         (admin_id, symbol, name, datetime.now().isoformat()))
+            except sqlite3.IntegrityError:
+                pass
+        conn.commit()
+    except Exception as e:
+        print(f"[{datetime.now().isoformat()}] ⚠️ 添加默认交易对失败: {e}")
 
     conn.close()
     print(f"[{datetime.now().isoformat()}] ✅ 数据库初始化完成：{DB_FILE}")
@@ -179,3 +212,91 @@ def update_order_status(order_id, status):
     c.execute("""UPDATE orders SET status=? WHERE order_id=?""", (status, order_id))
     conn.commit()
     conn.close()
+
+
+# 新增：交易对管理功能
+def get_user_trading_pairs(username):
+    """获取用户的交易对列表"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return []
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""SELECT id, symbol, display_name, created_at
+                 FROM trading_pairs WHERE user_id=? ORDER BY id ASC""", (user_id,))
+    pairs = c.fetchall()
+    conn.close()
+
+    return [
+        {
+            'id': p[0],
+            'symbol': p[1],
+            'display_name': p[2],
+            'created_at': p[3]
+        }
+        for p in pairs
+    ]
+
+
+def add_trading_pair(username, symbol, display_name):
+    """添加交易对"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return False
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        c.execute("""INSERT INTO trading_pairs (user_id, symbol, display_name, created_at)
+                     VALUES (?, ?, ?, ?)""",
+                  (user_id, symbol.upper(), display_name, datetime.now().isoformat()))
+        conn.commit()
+        conn.close()
+        print(f"[{datetime.now().isoformat()}] ✅ 添加交易对: {symbol} ({display_name})")
+        return True
+    except sqlite3.IntegrityError:
+        conn.close()
+        return False
+
+
+def delete_trading_pair(username, pair_id):
+    """删除交易对"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return False
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("DELETE FROM trading_pairs WHERE id=? AND user_id=?", (pair_id, user_id))
+    deleted = c.rowcount > 0
+    conn.commit()
+    conn.close()
+
+    if deleted:
+        print(f"[{datetime.now().isoformat()}] ✅ 删除交易对 ID: {pair_id}")
+    return deleted
+
+
+def update_trading_pair(username, pair_id, symbol, display_name):
+    """更新交易对"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return False
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        c.execute("""UPDATE trading_pairs SET symbol=?, display_name=?
+                     WHERE id=? AND user_id=?""",
+                  (symbol.upper(), display_name, pair_id, user_id))
+        updated = c.rowcount > 0
+        conn.commit()
+        conn.close()
+        
+        if updated:
+            print(f"[{datetime.now().isoformat()}] ✅ 更新交易对 ID {pair_id}: {symbol} ({display_name})")
+        return updated
+    except sqlite3.IntegrityError:
+        conn.close()
+        return False
