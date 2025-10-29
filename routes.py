@@ -6,7 +6,9 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from binance.client import Client
 
 from config import DB_FILE
-from database import save_user_config, load_user_config, get_user_orders, get_user_id
+from database import (save_user_config, load_user_config, get_user_orders, get_user_id,
+                     get_user_trading_pairs, add_trading_pair, delete_trading_pair, 
+                     update_trading_pair)
 
 from trading import trading_loop, user_bots
 
@@ -188,3 +190,68 @@ def register_routes(app):
                     msg_type = 'error'
 
         return render_template('change_password.html', username=username, message=message, type=msg_type)
+    
+
+
+
+
+# 在 register_routes 函数末尾添加以下路由：
+
+    @app.route('/api/trading_pairs')
+    def api_trading_pairs():
+        if 'user' not in session:
+            return jsonify({'success': False, 'pairs': []}), 401
+        
+        username = session['user']
+        pairs = get_user_trading_pairs(username)
+        return jsonify({'success': True, 'pairs': pairs})
+
+    @app.route('/api/trading_pairs/add', methods=['POST'])
+    def api_add_trading_pair():
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未授权'}), 401
+        
+        username = session['user']
+        data = request.json
+        symbol = data.get('symbol', '').strip().upper()
+        display_name = data.get('display_name', '').strip()
+        
+        if not symbol or not display_name:
+            return jsonify({'success': False, 'message': '交易对和显示名称不能为空'})
+        
+        if add_trading_pair(username, symbol, display_name):
+            return jsonify({'success': True, 'message': '交易对添加成功'})
+        else:
+            return jsonify({'success': False, 'message': '交易对已存在或添加失败'})
+
+    @app.route('/api/trading_pairs/delete', methods=['POST'])
+    def api_delete_trading_pair():
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未授权'}), 401
+        
+        username = session['user']
+        pair_id = request.json.get('id')
+        
+        if delete_trading_pair(username, pair_id):
+            return jsonify({'success': True, 'message': '交易对删除成功'})
+        else:
+            return jsonify({'success': False, 'message': '删除失败'})
+
+    @app.route('/api/trading_pairs/update', methods=['POST'])
+    def api_update_trading_pair():
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未授权'}), 401
+        
+        username = session['user']
+        data = request.json
+        pair_id = data.get('id')
+        symbol = data.get('symbol', '').strip().upper()
+        display_name = data.get('display_name', '').strip()
+        
+        if not symbol or not display_name:
+            return jsonify({'success': False, 'message': '交易对和显示名称不能为空'})
+        
+        if update_trading_pair(username, pair_id, symbol, display_name):
+            return jsonify({'success': True, 'message': '交易对更新成功'})
+        else:
+            return jsonify({'success': False, 'message': '更新失败或交易对已存在'})
