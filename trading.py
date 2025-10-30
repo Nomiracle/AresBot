@@ -147,7 +147,8 @@ def trading_loop(username, symbol):
                                     price=f"{aligned_sell_price}",
                                     timeInForce='GTC'
                                 )
-                                sell_order_id = str(sell_order.get('orderId'))
+                                # 兼容不同交易所：Binance用'orderId'，Backpack用'id'
+                                sell_order_id = str(sell_order.get('orderId') or sell_order.get('id'))
                                 insert_order(user_id, symbol_, str(aligned_sell_price), str(aligned_sell_qty),
                                              'SELL', 'PLACED', sell_order_id)
                                 update_order_status(order_id, 'FILLED')
@@ -280,10 +281,11 @@ def trading_loop(username, symbol):
                                         # newOrderResponse: {...} (新订单详情)
                                         new_order_data = resp.get('newOrderResponse', {})
                                         if isinstance(new_order_data, dict):
-                                            new_order_id = str(new_order_data.get('orderId', order['orderId']))
+                                            # 兼容不同交易所：Binance用'orderId'，Backpack用'id'
+                                            new_order_id = str(new_order_data.get('orderId') or new_order_data.get('id') or order['orderId'])
                                         else:
-                                            # 回退：尝试顶层 orderId
-                                            new_order_id = str(resp.get('orderId', order['orderId']))
+                                            # 回退：尝试顶层 orderId 或 id
+                                            new_order_id = str(resp.get('orderId') or resp.get('id') or order['orderId'])
                                     else:
                                         # 非字典响应，保持原订单ID
                                         new_order_id = str(order['orderId'])
@@ -307,9 +309,15 @@ def trading_loop(username, symbol):
                                         insert_order(user_id, config['symbol'], buy_price_str, str(aligned_quantity),
                                                     'BUY', 'PLACED', new_order_id)
                                     else:
-                                        print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [REPRICE] 订单 {order['orderId']} 价格更新为 {buy_price_str}，但未获取到新订单ID")
+                                        # 无法获取新订单ID，从pending_buys中移除以避免永久阻塞
+                                        print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [REPRICE] 订单 {order['orderId']} 价格更新为 {buy_price_str}，但未获取到新订单ID，从pending_buys中移除")
+                                        bot_data['pending_buys'] = [p for p in bot_data.get('pending_buys', []) if p['order_id'] != str(order['orderId'])]
+                                        update_order_status(str(order['orderId']), 'CANCELLED')
                                 except Exception as e:
                                     print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [REPRICE ERR] 订单 {order['orderId']} 替换价格错误: {e}")
+                                    # 替换失败，从pending_buys中移除以避免永久阻塞
+                                    bot_data['pending_buys'] = [p for p in bot_data.get('pending_buys', []) if p['order_id'] != str(order['orderId'])]
+                                    update_order_status(str(order['orderId']), 'FAILED')
                             except Exception as e:
                                 print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [REPRICE ERR] 订单 {order['orderId']} 外层错误: {e}")
 
@@ -317,7 +325,7 @@ def trading_loop(username, symbol):
                         sell_ids = ', '.join([str(o['orderId']) for o in open_sell_orders])
                         print(f"[{datetime.now().isoformat()}] {log_prefix} 📌 [CHECK] 保留 {len(open_sell_orders)} 笔未完成卖单 (ID: {sell_ids})。")
                 else:
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [CHECK] 未发现未完成订单。")
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [CHECK] 未发现交易所未完成订单。")
 
             except Exception as e:
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [CHECK ERR] 查询未完成订单错误: {e}")
@@ -329,7 +337,16 @@ def trading_loop(username, symbol):
             can_place_buy = (not open_buy_orders) and (not open_sell_orders) and (not has_pending_buys)
 
             if not can_place_buy:
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ [SKIP] 存在未完成订单或待跟踪买单，跳过本次买单挂单。")
+                skip_reasons = []
+                if open_buy_orders:
+                    skip_reasons.append(f"{len(open_buy_orders)}笔未完成买单")
+                if open_sell_orders:
+                    skip_reasons.append(f"{len(open_sell_orders)}笔未完成卖单")
+                if has_pending_buys:
+                    pending_count = len(bot_data.get('pending_buys', []))
+                    skip_reasons.append(f"{pending_count}笔待跟踪买单")
+                reason_text = "、".join(skip_reasons)
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ [SKIP] 存在{reason_text}，跳过本次买单挂单。")
             else:
                 try:
                     buy_price_str = f"{target_price}"
@@ -342,7 +359,8 @@ def trading_loop(username, symbol):
                             price=buy_price_str,
                             timeInForce='GTC'
                         )
-                        real_order_id = str(order.get('orderId') or order.get('orderId'))
+                        # 兼容不同交易所：Binance用'orderId'，Backpack用'id'
+                        real_order_id = str(order.get('orderId') or order.get('id'))
 
                         insert_order(user_id, config['symbol'], buy_price_str, str(config['quantity']),
                                     'BUY', 'PLACED', real_order_id)
@@ -397,7 +415,8 @@ def trading_loop(username, symbol):
                                         price=f"{aligned_sell_price}",
                                         timeInForce='GTC'
                                     )
-                                    sell_order_id = str(sell_order.get('orderId'))
+                                    # 兼容不同交易所：Binance用'orderId'，Backpack用'id'
+                                    sell_order_id = str(sell_order.get('orderId') or sell_order.get('id'))
 
                                     insert_order(pb['user_id'], pb['symbol'], str(aligned_sell_price), str(aligned_sell_qty),
                                                  'SELL', 'PLACED', sell_order_id)

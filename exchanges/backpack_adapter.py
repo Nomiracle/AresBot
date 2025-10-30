@@ -329,7 +329,8 @@ class BackpackAdapter(BaseExchange):
                     'origQty': str(quantity),
                     'status': 'NEW'
                 }
-            return None
+            else:
+                raise Exception(f"下单返回结果为空: symbol={symbol}, quantity={quantity}, price={price}")
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 限价买单失败 ({symbol}): {e}")
             raise
@@ -358,7 +359,8 @@ class BackpackAdapter(BaseExchange):
                     'origQty': str(quantity),
                     'status': 'NEW'
                 }
-            return None
+            else:
+                raise Exception(f"下单返回结果为空: symbol={symbol}, quantity={quantity}, price={price}")
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 限价卖单失败 ({symbol}): {e}")
             raise
