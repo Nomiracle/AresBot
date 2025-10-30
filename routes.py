@@ -3,7 +3,7 @@ import threading
 from datetime import datetime, timedelta
 from flask import request, jsonify, session, redirect, url_for, render_template
 from werkzeug.security import check_password_hash, generate_password_hash
-from binance.client import Client
+from exchanges.factory import ExchangeFactory
 
 from config import DB_FILE
 from database import (save_user_config, load_user_config, get_user_orders, get_user_id,
@@ -179,9 +179,14 @@ def register_routes(app):
 
         try:
             testnet = bool(config.get('testnet', 1))
-            client = Client(config['api_key'], config['api_secret'], testnet=testnet)
+            exchange = ExchangeFactory.create(
+                'binance',
+                config['api_key'],
+                config['api_secret'],
+                testnet=testnet
+            )
 
-            client.ping()
+            exchange.ping()
 
             symbol = config['symbol']
             if username not in user_bots or not isinstance(user_bots.get(username), dict):
@@ -191,7 +196,7 @@ def register_routes(app):
 
             user_bots[username]['bots'][symbol] = {
                 'running': True,
-                'client': client,
+                'exchange': exchange,
                 'config': config,
                 'current_price': None,
                 'target_price': None,
@@ -202,7 +207,9 @@ def register_routes(app):
             thread.start()
             user_bots[username]['bots'][symbol]['thread'] = thread
 
-            print(f"[{datetime.now().isoformat()}] ▶️ 机器人已启动 (user={username}, symbol={symbol}, mode={'SIM' if config.get('simulate_trading',1)==1 else 'REAL'})")
+            exchange_name = config.get('exchange', 'binance').upper()
+            log_prefix = f"[{username}-{exchange_name}-{symbol}]"
+            print(f"[{datetime.now().isoformat()}] {log_prefix} ▶️ 机器人已启动 (mode={'SIM' if config.get('simulate_trading',1)==1 else 'REAL'})")
             return jsonify({'success': True, 'message': f'{symbol} 机器人已启动 ({"模拟" if config.get("simulate_trading",1)==1 else "实盘"})'})
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ 启动失败: {e}")
@@ -224,7 +231,7 @@ def register_routes(app):
                     stopped_any = True
         if not stopped_any:
             return jsonify({'success': False, 'message': '机器人未在运行'})
-        print(f"[{datetime.now().isoformat()}] ◼️ 机器人停止请求 (user={username}, all symbols)")
+        print(f"[{datetime.now().isoformat()}] [{username}-ALL-ALL] ◼️ 机器人停止请求")
         return jsonify({'success': True, 'message': '所有机器人已停止'})
 
     @app.route('/api/config/save', methods=['POST'])
@@ -400,8 +407,13 @@ def register_routes(app):
             return jsonify({'success': False, 'message': 'API密钥不能为空'}), 400
         try:
             testnet = bool(config.get('testnet', 1))
-            client = Client(config['api_key'], config['api_secret'], testnet=testnet)
-            client.ping()
+            exchange = ExchangeFactory.create(
+                'binance',
+                config['api_key'],
+                config['api_secret'],
+                testnet=testnet
+            )
+            exchange.ping()
             symbol = config['symbol']
             if username not in user_bots or not isinstance(user_bots.get(username), dict):
                 user_bots[username] = {'bots': {}}
@@ -409,7 +421,7 @@ def register_routes(app):
                 return jsonify({'success': False, 'message': '该交易对机器人已运行'})
             user_bots[username]['bots'][symbol] = {
                 'running': True,
-                'client': client,
+                'exchange': exchange,
                 'config': config,
                 'current_price': None,
                 'target_price': None,

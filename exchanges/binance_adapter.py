@@ -1,0 +1,227 @@
+"""
+Binance 交易所适配器
+封装所有币安特定的 API 调用与 WebSocket 逻辑
+"""
+import math
+from datetime import datetime
+from typing import Dict, List, Optional, Callable
+from binance.client import Client
+from binance.exceptions import BinanceAPIException
+from binance import ThreadedWebsocketManager
+
+from .base import BaseExchange
+
+
+class BinanceAdapter(BaseExchange):
+    """币安交易所适配器"""
+    
+    def __init__(self, api_key: str, api_secret: str, testnet: bool = True):
+        """初始化币安客户端"""
+        self.client = Client(api_key, api_secret, testnet=testnet)
+        self.api_key = api_key
+        self.api_secret = api_secret
+        self.testnet = testnet
+    
+    def ping(self) -> bool:
+        """测试连接"""
+        try:
+            self.client.ping()
+            return True
+        except Exception:
+            return False
+    
+    def get_symbol_info(self, symbol: str) -> Dict:
+        """获取交易对信息"""
+        try:
+            result = self.client.get_symbol_info(symbol=symbol)
+            if not result:
+                print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 交易对 {symbol} 不存在或无效")
+            return result
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ [Binance] 获取交易对信息失败 ({symbol}): {e}")
+            return None
+    
+    def get_symbol_ticker(self, symbol: str) -> Dict:
+        """获取交易对当前价格"""
+        return self.client.get_symbol_ticker(symbol=symbol)
+    
+    def get_open_orders(self, symbol: str) -> List[Dict]:
+        """获取未完成订单"""
+        return self.client.get_open_orders(symbol=symbol)
+    
+    def get_order(self, symbol: str, order_id: str) -> Dict:
+        """查询订单状态"""
+        return self.client.get_order(symbol=symbol, orderId=int(order_id))
+    
+    def order_limit_buy(self, symbol: str, quantity: float, price: str, **kwargs) -> Dict:
+        """限价买单"""
+        return self.client.order_limit_buy(
+            symbol=symbol,
+            quantity=quantity,
+            price=price,
+            timeInForce=kwargs.get('timeInForce', 'GTC')
+        )
+    
+    def order_limit_sell(self, symbol: str, quantity: float, price: str, **kwargs) -> Dict:
+        """限价卖单"""
+        return self.client.order_limit_sell(
+            symbol=symbol,
+            quantity=quantity,
+            price=price,
+            timeInForce=kwargs.get('timeInForce', 'GTC')
+        )
+    
+    def cancel_order(self, symbol: str, order_id: str) -> Dict:
+        """取消订单"""
+        return self.client.cancel_order(symbol=symbol, orderId=int(order_id))
+    
+    def cancel_replace_order(self, symbol: str, side: str, order_type: str, 
+                            quantity: float, price: str, cancel_order_id: str, **kwargs) -> Dict:
+        """取消并替换订单（改价）"""
+        # 优先使用 python-binance 的 cancelReplace 接口
+        replace_fn = getattr(self.client, 'order_cancel_replace', None) or getattr(self.client, 'cancel_replace_order', None)
+        
+        if replace_fn:
+            return replace_fn(
+                symbol=symbol,
+                side=side,
+                type=order_type,
+                timeInForce=kwargs.get('timeInForce', 'GTC'),
+                quantity=quantity,
+                price=price,
+                cancelOrderId=cancel_order_id,
+                cancelReplaceMode=kwargs.get('cancelReplaceMode', 'STOP_ON_FAILURE')
+            )
+        else:
+            # 兼容旧版库：直接调用底层 POST
+            raw_post = getattr(self.client, '_post', None)
+            if raw_post:
+                return raw_post(
+                    'order/cancelReplace', True,
+                    data={
+                        'symbol': symbol,
+                        'side': side,
+                        'type': order_type,
+                        'timeInForce': kwargs.get('timeInForce', 'GTC'),
+                        'quantity': quantity,
+                        'price': price,
+                        'cancelOrderId': cancel_order_id,
+                        'cancelReplaceMode': kwargs.get('cancelReplaceMode', 'STOP_ON_FAILURE')
+                    }
+                )
+            else:
+                raise NotImplementedError("当前 python-binance 版本不支持 cancelReplace")
+    
+    def start_websocket(self, symbol: str, on_ticker: Callable, on_user: Optional[Callable] = None) -> Dict:
+        """启动 WebSocket 连接"""
+        result = {
+            'manager': None,
+            'ticker_enabled': False,
+            'user_enabled': False
+        }
+        
+        try:
+            # 创建 TWM
+            if self.api_key and self.api_secret:
+                twm = ThreadedWebsocketManager(api_key=self.api_key, api_secret=self.api_secret)
+            else:
+                twm = ThreadedWebsocketManager()
+            
+            twm.start()
+            result['manager'] = twm
+            
+            # 启动行情流（公开流）
+            twm.start_symbol_ticker_socket(callback=on_ticker, symbol=symbol)
+            result['ticker_enabled'] = True
+            print(f"[{datetime.now().isoformat()}] ✅ [Binance] 行情流已启动 ({symbol})")
+            
+            # 启动用户数据流（需要认证）
+            if on_user and self.api_key and self.api_secret:
+                try:
+                    twm.start_user_socket(callback=on_user)
+                    result['user_enabled'] = True
+                    print(f"[{datetime.now().isoformat()}] ✅ [Binance] 用户数据流已启动")
+                except BinanceAPIException as e:
+                    print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 用户数据流启动失败 (API错误: {e.status_code if hasattr(e, 'status_code') else 'unknown'} - {e.message if hasattr(e, 'message') else str(e)})")
+                except Exception as e:
+                    print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 用户数据流启动失败 ({type(e).__name__}: {e})")
+            
+            return result
+            
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ [Binance] WebSocket 启动失败: {e}")
+            return result
+    
+    def stop_websocket(self, ws_manager) -> None:
+        """停止 WebSocket 连接"""
+        if ws_manager:
+            try:
+                ws_manager.stop()
+            except Exception as e:
+                print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] WebSocket 停止失败: {e}")
+    
+    def parse_ticker_message(self, msg: Dict) -> Optional[float]:
+        """解析币安行情消息"""
+        try:
+            # Binance symbol ticker: {'s': 'SYMBOL', 'c': 'lastPrice', ...}
+            last_price = msg.get('c') or msg.get('p') or msg.get('price')
+            if last_price is not None:
+                return float(last_price)
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ [Binance] 解析行情消息失败: {e}")
+        return None
+    
+    def parse_user_message(self, msg: Dict) -> Optional[Dict]:
+        """解析币安用户数据消息"""
+        try:
+            # 错误消息
+            if msg.get('e') == 'error':
+                return {
+                    'event_type': 'error',
+                    'error_message': f"{msg.get('type')}: {msg.get('m')}"
+                }
+            
+            # 订单更新（executionReport）
+            if msg.get('e') == 'executionReport':
+                return {
+                    'event_type': 'order_filled' if msg.get('X') == 'FILLED' else 'order_update',
+                    'order_id': str(msg.get('i')),
+                    'symbol': msg.get('s'),
+                    'side': msg.get('S'),  # BUY/SELL
+                    'status': msg.get('X'),  # NEW/PARTIALLY_FILLED/FILLED...
+                    'price': msg.get('p'),
+                    'quantity': msg.get('q')
+                }
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ [Binance] 解析用户消息失败: {e}")
+        return None
+    
+    def get_price_precision(self, symbol_info: Dict) -> tuple:
+        """提取价格精度"""
+        if not symbol_info or 'filters' not in symbol_info:
+            print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] symbol_info 无效，使用默认价格精度")
+            return 0.01, 2  # 默认值
+            
+        price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
+        if price_filter:
+            tick_size = float(price_filter['tickSize'])
+            price_decimals = int(abs(math.log10(tick_size)))
+            return tick_size, price_decimals
+        return 0.01, 2  # 默认值
+    
+    def get_quantity_precision(self, symbol_info: Dict) -> tuple:
+        """提取数量精度"""
+        if not symbol_info or 'filters' not in symbol_info:
+            print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] symbol_info 无效，使用默认数量精度")
+            return 0.000001, 6  # 默认值
+            
+        lot_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+        if lot_filter:
+            step_size = float(lot_filter['stepSize'])
+            qty_decimals = int(abs(math.log10(step_size)))
+            return step_size, qty_decimals
+        return 0.000001, 6  # 默认值
+    
+    def get_client(self):
+        """获取原始客户端（用于兼容旧代码）"""
+        return self.client

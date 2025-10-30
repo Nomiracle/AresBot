@@ -2,5 +2,5 @@
 *.db
 encryption.key
 .env
-__pycache__/
+*__pycache__/
 *.DS_Store
