@@ -137,11 +137,8 @@ def register_routes(app):
     @app.route('/logout')
     def logout():
         username = session.get('user')
-        if username and username in user_bots:
-            user_data = user_bots.get(username, {})
-            bots = user_data.get('bots', {}) if isinstance(user_data, dict) else {}
-            for b in bots.values():
-                b['running'] = False
+        # 用户登出时不停止机器人，机器人继续在后台运行
+        print(f"[{datetime.now().isoformat()}] [{username}] 🚪 用户登出（机器人继续运行）")
         session.pop('user', None)
         return redirect(url_for('login'))
 
@@ -228,14 +225,18 @@ def register_routes(app):
         # 停止该用户的所有机器人（兼容旧接口）
         user_data = user_bots.get(username, {})
         stopped_any = False
+        stopped_bots = []
         if isinstance(user_data, dict):
-            for b in user_data.get('bots', {}).values():
+            for symbol, b in user_data.get('bots', {}).items():
                 if b.get('running'):
+                    exchange_name = b.get('config', {}).get('exchange', 'binance').upper()
                     b['running'] = False
                     stopped_any = True
+                    stopped_bots.append(f"{exchange_name}-{symbol}")
+                    print(f"[{datetime.now().isoformat()}] [{username}-{exchange_name}-{symbol}] ⏹️ 通过 /api/stop 停止")
         if not stopped_any:
             return jsonify({'success': False, 'message': '机器人未在运行'})
-        print(f"[{datetime.now().isoformat()}] [{username}-ALL-ALL] ◼️ 机器人停止请求")
+        print(f"[{datetime.now().isoformat()}] [{username}-ALL-ALL] ◼️ 停止了 {len(stopped_bots)} 个机器人: {', '.join(stopped_bots)}")
         return jsonify({'success': True, 'message': '所有机器人已停止'})
 
     @app.route('/api/config/save', methods=['POST'])
