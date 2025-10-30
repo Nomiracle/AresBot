@@ -1,0 +1,71 @@
+GNU AFFERO GENERAL PUBLIC LICENSE
+Version 3, 19 November 2007
+
+Copyright (C) 2025 Nomiracle
+Original Author: Nomiracle (https://github.com/Nomiracle)
+Project: AresBot - Cryptocurrency Trading Bot
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+================================================================================
+
+ADDITIONAL TERMS AND CONDITIONS:
+
+1. NON-COMMERCIAL USE ONLY
+   This software is licensed for NON-COMMERCIAL use only. You may NOT use
+   this software or any derivative works for commercial purposes, including
+   but not limited to:
+   - Selling the software or services based on it
+   - Using it in a commercial trading operation
+   - Offering it as a paid service
+   
+   For commercial licensing, please contact: https://github.com/Nomiracle/AresBot
+
+2. ATTRIBUTION REQUIREMENT
+   You MUST give appropriate credit to the original author (Nomiracle) in any
+   distribution or derivative work. This includes:
+   - Keeping this license file intact
+   - Maintaining copyright notices in source code
+   - Displaying attribution in user-facing interfaces
+   - Linking to the original repository: https://github.com/Nomiracle/AresBot
+
+3. OPEN SOURCE REQUIREMENT
+   Any modifications or derivative works MUST be released under the same license
+   (AGPL-3.0) and made publicly available. You MUST:
+   - Share your source code
+   - Document your changes
+   - Maintain the same license terms
+
+4. NETWORK USE DISCLOSURE
+   If you run a modified version of this software accessible over a network,
+   you MUST make the complete source code available to users of that network
+   service.
+
+5. NO WARRANTY
+   This software is provided "AS IS" without warranty of any kind. The author
+   is not responsible for any financial losses or damages resulting from the
+   use of this software.
+
+6. TRADING RISK DISCLAIMER
+   Cryptocurrency trading involves substantial risk of loss. This software is
+   provided for educational and research purposes. Users are solely responsible
+   for their trading decisions and any resulting financial outcomes.
+
+================================================================================
+
+For the full text of the GNU Affero General Public License v3.0, see:
+https://www.gnu.org/licenses/agpl-3.0.html
+
+For questions about licensing, please open an issue at:
+https://github.com/Nomiracle/AresBot/issues

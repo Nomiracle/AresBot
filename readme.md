@@ -121,3 +121,75 @@ python app.py --recreate-db
 
 自动交易存在风险。强烈建议先使用“测试网络 + 模拟交易”进行充分验证；若切换到真实交易，请自行承担由此带来的资金风险。
 
+## 许可证
+
+本项目采用 **GNU Affero General Public License v3.0 (AGPL-3.0)** 许可证。
+
+### 📋 许可证要点
+
+- ✅ **可以自由使用** - 个人学习和研究
+- ✅ **必须开源** - 任何修改或衍生作品必须开源
+- ✅ **必须声明原作者** - 保留版权声明和作者信息
+- ❌ **禁止商业使用** - 不得用于商业目的或盈利服务
+- ❌ **无担保** - 软件按"原样"提供，作者不承担任何责任
+
+### 🔒 附加条款
+
+1. **非商业使用限制**
+   - 禁止将本软件用于商业交易运营
+   - 禁止作为付费服务提供
+   - 禁止销售本软件或基于本软件的服务
+   - 如需商业授权，请联系原作者
+
+2. **署名要求**
+   - 必须保留原作者信息（Nomiracle）
+   - 必须保留指向原始仓库的链接
+   - 必须在用户界面中显示归属信息
+   - 必须保持许可证文件完整
+
+3. **开源要求**
+   - 任何修改必须公开源代码
+   - 必须使用相同的 AGPL-3.0 许可证
+   - 网络服务必须提供源代码下载
+
+4. **免责声明**
+   - 加密货币交易风险极高
+   - 作者不对任何财务损失负责
+   - 本软件仅供教育和研究目的
+
+详细许可证内容请查看 [LICENSE](LICENSE) 文件。
+
+## 作者
+
+**原作者:** [Nomiracle](https://github.com/Nomiracle)
+
+**项目地址:** https://github.com/Nomiracle/AresBot
+
+如有问题或建议，欢迎提交 [Issue](https://github.com/Nomiracle/AresBot/issues)。
+
+## 贡献
+
+欢迎贡献代码！请遵循以下规则：
+
+1. Fork 本仓库
+2. 创建你的特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交你的更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 开启一个 Pull Request
+
+**注意：** 所有贡献必须遵守 AGPL-3.0 许可证。
+
+## 致谢
+
+感谢以下开源项目：
+
+- [Flask](https://flask.palletsprojects.com/) - Web 框架
+- [python-binance](https://github.com/sammchardy/python-binance) - Binance API 客户端
+- [bpx-py](https://github.com/sndmndss/bpx-py) - Backpack API 客户端
+- [cryptography](https://cryptography.io/) - 加密库
+
+---
+
+**⚠️ 重要提示：** 本软件仅供学习和研究使用。加密货币交易存在极高风险，请谨慎使用。作者不对任何使用本软件造成的损失负责。
+
+**📜 版权所有 © 2025 Nomiracle. 保留所有权利。**
