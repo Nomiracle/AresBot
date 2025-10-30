@@ -230,8 +230,21 @@ def trading_loop(username, symbol):
                                         cancelOrderId=order['orderId'],
                                         cancelReplaceMode='STOP_ON_FAILURE'
                                     )
-                                    new_part = resp.get('newOrderResult') if isinstance(resp, dict) else None
-                                    new_order_id = str((new_part or {}).get('orderId') or order.get('orderId'))
+                                    # 调试：打印响应类型和内容
+                                    print(f"[{datetime.now().isoformat()}] 🔍 [DEBUG] cancelReplace 响应类型: {type(resp).__name__}, 内容: {resp}")
+                                    
+                                    # 安全提取新订单ID
+                                    if isinstance(resp, dict):
+                                        new_part = resp.get('newOrderResult', {})
+                                        if isinstance(new_part, dict):
+                                            new_order_id = str(new_part.get('orderId', order['orderId']))
+                                        else:
+                                            new_order_id = str(resp.get('orderId', order['orderId']))
+                                    else:
+                                        # 非字典响应，保持原订单ID
+                                        new_order_id = str(order['orderId'])
+                                        print(f"[{datetime.now().isoformat()}] ⚠️ [REPRICE] 响应非字典类型，无法提取新订单ID，保持原ID")
+                                    
                                     print(f"[{datetime.now().isoformat()}] ✅ [REPRICE] 订单 {order['orderId']} 已替换为新价格 {buy_price_str}，新订单ID={new_order_id}")
 
                                     # 同步 pending_buys 中的 order_id 与价格
@@ -260,8 +273,20 @@ def trading_loop(username, symbol):
                                                     'cancelReplaceMode': 'STOP_ON_FAILURE'
                                                 }
                                             )
-                                            new_part = resp.get('newOrderResult') if isinstance(resp, dict) else None
-                                            new_order_id = str((new_part or {}).get('orderId') or order.get('orderId'))
+                                            # 调试：打印响应类型和内容
+                                            print(f"[{datetime.now().isoformat()}] 🔍 [DEBUG] RAW cancelReplace 响应类型: {type(resp).__name__}, 内容: {resp}")
+                                            
+                                            # 安全提取新订单ID
+                                            if isinstance(resp, dict):
+                                                new_part = resp.get('newOrderResult', {})
+                                                if isinstance(new_part, dict):
+                                                    new_order_id = str(new_part.get('orderId', order['orderId']))
+                                                else:
+                                                    new_order_id = str(resp.get('orderId', order['orderId']))
+                                            else:
+                                                new_order_id = str(order['orderId'])
+                                                print(f"[{datetime.now().isoformat()}] ⚠️ [REPRICE] (RAW) 响应非字典类型，无法提取新订单ID，保持原ID")
+                                            
                                             print(f"[{datetime.now().isoformat()}] ✅ [REPRICE] (RAW) 订单 {order['orderId']} 已替换为新价格 {buy_price_str}，新订单ID={new_order_id}")
 
                                             updated = []
