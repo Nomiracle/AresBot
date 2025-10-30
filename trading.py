@@ -41,6 +41,16 @@ def trading_loop(username, symbol):
 
     while bot_data.get('running'):
         try:
+            # 调试：检查 bot_data 是否仍然有效
+            if not bot_data:
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [DEBUG] bot_data 为 None，退出循环")
+                break
+            
+            running_status = bot_data.get('running')
+            if not running_status:
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏹️ [DEBUG] running 状态为 False，正常退出循环")
+                break
+            
             config = bot_data['config']
             exchange = bot_data['exchange']
             user_id = get_user_id(username)
@@ -418,4 +428,7 @@ def trading_loop(username, symbol):
             traceback.print_exc()
             time.sleep(1)
 
+    # 循环结束，打印退出原因
+    final_running = bot_data.get('running') if bot_data else None
     print(f"[{datetime.now().isoformat()}] {log_prefix} ◼️ 交易循环已停止")
+    print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [DEBUG] 退出时状态: bot_data存在={bot_data is not None}, running={final_running}")
