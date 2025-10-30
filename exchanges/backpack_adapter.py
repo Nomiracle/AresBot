@@ -205,6 +205,28 @@ class BackpackAdapter(BaseExchange):
                 print(f"[{datetime.now().isoformat()}] ℹ️ [Backpack] 订单数据为空")
                 return []
             
+            # 检查是否是 API 错误响应
+            if isinstance(orders, dict) and 'code' in orders and 'message' in orders:
+                error_code = orders.get('code')
+                error_msg = orders.get('message')
+                print(f"[{datetime.now().isoformat()}] ❌ [Backpack] API 错误响应:")
+                print(f"[{datetime.now().isoformat()}]    错误代码: {error_code}")
+                print(f"[{datetime.now().isoformat()}]    错误信息: {error_msg}")
+                
+                # 根据错误类型给出具体建议
+                if error_code == 'INVALID_CLIENT_REQUEST' and 'signature' in error_msg.lower():
+                    print(f"[{datetime.now().isoformat()}] 💡 [Backpack] 签名错误，可能原因:")
+                    print(f"[{datetime.now().isoformat()}]    1. API Secret 格式不正确（需要 base64 格式）")
+                    print(f"[{datetime.now().isoformat()}]    2. API Key 和 Secret 不匹配")
+                    print(f"[{datetime.now().isoformat()}]    3. 服务器时间不同步")
+                    print(f"[{datetime.now().isoformat()}]    4. API 密钥已过期或被禁用")
+                elif 'unauthorized' in error_msg.lower():
+                    print(f"[{datetime.now().isoformat()}] 💡 [Backpack] 认证失败，请检查 API 密钥")
+                elif 'rate limit' in error_msg.lower():
+                    print(f"[{datetime.now().isoformat()}] 💡 [Backpack] API 请求频率超限")
+                
+                return []
+            
             # 确保是列表
             if not isinstance(orders, list):
                 print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 订单数据不是列表，转换中")
