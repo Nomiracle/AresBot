@@ -23,9 +23,13 @@ class BackpackAdapter(BaseExchange):
         """初始化 Backpack 客户端
         
         Args:
-            api_key: API 公钥
-            api_secret: API 私钥
+            api_key: API 公钥 (Base58 格式)
+            api_secret: API 私钥 (Base64 编码的 Ed25519 私钥)
             testnet: 是否使用测试网（Backpack 暂不支持测试网，此参数保留）
+        
+        注意：
+        - public_key: Backpack 账户的公钥，格式如 "5xN..."
+        - secret_key: 必须是 base64 编码的私钥字符串
         """
         if Account is None or Public is None:
             raise ImportError("请先安装 bpx-py: pip install bpx-py")
@@ -34,19 +38,34 @@ class BackpackAdapter(BaseExchange):
         self.api_secret = api_secret
         self.testnet = testnet
         
-        # 初始化账户客户端（私有 API）
-        self.account = Account(
-            public_key=api_key,
-            secret_key=api_secret,
-            debug=False,
-            window=5000
-        )
-        
-        # 初始化公共客户端（公共 API）
-        self.public = Public()
-        
-        # 缓存市场信息
-        self._markets_cache = None
+        try:
+            # 初始化账户客户端（私有 API）
+            # secret_key 必须是 base64 编码的字符串
+            self.account = Account(
+                public_key=api_key,
+                secret_key=api_secret,
+                debug=False,
+                window=5000
+            )
+            
+            # 初始化公共客户端（公共 API）
+            self.public = Public()
+            
+            # 缓存市场信息
+            self._markets_cache = None
+            
+            print(f"[{datetime.now().isoformat()}] ✅ [Backpack] 客户端初始化成功")
+            
+        except Exception as e:
+            error_msg = str(e)
+            if "Incorrect padding" in error_msg or "Invalid base64" in error_msg:
+                raise ValueError(
+                    f"Backpack API Secret 格式错误！\n"
+                    f"错误: {error_msg}\n"
+                    f"请确保 API Secret 是 base64 编码的私钥。\n"
+                    f"提示：在 Backpack 后台生成 API 密钥时，会提供 base64 格式的 Secret Key。"
+                )
+            raise
         
         print(f"[{datetime.now().isoformat()}] ✅ [Backpack] 适配器初始化成功")
     
@@ -72,25 +91,47 @@ class BackpackAdapter(BaseExchange):
     def _convert_symbol(self, symbol: str) -> str:
         """转换交易对格式
         
-        Binance 格式: BTCUSDT
-        Backpack 格式: BTC_USDT
+        Binance 格式: BTCUSDT, ETHUSD
+        Backpack 格式: BTC_USDC, ETH_USDC
+        
+        注意：
+        - Backpack 只支持 USDC 作为计价货币
+        - 前端显示 USD，但 API 使用 USDC
+        - 自动将 USDT 和 USD 转换为 USDC
         """
-        # 如果已经是 Backpack 格式，直接返回
+        # 如果已经是 Backpack 格式，检查是否需要转换计价货币
         if '_' in symbol:
+            parts = symbol.split('_')
+            if len(parts) == 2:
+                base, quote = parts
+                # USD 或 USDT 转换为 USDC
+                if quote in ['USD', 'USDT']:
+                    converted = f"{base}_USDC"
+                    print(f"[{datetime.now().isoformat()}] 🔄 [Backpack] 转换计价货币: {symbol} -> {converted}")
+                    return converted
             return symbol
         
-        # 尝试常见的转换
-        # BTCUSDT -> BTC_USDT
-        # ETHUSDC -> ETH_USDC
-        # SOLUSDC -> SOL_USDC
-        common_quotes = ['USDT', 'USDC', 'USD', 'BTC', 'ETH']
-        for quote in common_quotes:
-            if symbol.endswith(quote):
-                base = symbol[:-len(quote)]
-                return f"{base}_{quote}"
+        # Backpack 使用 USDC，将 USDT 和 USD 都转换为 USDC
+        # BTCUSDT -> BTC_USDC
+        # BTCUSD -> BTC_USDC (前端显示 USD，API 用 USDC)
+        # ETHUSDT -> ETH_USDC
+        if symbol.endswith('USDT'):
+            base = symbol[:-4]  # 移除 USDT
+            return f"{base}_USDC"
+        
+        if symbol.endswith('USD'):
+            base = symbol[:-3]  # 移除 USD
+            return f"{base}_USDC"
+        
+        # 处理已经是 USDC 的情况
+        # BTCUSDC -> BTC_USDC
+        if symbol.endswith('USDC'):
+            base = symbol[:-4]
+            return f"{base}_USDC"
         
         # 如果无法识别，返回原值
         print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 无法转换交易对格式: {symbol}")
+        print(f"[{datetime.now().isoformat()}] 💡 [Backpack] 提示: Backpack 只支持 USDC 计价，请使用如 BTCUSDC 或 BTCUSD 格式")
         return symbol
     
     def get_symbol_info(self, symbol: str) -> Dict:
@@ -102,6 +143,7 @@ class BackpackAdapter(BaseExchange):
             for market in markets:
                 if market.get('symbol') == bpx_symbol:
                     return market
+                print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 交易对 {market.get('symbol')} 不存在：{bpx_symbol}")
             
             print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 交易对 {bpx_symbol} 不存在")
             return None
@@ -127,13 +169,48 @@ class BackpackAdapter(BaseExchange):
     
     def get_open_orders(self, symbol: str) -> List[Dict]:
         """获取未完成订单"""
+        import time
+        
+        bpx_symbol = self._convert_symbol(symbol)
+        
+        # 重试机制
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Backpack API 需要使用 symbol 参数名
+                orders = self.account.get_open_orders(symbol=bpx_symbol)
+                break  # 成功则跳出循环
+            except Exception as e:
+                error_msg = str(e)
+                if 'SSL' in error_msg or 'Connection' in error_msg:
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 2  # 2, 4, 6 秒
+                        print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] SSL/连接错误，{wait_time}秒后重试 ({attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 重试{max_retries}次后仍失败")
+                        return []
+                else:
+                    # 非网络错误，直接抛出
+                    raise
+        
         try:
-            bpx_symbol = self._convert_symbol(symbol)
-            orders = self.account.get_open_orders(bpx_symbol)
+            # 检查返回数据格式
+            if orders is None or not orders:
+                return []
+            
+            # 确保是列表
+            if not isinstance(orders, list):
+                orders = [orders]
             
             # 转换为统一格式
             result = []
-            for order in orders or []:
+            for order in orders:
+                # 确保 order 是字典
+                if not isinstance(order, dict):
+                    continue
+                
                 result.append({
                     'orderId': order.get('id'),
                     'symbol': order.get('symbol'),
@@ -145,16 +222,22 @@ class BackpackAdapter(BaseExchange):
                     'type': order.get('orderType'),
                     'timeInForce': order.get('timeInForce')
                 })
+            
+            if result:
+                print(f"[{datetime.now().isoformat()}] ✅ [Backpack] 找到 {len(result)} 个未完成订单")
             return result
+            
         except Exception as e:
+            import traceback
             print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 获取未完成订单失败 ({symbol}): {e}")
+            print(f"[{datetime.now().isoformat()}] 📋 [Backpack] 错误堆栈:\n{traceback.format_exc()}")
             return []
     
-    def get_order(self, symbol: str, order_id: str) -> Dict:
+    def get_order(self, symbol: str, orderId: str) -> Dict:
         """查询订单状态"""
         try:
             bpx_symbol = self._convert_symbol(symbol)
-            order = self.account.get_open_order(bpx_symbol, order_id)
+            order = self.account.get_open_order(symbol=bpx_symbol, order_id=orderId)
             
             if order:
                 return {
