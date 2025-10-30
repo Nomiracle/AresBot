@@ -25,6 +25,8 @@ def test_factory():
     supported = ExchangeFactory.get_supported_exchanges()
     print(f"✓ 支持的交易所: {supported}")
     assert 'binance' in supported, "应该支持 binance"
+    assert 'backpack' in supported, "应该支持 backpack"
+    assert 'bpx' in supported, "应该支持 bpx (backpack 别名)"
     
     # 测试创建币安适配器（使用测试密钥）
     exchange = ExchangeFactory.create(
@@ -35,6 +37,25 @@ def test_factory():
     )
     print(f"✓ 成功创建币安适配器: {type(exchange).__name__}")
     assert exchange is not None, "应该成功创建适配器"
+    
+    # 测试创建 Backpack 适配器（如果已安装 bpx-py）
+    try:
+        backpack_exchange = ExchangeFactory.create(
+            'backpack',
+            'test_key',
+            'test_secret',
+            testnet=True
+        )
+        if backpack_exchange:
+            print(f"✓ 成功创建 Backpack 适配器: {type(backpack_exchange).__name__}")
+            
+            # 测试 BPX 别名
+            bpx_exchange = ExchangeFactory.create('bpx', 'test_key', 'test_secret')
+            print(f"✓ BPX 别名正常工作: {type(bpx_exchange).__name__}")
+        else:
+            print("ℹ️ Backpack 适配器创建失败（可能未安装 bpx-py）")
+    except ImportError:
+        print("ℹ️ 跳过 Backpack 测试（未安装 bpx-py）")
     
     # 测试不支持的交易所
     unsupported = ExchangeFactory.create('unknown_exchange', 'key', 'secret')

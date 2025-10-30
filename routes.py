@@ -179,12 +179,16 @@ def register_routes(app):
 
         try:
             testnet = bool(config.get('testnet', 1))
+            exchange_name = config.get('exchange', 'binance').lower()
             exchange = ExchangeFactory.create(
-                'binance',
+                exchange_name,
                 config['api_key'],
                 config['api_secret'],
                 testnet=testnet
             )
+            
+            if not exchange:
+                return jsonify({'success': False, 'message': f'不支持的交易所: {exchange_name}'}), 400
 
             exchange.ping()
 
@@ -240,12 +244,15 @@ def register_routes(app):
             return jsonify({'success': False, 'message': '未授权'}), 401
 
         username = session['user']
-        config = request.json
+        data = request.json
+        config = data.get('config', data)  # 兼容旧格式
+        config_name = data.get('config_name', 'default')
+        
         if not config.get('api_key') or not config.get('api_secret'):
             return jsonify({'success': False, 'message': 'API密钥不能为空'}), 400
 
-        if save_user_config(username, config):
-            return jsonify({'success': True, 'message': '配置已加密保存到服务器'})
+        if save_user_config(username, config, config_name):
+            return jsonify({'success': True, 'message': f'配置 "{config_name}" 已加密保存到服务器'})
         else:
             return jsonify({'success': False, 'message': '保存失败'}), 500
 
@@ -255,11 +262,41 @@ def register_routes(app):
             return jsonify({'success': False, 'message': '未授权'}), 401
 
         username = session['user']
-        config = load_user_config(username)
+        config_name = request.args.get('config_name', 'default')
+        config = load_user_config(username, config_name)
         if config:
             return jsonify({'success': True, 'config': config})
         else:
             return jsonify({'success': False, 'message': '未找到已保存的配置'})
+    
+    @app.route('/api/configs')
+    def api_configs_list():
+        """获取用户的所有配置列表"""
+        if 'user' not in session:
+            return jsonify({'success': False, 'configs': []}), 401
+        
+        username = session['user']
+        from database import get_user_config_list
+        configs = get_user_config_list(username)
+        return jsonify({'success': True, 'configs': configs})
+    
+    @app.route('/api/config/delete', methods=['POST'])
+    def api_delete_config():
+        """删除指定配置"""
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未授权'}), 401
+        
+        username = session['user']
+        config_name = request.json.get('config_name')
+        
+        if not config_name or config_name == 'default':
+            return jsonify({'success': False, 'message': '不能删除 default 配置'}), 400
+        
+        from database import delete_user_config
+        if delete_user_config(username, config_name):
+            return jsonify({'success': True, 'message': f'配置 "{config_name}" 已删除'})
+        else:
+            return jsonify({'success': False, 'message': '删除失败'}), 500
 
     @app.route('/api/orders')
     def api_orders():
@@ -368,11 +405,12 @@ def register_routes(app):
         pair_id = data.get('id')
         symbol = data.get('symbol', '').strip().upper()
         display_name = data.get('display_name', '').strip()
+        exchanges = data.get('exchanges')  # 可选参数
         
         if not symbol or not display_name:
             return jsonify({'success': False, 'message': '交易对和显示名称不能为空'})
         
-        if update_trading_pair(username, pair_id, symbol, display_name):
+        if update_trading_pair(username, pair_id, symbol, display_name, exchanges):
             return jsonify({'success': True, 'message': '交易对更新成功'})
         else:
             return jsonify({'success': False, 'message': '更新失败或交易对已存在'})
@@ -407,12 +445,17 @@ def register_routes(app):
             return jsonify({'success': False, 'message': 'API密钥不能为空'}), 400
         try:
             testnet = bool(config.get('testnet', 1))
+            exchange_name = config.get('exchange', 'binance').lower()
             exchange = ExchangeFactory.create(
-                'binance',
+                exchange_name,
                 config['api_key'],
                 config['api_secret'],
                 testnet=testnet
             )
+            
+            if not exchange:
+                return jsonify({'success': False, 'message': f'不支持的交易所: {exchange_name}'}), 400
+                
             exchange.ping()
             symbol = config['symbol']
             if username not in user_bots or not isinstance(user_bots.get(username), dict):

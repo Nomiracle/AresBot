@@ -5,13 +5,15 @@
 from typing import Optional
 from .base import BaseExchange
 from .binance_adapter import BinanceAdapter
-
+from .backpack_adapter import BackpackAdapter
 
 class ExchangeFactory:
     """交易所工厂"""
     
     SUPPORTED_EXCHANGES = {
         'binance': BinanceAdapter,
+        'backpack': BackpackAdapter,
+        'bpx': BackpackAdapter,  # 别名
         # 未来可以添加其他交易所
         # 'okx': OKXAdapter,
         # 'bybit': BybitAdapter,

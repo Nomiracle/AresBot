@@ -27,6 +27,8 @@ def init_db(recreate=False):
     c.execute('''CREATE TABLE IF NOT EXISTS user_configs
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   user_id INTEGER NOT NULL,
+                  config_name TEXT NOT NULL DEFAULT 'default',
+                  exchange TEXT NOT NULL DEFAULT 'binance',
                   api_key TEXT NOT NULL,
                   api_secret TEXT NOT NULL,
                   symbol TEXT NOT NULL,
@@ -37,7 +39,21 @@ def init_db(recreate=False):
                   testnet INTEGER DEFAULT 1,
                   simulate_trading INTEGER DEFAULT 1,
                   updated_at TEXT NOT NULL,
-                  FOREIGN KEY (user_id) REFERENCES users(id))''')
+                  FOREIGN KEY (user_id) REFERENCES users(id),
+                  UNIQUE(user_id, config_name))''')
+    
+    # 为已存在的表添加新列（如果不存在）
+    try:
+        c.execute("ALTER TABLE user_configs ADD COLUMN config_name TEXT NOT NULL DEFAULT 'default'")
+        print(f"[{datetime.now().isoformat()}] ✅ user_configs 表已添加 config_name 列")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
+    
+    try:
+        c.execute("ALTER TABLE user_configs ADD COLUMN exchange TEXT NOT NULL DEFAULT 'binance'")
+        print(f"[{datetime.now().isoformat()}] ✅ user_configs 表已添加 exchange 列")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
 
     c.execute('''CREATE TABLE IF NOT EXISTS orders
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,9 +73,17 @@ def init_db(recreate=False):
                   user_id INTEGER NOT NULL,
                   symbol TEXT NOT NULL,
                   display_name TEXT NOT NULL,
+                  exchanges TEXT DEFAULT 'binance,backpack',
                   created_at TEXT NOT NULL,
                   FOREIGN KEY (user_id) REFERENCES users(id),
                   UNIQUE(user_id, symbol))''')
+    
+    # 为已存在的表添加 exchanges 列（如果不存在）
+    try:
+        c.execute("ALTER TABLE trading_pairs ADD COLUMN exchanges TEXT DEFAULT 'binance,backpack'")
+        print(f"[{datetime.now().isoformat()}] ✅ trading_pairs 表已添加 exchanges 列")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
 
     try:
         c.execute("INSERT INTO users (username, password, created_at) VALUES (?, ?, ?)",
@@ -103,7 +127,7 @@ def get_user_id(username):
     return result[0] if result else None
 
 
-def save_user_config(username, config):
+def save_user_config(username, config, config_name='default'):
     user_id = get_user_id(username)
     if not user_id:
         return False
@@ -113,25 +137,26 @@ def save_user_config(username, config):
 
     encrypted_api_key = encrypt_data(config['api_key'])
     encrypted_api_secret = encrypt_data(config['api_secret'])
+    exchange = config.get('exchange', 'binance')
 
-    c.execute("SELECT id FROM user_configs WHERE user_id=?", (user_id,))
+    c.execute("SELECT id FROM user_configs WHERE user_id=? AND config_name=?", (user_id, config_name))
     exists = c.fetchone()
 
     if exists:
         c.execute("""UPDATE user_configs
-                     SET api_key=?, api_secret=?, symbol=?, offset_percent=?, sell_offset_percent=?,
+                     SET exchange=?, api_key=?, api_secret=?, symbol=?, offset_percent=?, sell_offset_percent=?,
                          quantity=?, interval=?, testnet=?, simulate_trading=?, updated_at=?
-                     WHERE user_id=?""",
-                  (encrypted_api_key, encrypted_api_secret, config['symbol'],
+                     WHERE user_id=? AND config_name=?""",
+                  (exchange, encrypted_api_key, encrypted_api_secret, config['symbol'],
                    config['offset_percent'], config.get('sell_offset_percent', 0.5),
                    config['quantity'], config['interval'],
                    config.get('testnet', 1), config.get('simulate_trading', 1),
-                   datetime.now().isoformat(), user_id))
+                   datetime.now().isoformat(), user_id, config_name))
     else:
         c.execute("""INSERT INTO user_configs
-                     (user_id, api_key, api_secret, symbol, offset_percent, sell_offset_percent, quantity, interval, testnet, simulate_trading, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                  (user_id, encrypted_api_key, encrypted_api_secret, config['symbol'],
+                     (user_id, config_name, exchange, api_key, api_secret, symbol, offset_percent, sell_offset_percent, quantity, interval, testnet, simulate_trading, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (user_id, config_name, exchange, encrypted_api_key, encrypted_api_secret, config['symbol'],
                    config['offset_percent'], config.get('sell_offset_percent', 0.5),
                    config['quantity'], config['interval'],
                    config.get('testnet', 1), config.get('simulate_trading', 1),
@@ -139,18 +164,21 @@ def save_user_config(username, config):
 
     conn.commit()
     conn.close()
-    print(f"[{datetime.now().isoformat()}] ✅ 配置已保存到 DB (user={username})")
+    print(f"[{datetime.now().isoformat()}] ✅ 配置已保存到 DB (user={username}, config={config_name})")
     return True
 
 
-def load_user_config(username):
+def load_user_config(username, config_name='default'):
     user_id = get_user_id(username)
     if not user_id:
         return None
 
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT * FROM user_configs WHERE user_id=?", (user_id,))
+    c.execute("""SELECT config_name, exchange, api_key, api_secret, symbol, 
+                        offset_percent, sell_offset_percent, quantity, interval, 
+                        testnet, simulate_trading
+                 FROM user_configs WHERE user_id=? AND config_name=?""", (user_id, config_name))
     result = c.fetchone()
     conn.close()
 
@@ -158,6 +186,8 @@ def load_user_config(username):
         return None
 
     return {
+        'config_name': result[0],
+        'exchange': result[1],
         'api_key': decrypt_data(result[2]),
         'api_secret': decrypt_data(result[3]),
         'symbol': result[4],
@@ -168,6 +198,48 @@ def load_user_config(username):
         'testnet': result[9],
         'simulate_trading': result[10]
     }
+
+
+def get_user_config_list(username):
+    """获取用户的所有配置列表"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return []
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""SELECT config_name, exchange, symbol, updated_at 
+                 FROM user_configs WHERE user_id=? ORDER BY updated_at DESC""", (user_id,))
+    configs = c.fetchall()
+    conn.close()
+
+    return [
+        {
+            'config_name': c[0],
+            'exchange': c[1],
+            'symbol': c[2],
+            'updated_at': c[3]
+        }
+        for c in configs
+    ]
+
+
+def delete_user_config(username, config_name):
+    """删除指定的配置"""
+    user_id = get_user_id(username)
+    if not user_id or config_name == 'default':
+        return False  # 不允许删除 default 配置
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("DELETE FROM user_configs WHERE user_id=? AND config_name=?", (user_id, config_name))
+    deleted = c.rowcount > 0
+    conn.commit()
+    conn.close()
+
+    if deleted:
+        print(f"[{datetime.now().isoformat()}] ✅ 删除配置: {config_name} (user={username})")
+    return deleted
 
 
 def get_user_orders(username):
@@ -223,7 +295,7 @@ def get_user_trading_pairs(username):
 
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("""SELECT id, symbol, display_name, created_at
+    c.execute("""SELECT id, symbol, display_name, exchanges, created_at
                  FROM trading_pairs WHERE user_id=? ORDER BY id ASC""", (user_id,))
     pairs = c.fetchall()
     conn.close()
@@ -233,7 +305,8 @@ def get_user_trading_pairs(username):
             'id': p[0],
             'symbol': p[1],
             'display_name': p[2],
-            'created_at': p[3]
+            'exchanges': p[3] or 'binance,backpack',  # 默认支持所有交易所
+            'created_at': p[4]
         }
         for p in pairs
     ]
@@ -278,7 +351,7 @@ def delete_trading_pair(username, pair_id):
     return deleted
 
 
-def update_trading_pair(username, pair_id, symbol, display_name):
+def update_trading_pair(username, pair_id, symbol, display_name, exchanges=None):
     """更新交易对"""
     user_id = get_user_id(username)
     if not user_id:
@@ -287,9 +360,14 @@ def update_trading_pair(username, pair_id, symbol, display_name):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     try:
-        c.execute("""UPDATE trading_pairs SET symbol=?, display_name=?
-                     WHERE id=? AND user_id=?""",
-                  (symbol.upper(), display_name, pair_id, user_id))
+        if exchanges is not None:
+            c.execute("""UPDATE trading_pairs SET symbol=?, display_name=?, exchanges=?
+                         WHERE id=? AND user_id=?""",
+                      (symbol.upper(), display_name, exchanges, pair_id, user_id))
+        else:
+            c.execute("""UPDATE trading_pairs SET symbol=?, display_name=?
+                         WHERE id=? AND user_id=?""",
+                      (symbol.upper(), display_name, pair_id, user_id))
         updated = c.rowcount > 0
         conn.commit()
         conn.close()

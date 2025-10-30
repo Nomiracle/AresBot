@@ -256,7 +256,7 @@
             ⚔️ AresBot 控制台 <span class="security-badge">🔒 加密存储</span>
           </h1>
           <p class="subtitle">
-            币安自动交易机器人 v3.0 - 默认模拟模式 (simulate_trading=1)
+            多交易所自动交易机器人 v3.1 - 支持 Binance & Backpack - 默认模拟模式
           </p>
         </div>
         <div class="user-info">
@@ -299,15 +299,22 @@
         </h3>
         <div class="config-grid">
           <div class="input-group">
+            <label>交易所 🏦</label>
+            <select id="exchange" onchange="updateExchangeUI()">
+              <option value="binance">Binance (币安)</option>
+              <option value="backpack">Backpack (BPX)</option>
+            </select>
+          </div>
+          <div class="input-group">
             <label>API Key 🔒</label>
-            <input type="password" id="apiKey" placeholder="输入币安API Key" />
+            <input type="password" id="apiKey" placeholder="输入 API Key" />
           </div>
           <div class="input-group">
             <label>API Secret 🔒</label>
             <input
               type="password"
               id="apiSecret"
-              placeholder="输入币安API Secret"
+              placeholder="输入 API Secret"
             />
           </div>
           <div class="input-group">
@@ -357,6 +364,17 @@
           </div>
         </div>
 
+        <div style="margin-bottom: 15px;">
+          <label style="font-weight: 600; margin-bottom: 5px; display: block;">选择配置</label>
+          <select id="configSelect" onchange="onConfigSelectChange()" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; margin-bottom: 10px;">
+            <option value="default">default</option>
+          </select>
+          
+          <label style="font-weight: 600; margin-bottom: 5px; display: block;">配置别名（保存时使用）</label>
+          <input type="text" id="configAlias" placeholder="输入配置别名，如: binance-btc, backpack-sol" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px;" value="default" />
+          <small style="color: #666;">提示：输入新别名可创建新配置，使用现有别名会覆盖该配置</small>
+        </div>
+
         <div class="controls">
           <button class="btn btn-success" onclick="startBot()">
             🚀 启动机器人
@@ -365,10 +383,10 @@
             ⏹️ 停止机器人
           </button>
           <button class="btn btn-primary" onclick="saveConfig()">
-            💾 保存配置到服务器
+            💾 保存当前配置
           </button>
-          <button class="btn btn-warning" onclick="loadConfig()">
-            📥 加载已保存配置
+          <button class="btn btn-danger" onclick="deleteCurrentConfig()">
+            🗑️ 删除配置
           </button>
         </div>
       </div>
@@ -471,6 +489,98 @@
           loadBots();
         }
       }
+      
+      // 页面加载时更新配置下拉框
+      function updateConfigSelect(autoLoad = false) {
+        fetch("/api/configs")
+          .then((r) => r.json())
+          .then((data) => {
+            const select = document.getElementById("configSelect");
+            const currentValue = select.value;
+            
+            if (data.success && data.configs.length > 0) {
+              select.innerHTML = data.configs
+                .map((cfg) => {
+                  const exchangeName = cfg.exchange === 'binance' ? 'Binance' : 'Backpack';
+                  return `<option value="${cfg.config_name}">${cfg.config_name} (${exchangeName} - ${cfg.symbol})</option>`;
+                })
+                .join("");
+              
+              // 恢复之前选中的值
+              if (currentValue && data.configs.find(c => c.config_name === currentValue)) {
+                select.value = currentValue;
+              } else {
+                // 如果没有之前的值，选择第一个
+                select.value = data.configs[0].config_name;
+              }
+              
+              // 同步别名输入框
+              document.getElementById("configAlias").value = select.value;
+              
+              // 如果需要自动加载配置
+              if (autoLoad) {
+                loadConfigByName(select.value);
+              }
+            }
+          });
+      }
+      
+      // 配置下拉框改变时自动加载并同步别名输入框
+      function onConfigSelectChange() {
+        const config_name = document.getElementById("configSelect").value;
+        if (config_name) {
+          // 同步别名输入框
+          document.getElementById("configAlias").value = config_name;
+          // 加载配置
+          loadConfigByName(config_name);
+        }
+      }
+      
+      // 删除当前配置
+      function deleteCurrentConfig() {
+        const config_name = document.getElementById("configAlias").value.trim();
+        
+        if (config_name === 'default') {
+          alert("不能删除 default 配置");
+          return;
+        }
+        
+        if (!confirm(`确定要删除配置 "${config_name}" 吗？`)) return;
+        
+        fetch("/api/config/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ config_name: config_name }),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            alert(data.message);
+            if (data.success) {
+              updateConfigSelect();
+              // 切换到 default
+              document.getElementById("configSelect").value = 'default';
+              loadConfigByName('default');
+            }
+          });
+      }
+
+      // 交易所切换时更新 UI
+      function updateExchangeUI() {
+        const exchange = document.getElementById("exchange").value;
+        const apiKeyInput = document.getElementById("apiKey");
+        const apiSecretInput = document.getElementById("apiSecret");
+        
+        if (exchange === 'backpack') {
+          apiKeyInput.placeholder = "输入 Backpack Public Key";
+          apiSecretInput.placeholder = "输入 Backpack Secret Key";
+        } else {
+          apiKeyInput.placeholder = "输入 Binance API Key";
+          apiSecretInput.placeholder = "输入 Binance API Secret";
+        }
+        
+        // 重新加载交易对列表（会根据当前交易所过滤）
+        loadTradingPairs();
+      }
 
       function updateStatus() {
         fetch("/api/status")
@@ -500,6 +610,7 @@
 
       function startBot() {
         const config = {
+          exchange: document.getElementById("exchange").value,
           api_key: document.getElementById("apiKey").value,
           api_secret: document.getElementById("apiSecret").value,
           symbol: document.getElementById("symbol").value,
@@ -544,7 +655,9 @@
       }
 
       function saveConfig() {
+        const config_name = document.getElementById("configAlias").value.trim() || 'default';
         const config = {
+          exchange: document.getElementById("exchange").value,
           api_key: document.getElementById("apiKey").value,
           api_secret: document.getElementById("apiSecret").value,
           symbol: document.getElementById("symbol").value,
@@ -570,17 +683,33 @@
         fetch("/api/config/save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(config),
+          body: JSON.stringify({ config: config, config_name: config_name }),
         })
           .then((r) => r.json())
-          .then((data) => alert(data.message));
+          .then((data) => {
+            alert(data.message);
+            if (data.success) {
+              // 更新下拉框
+              updateConfigSelect();
+              // 延迟一下确保下拉框更新完成后再选中
+              setTimeout(() => {
+                document.getElementById("configSelect").value = config_name;
+              }, 100);
+            }
+          });
       }
 
-      function loadConfig() {
-        fetch("/api/config/load")
+      function loadConfigByName(config_name) {
+        fetch(`/api/config/load?config_name=${encodeURIComponent(config_name)}`)
           .then((r) => r.json())
           .then((data) => {
             if (data.success) {
+              // 加载交易所选择
+              if (data.config.exchange) {
+                document.getElementById("exchange").value = data.config.exchange;
+                updateExchangeUI(); // 更新 UI
+              }
+              
               document.getElementById("apiKey").value =
                 data.config.api_key || "";
               document.getElementById("apiSecret").value =
@@ -596,7 +725,6 @@
               document.getElementById("testnet").value = data.config.testnet;
               document.getElementById("simulateTrading").value =
                 data.config.simulate_trading;
-              alert("配置加载成功！");
             } else {
               alert(data.message);
             }
@@ -635,6 +763,7 @@
 
       setInterval(updateStatus, 2000);
       updateStatus();
+      updateConfigSelect(true); // 初始化配置下拉框并自动加载配置
 
       function loadTradingPairs() {
         fetch("/api/trading_pairs")
@@ -646,18 +775,26 @@
             } else {
               container.innerHTML = data.pairs
                 .map(
-                  (pair) => `
+                  (pair) => {
+                    const exchanges = pair.exchanges || 'binance,backpack';
+                    const exchangeList = exchanges.split(',').map(e => {
+                      const names = { 'binance': 'Binance', 'backpack': 'Backpack' };
+                      return names[e] || e;
+                    }).join(', ');
+                    return `
                     <div class="pair-item" id="pair-${pair.id}">
                         <div class="pair-info">
                             <strong>${pair.display_name}</strong> (${pair.symbol})
-                            <br><small style="color: #666;">创建时间: ${pair.created_at}</small>
+                            <br><small style="color: #666;">支持交易所: ${exchangeList}</small>
+                            <br><small style="color: #999;">创建时间: ${pair.created_at}</small>
                         </div>
                         <div class="pair-actions">
-                            <button class="btn btn-primary btn-sm" onclick="editPair(${pair.id}, '${pair.symbol}', '${pair.display_name}')">✏️ 编辑</button>
+                            <button class="btn btn-primary btn-sm" onclick="editPair(${pair.id}, '${pair.symbol}', '${pair.display_name}', '${exchanges}')">✏️ 编辑</button>
                             <button class="btn btn-danger btn-sm" onclick="deletePair(${pair.id})">🗑️ 删除</button>
                         </div>
                     </div>
-                `
+                    `;
+                  }
                 )
                 .join("");
 
@@ -669,13 +806,21 @@
 
       function updateSymbolDropdown(pairs) {
         const select = document.getElementById("symbol");
+        const currentExchange = document.getElementById("exchange").value;
+        
+        // 过滤出支持当前交易所的交易对
+        const filteredPairs = pairs.filter(pair => {
+          const exchanges = pair.exchanges || 'binance,backpack';
+          return exchanges.split(',').includes(currentExchange);
+        });
+        
         const currentValue = select.value;
-        select.innerHTML = pairs
+        select.innerHTML = filteredPairs
           .map((p) => `<option value="${p.symbol}">${p.display_name}</option>`)
           .join("");
 
         // 恢复之前选中的值
-        if (currentValue && pairs.find((p) => p.symbol === currentValue)) {
+        if (currentValue && filteredPairs.find((p) => p.symbol === currentValue)) {
           select.value = currentValue;
         }
         // 若有来自已保存配置的期望symbol，优先设置
@@ -729,12 +874,20 @@
           });
       }
 
-      function editPair(id, symbol, displayName) {
+      function editPair(id, symbol, displayName, exchanges) {
         const pairDiv = document.getElementById(`pair-${id}`);
+        const exchangesValue = exchanges || 'binance,backpack';
+        const binanceChecked = exchangesValue.includes('binance') ? 'checked' : '';
+        const backpackChecked = exchangesValue.includes('backpack') ? 'checked' : '';
+        
         pairDiv.innerHTML = `
         <div class="edit-mode">
-            <input type="text" id="edit-symbol-${id}" value="${symbol}" style="flex: 1;">
-            <input type="text" id="edit-name-${id}" value="${displayName}" style="flex: 1;">
+            <input type="text" id="edit-symbol-${id}" value="${symbol}" style="flex: 1;" placeholder="交易对">
+            <input type="text" id="edit-name-${id}" value="${displayName}" style="flex: 1;" placeholder="显示名称">
+            <div style="flex: 1; display: flex; gap: 10px; align-items: center;">
+                <label style="margin: 0;"><input type="checkbox" id="edit-binance-${id}" ${binanceChecked}> Binance</label>
+                <label style="margin: 0;"><input type="checkbox" id="edit-backpack-${id}" ${backpackChecked}> Backpack</label>
+            </div>
         </div>
         <div class="pair-actions">
             <button class="btn btn-success btn-sm" onclick="savePair(${id})">💾 保存</button>
@@ -751,16 +904,35 @@
         const displayName = document
           .getElementById(`edit-name-${id}`)
           .value.trim();
+        
+        // 获取选中的交易所
+        const exchanges = [];
+        if (document.getElementById(`edit-binance-${id}`).checked) {
+          exchanges.push('binance');
+        }
+        if (document.getElementById(`edit-backpack-${id}`).checked) {
+          exchanges.push('backpack');
+        }
 
         if (!symbol || !displayName) {
           alert("交易对和显示名称不能为空");
+          return;
+        }
+        
+        if (exchanges.length === 0) {
+          alert("请至少选择一个交易所");
           return;
         }
 
         fetch("/api/trading_pairs/update", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id, symbol, display_name: displayName }),
+          body: JSON.stringify({ 
+            id, 
+            symbol, 
+            display_name: displayName,
+            exchanges: exchanges.join(',')
+          }),
         })
           .then((r) => r.json())
           .then((data) => {
