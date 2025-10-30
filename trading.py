@@ -30,6 +30,9 @@ def trading_loop(username, symbol):
     lot_filter = None
     tick_size = None
     step_size = None
+    
+    # 标记是否已恢复 pending_buys
+    pending_buys_recovered = False
 
     while bot_data.get('running'):
         try:
@@ -112,6 +115,7 @@ def trading_loop(username, symbol):
                                 aligned_sell_qty = math.floor(qty_val / step_size) * step_size if step_size else qty_val
                                 aligned_sell_qty = round(aligned_sell_qty, qty_decimals)
 
+                                sell_success = False
                                 try:
                                     sell_order = client.order_limit_sell(
                                         symbol=symbol_,
@@ -123,14 +127,18 @@ def trading_loop(username, symbol):
                                     insert_order(user_id, symbol_, str(aligned_sell_price), str(aligned_sell_qty),
                                                  'SELL', 'PLACED', sell_order_id)
                                     update_order_status(order_id, 'FILLED')
+                                    sell_success = True
                                     print(f"[{datetime.now().isoformat()}] ✅ [WS] 买单 {order_id} 成交，自动挂卖单 {sell_order_id} @ {aligned_sell_price}")
                                 except BinanceAPIException as e:
-                                    print(f"[{datetime.now().isoformat()}] ❌ [WS SELL ERR] 卖单下单异常: {e}")
+                                    print(f"[{datetime.now().isoformat()}] ❌ [WS SELL ERR] 卖单下单异常: {e}，将保留 pending_buy 以便重试")
                                 except Exception as e:
-                                    print(f"[{datetime.now().isoformat()}] ❌ [WS SELL ERR] 卖单下单错误: {e}")
+                                    print(f"[{datetime.now().isoformat()}] ❌ [WS SELL ERR] 卖单下单错误: {e}，将保留 pending_buy 以便重试")
 
-                                # 从 pending_buys 移除
-                                bot_data['pending_buys'] = [pb for pb in bot_data.get('pending_buys', []) if pb['order_id'] != order_id]
+                                # 只有卖单成功才从 pending_buys 移除
+                                if sell_success:
+                                    bot_data['pending_buys'] = [pb for pb in bot_data.get('pending_buys', []) if pb['order_id'] != order_id]
+                                else:
+                                    print(f"[{datetime.now().isoformat()}] ⚠️ [WS] 买单 {order_id} 已成交但卖单下单失败，保留在 pending_buys 中等待重试")
 
                     except Exception as e:
                         print(f"[{datetime.now().isoformat()}] ❌ [WS USER ERR] {e}")
@@ -209,6 +217,20 @@ def trading_loop(username, symbol):
                     # 区分买卖方向：不动 SELL；BUY 改为“价格替换”而非取消重下
                     open_buy_orders = [o for o in open_orders if str(o.get('side')) == 'BUY']
                     open_sell_orders = [o for o in open_orders if str(o.get('side')) == 'SELL']
+                    
+                    # 机器人启动时恢复 pending_buys：如果 pending_buys 为空且有未完成买单，则恢复
+                    if not pending_buys_recovered and not bot_data.get('pending_buys', []) and open_buy_orders:
+                        print(f"[{datetime.now().isoformat()}] 🔄 [RECOVER] 检测到 {len(open_buy_orders)} 笔未完成买单，正在恢复到 pending_buys...")
+                        for order in open_buy_orders:
+                            bot_data.setdefault('pending_buys', []).append({
+                                'order_id': str(order['orderId']),
+                                'price': float(order['price']),
+                                'quantity': float(order['origQty']),
+                                'symbol': config['symbol'],
+                                'user_id': user_id
+                            })
+                        print(f"[{datetime.now().isoformat()}] ✅ [RECOVER] 已恢复 {len(open_buy_orders)} 笔买单到 pending_buys")
+                        pending_buys_recovered = True
 
                     if open_buy_orders:
                         open_ids = ', '.join([str(o['orderId']) for o in open_buy_orders])
@@ -230,31 +252,42 @@ def trading_loop(username, symbol):
                                         cancelOrderId=order['orderId'],
                                         cancelReplaceMode='STOP_ON_FAILURE'
                                     )
-                                    # 调试：打印响应类型和内容
-                                    print(f"[{datetime.now().isoformat()}] 🔍 [DEBUG] cancelReplace 响应类型: {type(resp).__name__}, 内容: {resp}")
-                                    
-                                    # 安全提取新订单ID
+                                    # 提取新订单ID：newOrderResponse 包含新订单信息
+                                    new_order_id = None
                                     if isinstance(resp, dict):
-                                        new_part = resp.get('newOrderResult', {})
-                                        if isinstance(new_part, dict):
-                                            new_order_id = str(new_part.get('orderId', order['orderId']))
+                                        # Binance cancelReplace 响应结构：
+                                        # newOrderResult: 'SUCCESS' (字符串状态)
+                                        # newOrderResponse: {...} (新订单详情)
+                                        new_order_data = resp.get('newOrderResponse', {})
+                                        if isinstance(new_order_data, dict):
+                                            new_order_id = str(new_order_data.get('orderId', order['orderId']))
                                         else:
+                                            # 回退：尝试顶层 orderId
                                             new_order_id = str(resp.get('orderId', order['orderId']))
                                     else:
                                         # 非字典响应，保持原订单ID
                                         new_order_id = str(order['orderId'])
                                         print(f"[{datetime.now().isoformat()}] ⚠️ [REPRICE] 响应非字典类型，无法提取新订单ID，保持原ID")
                                     
-                                    print(f"[{datetime.now().isoformat()}] ✅ [REPRICE] 订单 {order['orderId']} 已替换为新价格 {buy_price_str}，新订单ID={new_order_id}")
-
-                                    # 同步 pending_buys 中的 order_id 与价格
-                                    updated = []
-                                    for p in bot_data.get('pending_buys', []):
-                                        if p['order_id'] == str(order['orderId']):
-                                            p['order_id'] = new_order_id
-                                            p['price'] = float(buy_price_str)
-                                        updated.append(p)
-                                    bot_data['pending_buys'] = updated
+                                    # 只有成功提取到新订单ID才更新 pending_buys
+                                    if new_order_id and new_order_id != str(order['orderId']):
+                                        print(f"[{datetime.now().isoformat()}] ✅ [REPRICE] 订单 {order['orderId']} 已替换为新价格 {buy_price_str}，新订单ID={new_order_id}")
+                                        
+                                        # 同步 pending_buys 中的 order_id 与价格
+                                        updated = []
+                                        for p in bot_data.get('pending_buys', []):
+                                            if p['order_id'] == str(order['orderId']):
+                                                p['order_id'] = new_order_id
+                                                p['price'] = float(buy_price_str)
+                                            updated.append(p)
+                                        bot_data['pending_buys'] = updated
+                                        
+                                        # 更新数据库：标记旧订单为已替换，插入新订单
+                                        update_order_status(str(order['orderId']), 'REPLACED')
+                                        insert_order(user_id, config['symbol'], buy_price_str, str(aligned_quantity),
+                                                    'BUY', 'PLACED', new_order_id)
+                                    else:
+                                        print(f"[{datetime.now().isoformat()}] ⚠️ [REPRICE] 订单 {order['orderId']} 价格更新为 {buy_price_str}，但未获取到新订单ID")
                                 else:
                                     # 兼容旧版库：直接调用底层 POST 到 /api/v3/order/cancelReplace
                                     raw_post = getattr(client, '_post', None)
@@ -273,29 +306,36 @@ def trading_loop(username, symbol):
                                                     'cancelReplaceMode': 'STOP_ON_FAILURE'
                                                 }
                                             )
-                                            # 调试：打印响应类型和内容
-                                            print(f"[{datetime.now().isoformat()}] 🔍 [DEBUG] RAW cancelReplace 响应类型: {type(resp).__name__}, 内容: {resp}")
-                                            
-                                            # 安全提取新订单ID
+                                            # 提取新订单ID：newOrderResponse 包含新订单信息
+                                            new_order_id = None
                                             if isinstance(resp, dict):
-                                                new_part = resp.get('newOrderResult', {})
-                                                if isinstance(new_part, dict):
-                                                    new_order_id = str(new_part.get('orderId', order['orderId']))
+                                                new_order_data = resp.get('newOrderResponse', {})
+                                                if isinstance(new_order_data, dict):
+                                                    new_order_id = str(new_order_data.get('orderId', order['orderId']))
                                                 else:
                                                     new_order_id = str(resp.get('orderId', order['orderId']))
                                             else:
                                                 new_order_id = str(order['orderId'])
                                                 print(f"[{datetime.now().isoformat()}] ⚠️ [REPRICE] (RAW) 响应非字典类型，无法提取新订单ID，保持原ID")
                                             
-                                            print(f"[{datetime.now().isoformat()}] ✅ [REPRICE] (RAW) 订单 {order['orderId']} 已替换为新价格 {buy_price_str}，新订单ID={new_order_id}")
+                                            # 只有成功提取到新订单ID才更新 pending_buys
+                                            if new_order_id and new_order_id != str(order['orderId']):
+                                                print(f"[{datetime.now().isoformat()}] ✅ [REPRICE] (RAW) 订单 {order['orderId']} 已替换为新价格 {buy_price_str}，新订单ID={new_order_id}")
 
-                                            updated = []
-                                            for p in bot_data.get('pending_buys', []):
-                                                if p['order_id'] == str(order['orderId']):
-                                                    p['order_id'] = new_order_id
-                                                    p['price'] = float(buy_price_str)
-                                                updated.append(p)
-                                            bot_data['pending_buys'] = updated
+                                                updated = []
+                                                for p in bot_data.get('pending_buys', []):
+                                                    if p['order_id'] == str(order['orderId']):
+                                                        p['order_id'] = new_order_id
+                                                        p['price'] = float(buy_price_str)
+                                                    updated.append(p)
+                                                bot_data['pending_buys'] = updated
+                                                
+                                                # 更新数据库
+                                                update_order_status(str(order['orderId']), 'REPLACED')
+                                                insert_order(user_id, config['symbol'], buy_price_str, str(aligned_quantity),
+                                                            'BUY', 'PLACED', new_order_id)
+                                            else:
+                                                print(f"[{datetime.now().isoformat()}] ⚠️ [REPRICE] (RAW) 订单 {order['orderId']} 价格更新为 {buy_price_str}，但未获取到新订单ID")
                                         except BinanceAPIException as e:
                                             print(f"[{datetime.now().isoformat()}] ❌ [REPRICE ERR] (RAW) 订单 {order['orderId']} 替换价格异常: {e}")
                                         except Exception as e:
@@ -390,6 +430,7 @@ def trading_loop(username, symbol):
                                 aligned_sell_qty = math.floor(sell_qty / step_size) * step_size if step_size else sell_qty
                                 aligned_sell_qty = round(aligned_sell_qty, qty_decimals)
 
+                                sell_success = False
                                 try:
                                     sell_order = client.order_limit_sell(
                                         symbol=pb['symbol'],
@@ -402,12 +443,18 @@ def trading_loop(username, symbol):
                                     insert_order(pb['user_id'], pb['symbol'], str(aligned_sell_price), str(aligned_sell_qty),
                                                  'SELL', 'PLACED', sell_order_id)
                                     update_order_status(pb['order_id'], 'FILLED')
+                                    sell_success = True
 
                                     print(f"[{datetime.now().isoformat()}] ✅ [REST-FALLBACK] 买单 {pb['order_id']} 成交，自动挂卖单 {sell_order_id} @ {aligned_sell_price}")
                                 except BinanceAPIException as e:
-                                    print(f"[{datetime.now().isoformat()}] ❌ [SELL ERR] 卖单下单异常: {e}")
+                                    print(f"[{datetime.now().isoformat()}] ❌ [SELL ERR] 卖单下单异常: {e}，将保留 pending_buy 以便重试")
                                 except Exception as e:
-                                    print(f"[{datetime.now().isoformat()}] ❌ [SELL ERR] 卖单下单错误: {e}")
+                                    print(f"[{datetime.now().isoformat()}] ❌ [SELL ERR] 卖单下单错误: {e}，将保留 pending_buy 以便重试")
+                                
+                                # 只有卖单成功才不加入 remaining（即移除），失败则保留以便重试
+                                if not sell_success:
+                                    remaining.append(pb)
+                                    print(f"[{datetime.now().isoformat()}] ⚠️ [REST-FALLBACK] 买单 {pb['order_id']} 已成交但卖单下单失败，保留在 pending_buys 中等待重试")
                             else:
                                 remaining.append(pb)
                         except BinanceAPIException as e:
