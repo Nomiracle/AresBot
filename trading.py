@@ -70,29 +70,42 @@ def trading_loop(username, symbol):
             is_buy_enabled = (config.get('simulate_trading', 1) != 1)
             print(f"[{datetime.now().isoformat()}] {username} - {config['symbol']} - 当前价: ${current_price} -> 计划挂买价: ${target_price}（数量: {aligned_quantity}）. 是否可以下单: {is_buy_enabled}")
 
+            # 默认无未完成订单集合，便于后续流程判断
+            open_buy_orders = []
+            open_sell_orders = []
+
             try:
                 open_orders = client.get_open_orders(symbol=config['symbol'])
 
                 if open_orders:
-                    open_ids = ', '.join([str(o['orderId']) for o in open_orders])
-                    print(f"[{datetime.now().isoformat()}] ⚠️ [CHECK] 发现 {len(open_orders)} 笔未完成订单 (ID: {open_ids})，准备**取消并重新挂单**。")
+                    # 区分买卖方向，仅取消买单，保留卖单
+                    open_buy_orders = [o for o in open_orders if str(o.get('side')) == 'BUY']
+                    open_sell_orders = [o for o in open_orders if str(o.get('side')) == 'SELL']
 
-                    for order in open_orders:
-                        try:
-                            client.cancel_order(symbol=config['symbol'], orderId=order['orderId'])
-                            print(f"[{datetime.now().isoformat()}] ✅ [CANCEL] 成功取消订单 ID: {order['orderId']}")
+                    if open_buy_orders:
+                        open_ids = ', '.join([str(o['orderId']) for o in open_buy_orders])
+                        print(f"[{datetime.now().isoformat()}] ⚠️ [CHECK] 发现 {len(open_buy_orders)} 笔未完成买单 (ID: {open_ids})，准备取消旧买单以便刷新价格。")
 
-                            bot_data['pending_buys'] = [
-                                p for p in bot_data.get('pending_buys', [])
-                                if p['order_id'] != str(order['orderId'])
-                            ]
+                        for order in open_buy_orders:
+                            try:
+                                client.cancel_order(symbol=config['symbol'], orderId=order['orderId'])
+                                print(f"[{datetime.now().isoformat()}] ✅ [CANCEL] 成功取消买单 ID: {order['orderId']}")
 
-                        except BinanceAPIException as e:
-                            print(f"[{datetime.now().isoformat()}] ❌ [CANCEL ERR] 取消订单 ID: {order['orderId']} 异常: {e}")
-                        except Exception as e:
-                            print(f"[{datetime.now().isoformat()}] ❌ [CANCEL ERR] 取消订单 ID: {order['orderId']} 错误: {e}")
+                                bot_data['pending_buys'] = [
+                                    p for p in bot_data.get('pending_buys', [])
+                                    if p['order_id'] != str(order['orderId'])
+                                ]
+
+                            except BinanceAPIException as e:
+                                print(f"[{datetime.now().isoformat()}] ❌ [CANCEL ERR] 取消买单 ID: {order['orderId']} 异常: {e}")
+                            except Exception as e:
+                                print(f"[{datetime.now().isoformat()}] ❌ [CANCEL ERR] 取消买单 ID: {order['orderId']} 错误: {e}")
+
+                    if open_sell_orders:
+                        sell_ids = ', '.join([str(o['orderId']) for o in open_sell_orders])
+                        print(f"[{datetime.now().isoformat()}] 📌 [CHECK] 保留 {len(open_sell_orders)} 笔未完成卖单 (ID: {sell_ids})。")
                 else:
-                    print(f"[{datetime.now().isoformat()}] ✅ [CHECK] 未发现未完成订单，准备执行**限价买单**。")
+                    print(f"[{datetime.now().isoformat()}] ✅ [CHECK] 未发现未完成订单。")
 
             except BinanceAPIException as e:
                 print(f"[{datetime.now().isoformat()}] ❌ [CHECK ERR] 查询未完成订单异常: {e}")
@@ -103,38 +116,45 @@ def trading_loop(username, symbol):
                 time.sleep(config.get('interval', 1))
                 continue
 
-            try:
-                buy_price_str = f"{target_price}"
-                print(f"[{datetime.now().isoformat()}] ➡️ [EXECUTE] 尝试下新限价买单: 方向=BUY, 价格={buy_price_str}, 数量={config['quantity']}")
+            # 只有在没有未完成买/卖单且没有待跟踪的买单时，才允许挂新买单
+            has_pending_buys = bool(bot_data.get('pending_buys', []))
+            can_place_buy = (not open_buy_orders) and (not open_sell_orders) and (not has_pending_buys)
 
-                if is_buy_enabled:
-                    order = client.order_limit_buy(
-                        symbol=config['symbol'],
-                        quantity=config['quantity'],
-                        price=buy_price_str,
-                        timeInForce='GTC'
-                    )
-                    real_order_id = str(order.get('orderId') or order.get('orderId'))
+            if not can_place_buy:
+                print(f"[{datetime.now().isoformat()}] ⏭️ [SKIP] 存在未完成订单或待跟踪买单，跳过本次买单挂单。")
+            else:
+                try:
+                    buy_price_str = f"{target_price}"
+                    print(f"[{datetime.now().isoformat()}] ➡️ [EXECUTE] 尝试下新限价买单: 方向=BUY, 价格={buy_price_str}, 数量={config['quantity']}")
 
-                    insert_order(user_id, config['symbol'], buy_price_str, str(config['quantity']),
-                                'BUY', 'PLACED', real_order_id)
+                    if is_buy_enabled:
+                        order = client.order_limit_buy(
+                            symbol=config['symbol'],
+                            quantity=config['quantity'],
+                            price=buy_price_str,
+                            timeInForce='GTC'
+                        )
+                        real_order_id = str(order.get('orderId') or order.get('orderId'))
 
-                    print(f"[{datetime.now().isoformat()}] ✅ [SUCCESS] 真实买单已下。**新订单ID={real_order_id}**，已写入 DB，等待撮合...")
+                        insert_order(user_id, config['symbol'], buy_price_str, str(config['quantity']),
+                                    'BUY', 'PLACED', real_order_id)
 
-                    bot_data.setdefault('pending_buys', []).append({
-                        'order_id': real_order_id,
-                        'price': float(buy_price_str),
-                        'quantity': config['quantity'],
-                        'symbol': config['symbol'],
-                        'user_id': user_id
-                    })
-                else:
-                    print(f"[{datetime.now().isoformat()}] ⏸️ [SWITCH OFF] 下单逻辑被禁用 (enable_buy_logic=False)，跳过本次挂单操作。")
+                        print(f"[{datetime.now().isoformat()}] ✅ [SUCCESS] 真实买单已下。**新订单ID={real_order_id}**，已写入 DB，等待撮合...")
 
-            except BinanceAPIException as e:
-                print(f"[{datetime.now().isoformat()}] ❌ [FAILURE] Binance 下单异常: {e} (Symbol: {config['symbol']})")
-            except Exception as e:
-                print(f"[{datetime.now().isoformat()}] ❌ [FAILURE] 下单错误: {e}")
+                        bot_data.setdefault('pending_buys', []).append({
+                            'order_id': real_order_id,
+                            'price': float(buy_price_str),
+                            'quantity': config['quantity'],
+                            'symbol': config['symbol'],
+                            'user_id': user_id
+                        })
+                    else:
+                        print(f"[{datetime.now().isoformat()}] ⏸️ [SWITCH OFF] 下单逻辑被禁用 (enable_buy_logic=False)，跳过本次挂单操作。")
+
+                except BinanceAPIException as e:
+                    print(f"[{datetime.now().isoformat()}] ❌ [FAILURE] Binance 下单异常: {e} (Symbol: {config['symbol']})")
+                except Exception as e:
+                    print(f"[{datetime.now().isoformat()}] ❌ [FAILURE] 下单错误: {e}")
 
             pending = bot_data.get('pending_buys', [])
             if pending:
@@ -152,22 +172,32 @@ def trading_loop(username, symbol):
                                 buy_price = pb['price']
 
                             sell_offset = config.get('sell_offset_percent', 0.5) / 100.0
-                            sell_price = round(buy_price * (1 + sell_offset), 2)
+                            raw_sell_price = buy_price * (1 + sell_offset)
+
+                            # 对齐卖单价格与数量精度
+                            price_decimals = int(abs(math.log10(tick_size))) if tick_size else 2
+                            aligned_sell_price = math.floor(raw_sell_price / tick_size) * tick_size if tick_size else raw_sell_price
+                            aligned_sell_price = round(aligned_sell_price, price_decimals)
+
+                            sell_qty = float(pb['quantity'])
+                            qty_decimals = int(abs(math.log10(step_size))) if step_size else 6
+                            aligned_sell_qty = math.floor(sell_qty / step_size) * step_size if step_size else sell_qty
+                            aligned_sell_qty = round(aligned_sell_qty, qty_decimals)
 
                             try:
                                 sell_order = client.order_limit_sell(
                                     symbol=pb['symbol'],
-                                    quantity=pb['quantity'],
-                                    price=f"{sell_price:.2f}",
+                                    quantity=aligned_sell_qty,
+                                    price=f"{aligned_sell_price}",
                                     timeInForce='GTC'
                                 )
                                 sell_order_id = str(sell_order.get('orderId'))
 
-                                insert_order(pb['user_id'], pb['symbol'], str(sell_price), str(pb['quantity']),
+                                insert_order(pb['user_id'], pb['symbol'], str(aligned_sell_price), str(aligned_sell_qty),
                                            'SELL', 'PLACED', sell_order_id)
                                 update_order_status(pb['order_id'], 'FILLED')
 
-                                print(f"[{datetime.now().isoformat()}] ✅ [FILLED] 买单 {pb['order_id']} 已成交，自动挂卖单 **{sell_order_id}** @ {sell_price}")
+                                print(f"[{datetime.now().isoformat()}] ✅ [FILLED] 买单 {pb['order_id']} 已成交，自动挂卖单 **{sell_order_id}** @ {aligned_sell_price}")
                             except BinanceAPIException as e:
                                 print(f"[{datetime.now().isoformat()}] ❌ [SELL ERR] 卖单下单异常: {e}")
                             except Exception as e:
