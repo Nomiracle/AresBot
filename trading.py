@@ -1,6 +1,7 @@
 import time
 from datetime import datetime
 from binance.exceptions import BinanceAPIException
+from binance import ThreadedWebsocketManager
 from database import get_user_id, insert_order, update_order_status
 import math
 
@@ -36,8 +37,6 @@ def trading_loop(username, symbol):
             client = bot_data['client']
             user_id = get_user_id(username)
 
-            ticker = client.get_symbol_ticker(symbol=config['symbol'])
-
             # 只在第一次循环中查询交易精度与过滤规则
             if price_filter is None or lot_filter is None:
                 info = client.get_symbol_info(symbol=config['symbol'])
@@ -49,8 +48,103 @@ def trading_loop(username, symbol):
 
                 print(f"[{datetime.now().isoformat()}] 🎯 交易规则加载完成：tick_size={tick_size}, step_size={step_size}")
 
+            # 启动 WebSocket（仅一次）：行情与用户数据
+            if not bot_data.get('ws_started'):
+                def _on_ticker_msg(msg):
+                    try:
+                        # ThreadedWebsocketManager symbol ticker returns {'s': 'SYMBOL', 'c': 'lastPrice', ...}
+                        last_price = msg.get('c') or msg.get('p') or msg.get('price')
+                        if last_price is not None:
+                            bot_data['current_price'] = float(last_price)
+                    except Exception as e:
+                        print(f"[{datetime.now().isoformat()}] ❌ [WS TICKER ERR] {e}")
+
+                def _on_user_msg(msg):
+                    try:
+                        # 处理订单更新（executionReport）
+                        if msg.get('e') == 'executionReport':
+                            side = msg.get('S')  # BUY/SELL
+                            status = msg.get('X')  # NEW/PARTIALLY_FILLED/FILLED...
+                            order_id = str(msg.get('i'))
+                            symbol_ = msg.get('s')
+                            price_str = msg.get('p') or '0'
+                            qty_str = msg.get('q') or '0'
+
+                            if side == 'BUY' and status == 'FILLED':
+                                # 买单成交 -> 自动挂卖单（按精度对齐）
+                                try:
+                                    buy_price = float(price_str) if float(price_str) > 0 else None
+                                except Exception:
+                                    buy_price = None
+                                # 如果订单里没有价格（市价单情况），回退 pending 记录
+                                if not buy_price:
+                                    for pb in bot_data.get('pending_buys', []):
+                                        if pb['order_id'] == order_id:
+                                            buy_price = pb.get('price')
+                                            break
+                                if not buy_price:
+                                    return
+
+                                sell_offset = config.get('sell_offset_percent', 0.5) / 100.0
+                                raw_sell_price = buy_price * (1 + sell_offset)
+                                price_decimals = int(abs(math.log10(tick_size))) if tick_size else 2
+                                aligned_sell_price = math.floor(raw_sell_price / tick_size) * tick_size if tick_size else raw_sell_price
+                                aligned_sell_price = round(aligned_sell_price, price_decimals)
+
+                                try:
+                                    qty_val = float(qty_str) if float(qty_str) > 0 else None
+                                except Exception:
+                                    qty_val = None
+                                if qty_val is None:
+                                    for pb in bot_data.get('pending_buys', []):
+                                        if pb['order_id'] == order_id:
+                                            qty_val = float(pb.get('quantity'))
+                                            break
+                                if qty_val is None:
+                                    return
+
+                                qty_decimals = int(abs(math.log10(step_size))) if step_size else 6
+                                aligned_sell_qty = math.floor(qty_val / step_size) * step_size if step_size else qty_val
+                                aligned_sell_qty = round(aligned_sell_qty, qty_decimals)
+
+                                try:
+                                    sell_order = client.order_limit_sell(
+                                        symbol=symbol_,
+                                        quantity=aligned_sell_qty,
+                                        price=f"{aligned_sell_price}",
+                                        timeInForce='GTC'
+                                    )
+                                    sell_order_id = str(sell_order.get('orderId'))
+                                    insert_order(user_id, symbol_, str(aligned_sell_price), str(aligned_sell_qty),
+                                                 'SELL', 'PLACED', sell_order_id)
+                                    update_order_status(order_id, 'FILLED')
+                                    print(f"[{datetime.now().isoformat()}] ✅ [WS] 买单 {order_id} 成交，自动挂卖单 {sell_order_id} @ {aligned_sell_price}")
+                                except BinanceAPIException as e:
+                                    print(f"[{datetime.now().isoformat()}] ❌ [WS SELL ERR] 卖单下单异常: {e}")
+                                except Exception as e:
+                                    print(f"[{datetime.now().isoformat()}] ❌ [WS SELL ERR] 卖单下单错误: {e}")
+
+                                # 从 pending_buys 移除
+                                bot_data['pending_buys'] = [pb for pb in bot_data.get('pending_buys', []) if pb['order_id'] != order_id]
+
+                    except Exception as e:
+                        print(f"[{datetime.now().isoformat()}] ❌ [WS USER ERR] {e}")
+
+                try:
+                    twm = ThreadedWebsocketManager(api_key=getattr(client, 'API_KEY', None), api_secret=getattr(client, 'API_SECRET', None))
+                    twm.start()
+                    # 行情：单币对 ticker
+                    twm.start_symbol_ticker_socket(callback=_on_ticker_msg, symbol=config['symbol'])
+                    # 用户数据：订单回报
+                    twm.start_user_socket(callback=_on_user_msg)
+                    bot_data['twm'] = twm
+                    bot_data['ws_started'] = True
+                    print(f"[{datetime.now().isoformat()}] ✅ WebSocket 已启动 (ticker + user_stream)")
+                except Exception as e:
+                    print(f"[{datetime.now().isoformat()}] ❌ WebSocket 启动失败: {e}")
+
             # 当前价格与目标价格
-            current_price = float(ticker['price'])
+            current_price = float(bot_data.get('current_price') or client.get_symbol_ticker(symbol=config['symbol'])['price'])
             offset = config['offset_percent'] / 100.0
             target_price = current_price * (1 + offset)
 
@@ -78,28 +172,49 @@ def trading_loop(username, symbol):
                 open_orders = client.get_open_orders(symbol=config['symbol'])
 
                 if open_orders:
-                    # 区分买卖方向，仅取消买单，保留卖单
+                    # 区分买卖方向：不动 SELL；BUY 改为“价格替换”而非取消重下
                     open_buy_orders = [o for o in open_orders if str(o.get('side')) == 'BUY']
                     open_sell_orders = [o for o in open_orders if str(o.get('side')) == 'SELL']
 
                     if open_buy_orders:
                         open_ids = ', '.join([str(o['orderId']) for o in open_buy_orders])
-                        print(f"[{datetime.now().isoformat()}] ⚠️ [CHECK] 发现 {len(open_buy_orders)} 笔未完成买单 (ID: {open_ids})，准备取消旧买单以便刷新价格。")
+                        print(f"[{datetime.now().isoformat()}] 🔁 [REPRICE] 检测到 {len(open_buy_orders)} 笔未完成买单 (ID: {open_ids})，尝试直接替换为新价格 {target_price}。")
 
                         for order in open_buy_orders:
                             try:
-                                client.cancel_order(symbol=config['symbol'], orderId=order['orderId'])
-                                print(f"[{datetime.now().isoformat()}] ✅ [CANCEL] 成功取消买单 ID: {order['orderId']}")
+                                buy_price_str = f"{target_price}"
+                                # 优先使用 python-binance 的 cancelReplace 接口
+                                replace_fn = getattr(client, 'order_cancel_replace', None) or getattr(client, 'cancel_replace_order', None)
+                                if replace_fn:
+                                    resp = replace_fn(
+                                        symbol=config['symbol'],
+                                        side='BUY',
+                                        type='LIMIT',
+                                        timeInForce='GTC',
+                                        quantity=aligned_quantity,
+                                        price=buy_price_str,
+                                        cancelOrderId=order['orderId'],
+                                        cancelReplaceMode='STOP_ON_FAILURE'
+                                    )
+                                    new_part = resp.get('newOrderResult') if isinstance(resp, dict) else None
+                                    new_order_id = str((new_part or {}).get('orderId') or order.get('orderId'))
+                                    print(f"[{datetime.now().isoformat()}] ✅ [REPRICE] 订单 {order['orderId']} 已替换为新价格 {buy_price_str}，新订单ID={new_order_id}")
 
-                                bot_data['pending_buys'] = [
-                                    p for p in bot_data.get('pending_buys', [])
-                                    if p['order_id'] != str(order['orderId'])
-                                ]
+                                    # 同步 pending_buys 中的 order_id 与价格
+                                    updated = []
+                                    for p in bot_data.get('pending_buys', []):
+                                        if p['order_id'] == str(order['orderId']):
+                                            p['order_id'] = new_order_id
+                                            p['price'] = float(buy_price_str)
+                                        updated.append(p)
+                                    bot_data['pending_buys'] = updated
+                                else:
+                                    print(f"[{datetime.now().isoformat()}] ⚠️ [REPRICE] 客户端未提供 cancelReplace 方法，跳过替换。")
 
                             except BinanceAPIException as e:
-                                print(f"[{datetime.now().isoformat()}] ❌ [CANCEL ERR] 取消买单 ID: {order['orderId']} 异常: {e}")
+                                print(f"[{datetime.now().isoformat()}] ❌ [REPRICE ERR] 订单 {order['orderId']} 替换价格异常: {e}")
                             except Exception as e:
-                                print(f"[{datetime.now().isoformat()}] ❌ [CANCEL ERR] 取消买单 ID: {order['orderId']} 错误: {e}")
+                                print(f"[{datetime.now().isoformat()}] ❌ [REPRICE ERR] 订单 {order['orderId']} 替换价格错误: {e}")
 
                     if open_sell_orders:
                         sell_ids = ', '.join([str(o['orderId']) for o in open_sell_orders])
@@ -130,7 +245,7 @@ def trading_loop(username, symbol):
                     if is_buy_enabled:
                         order = client.order_limit_buy(
                             symbol=config['symbol'],
-                            quantity=config['quantity'],
+                            quantity=aligned_quantity,
                             price=buy_price_str,
                             timeInForce='GTC'
                         )
@@ -144,7 +259,7 @@ def trading_loop(username, symbol):
                         bot_data.setdefault('pending_buys', []).append({
                             'order_id': real_order_id,
                             'price': float(buy_price_str),
-                            'quantity': config['quantity'],
+                            'quantity': aligned_quantity,
                             'symbol': config['symbol'],
                             'user_id': user_id
                         })
@@ -156,62 +271,7 @@ def trading_loop(username, symbol):
                 except Exception as e:
                     print(f"[{datetime.now().isoformat()}] ❌ [FAILURE] 下单错误: {e}")
 
-            pending = bot_data.get('pending_buys', [])
-            if pending:
-                remaining = []
-                for pb in pending:
-                    try:
-                        order_info = client.get_order(symbol=pb['symbol'], orderId=int(pb['order_id']))
-                        status = order_info.get('status')
-
-                        print(f"[{datetime.now().isoformat()}] 🔄 [POLL] 轮询订单 {pb['order_id']} 状态: {status}")
-
-                        if status == 'FILLED':
-                            buy_price = float(order_info.get('price')) if order_info.get('price') else pb['price']
-                            if not buy_price:
-                                buy_price = pb['price']
-
-                            sell_offset = config.get('sell_offset_percent', 0.5) / 100.0
-                            raw_sell_price = buy_price * (1 + sell_offset)
-
-                            # 对齐卖单价格与数量精度
-                            price_decimals = int(abs(math.log10(tick_size))) if tick_size else 2
-                            aligned_sell_price = math.floor(raw_sell_price / tick_size) * tick_size if tick_size else raw_sell_price
-                            aligned_sell_price = round(aligned_sell_price, price_decimals)
-
-                            sell_qty = float(pb['quantity'])
-                            qty_decimals = int(abs(math.log10(step_size))) if step_size else 6
-                            aligned_sell_qty = math.floor(sell_qty / step_size) * step_size if step_size else sell_qty
-                            aligned_sell_qty = round(aligned_sell_qty, qty_decimals)
-
-                            try:
-                                sell_order = client.order_limit_sell(
-                                    symbol=pb['symbol'],
-                                    quantity=aligned_sell_qty,
-                                    price=f"{aligned_sell_price}",
-                                    timeInForce='GTC'
-                                )
-                                sell_order_id = str(sell_order.get('orderId'))
-
-                                insert_order(pb['user_id'], pb['symbol'], str(aligned_sell_price), str(aligned_sell_qty),
-                                           'SELL', 'PLACED', sell_order_id)
-                                update_order_status(pb['order_id'], 'FILLED')
-
-                                print(f"[{datetime.now().isoformat()}] ✅ [FILLED] 买单 {pb['order_id']} 已成交，自动挂卖单 **{sell_order_id}** @ {aligned_sell_price}")
-                            except BinanceAPIException as e:
-                                print(f"[{datetime.now().isoformat()}] ❌ [SELL ERR] 卖单下单异常: {e}")
-                            except Exception as e:
-                                print(f"[{datetime.now().isoformat()}] ❌ [SELL ERR] 卖单下单错误: {e}")
-                        else:
-                            remaining.append(pb)
-                    except BinanceAPIException as e:
-                        print(f"[{datetime.now().isoformat()}] ❌ [POLL ERR] 查询订单 {pb['order_id']} 状态异常: {e}")
-                        remaining.append(pb)
-                    except Exception as e:
-                        print(f"[{datetime.now().isoformat()}] ❌ [POLL ERR] 轮询订单错误: {e}")
-                        remaining.append(pb)
-
-                bot_data['pending_buys'] = remaining
+            # 取消原先基于 REST 的订单状态轮询，改由 WS 用户数据流驱动
 
             time.sleep(config.get('interval', 1))
 
