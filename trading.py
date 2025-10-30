@@ -61,6 +61,11 @@ def trading_loop(username, symbol):
 
                 def _on_user_msg(msg):
                     try:
+                        # 处理 WebSocket 错误消息（按文档格式）
+                        if msg.get('e') == 'error':
+                            print(f"[{datetime.now().isoformat()}] ❌ [WS USER ERROR] {msg.get('type')}: {msg.get('m')}")
+                            return
+                        
                         # 处理订单更新（executionReport）
                         if msg.get('e') == 'executionReport':
                             side = msg.get('S')  # BUY/SELL
@@ -133,33 +138,37 @@ def trading_loop(username, symbol):
                 try:
                     api_key = getattr(client, 'API_KEY', None)
                     api_secret = getattr(client, 'API_SECRET', None)
-                    twm = ThreadedWebsocketManager(api_key=api_key, api_secret=api_secret)
+                    
+                    # 创建 TWM：如果有密钥就传入，用于用户流；公开流（ticker）不需要密钥
+                    if api_key and api_secret:
+                        twm = ThreadedWebsocketManager(api_key=api_key, api_secret=api_secret)
+                    else:
+                        twm = ThreadedWebsocketManager()
+                    
                     twm.start()
-                    # 行情：单币对 ticker
+                    
+                    # 行情：单币对 ticker（公开流，无需认证）
                     twm.start_symbol_ticker_socket(callback=_on_ticker_msg, symbol=config['symbol'])
+                    print(f"[{datetime.now().isoformat()}] ✅ 行情流已启动")
 
-                    # 用户数据：仅当密钥存在且 listenKey 可获取时才启动，避免 404 报错
+                    # 用户数据流：需要认证，可能失败（404/403等），需要捕获异常
                     ws_user_enabled = False
                     if api_key and api_secret:
                         try:
-                            # 兼容不同版本 Client 方法名
-                            get_lk = getattr(client, 'stream_get_listen_key', None) or getattr(client, 'get_listen_key', None)
-                            if callable(get_lk):
-                                lk = get_lk()
-                                if lk:
-                                    twm.start_user_socket(callback=_on_user_msg)
-                                    ws_user_enabled = True
-                                    print(f"[{datetime.now().isoformat()}] ✅ 用户数据流已启用")
-                                else:
-                                    print(f"[{datetime.now().isoformat()}] ⚠️ 无法获取 listenKey，跳过用户数据流")
-                            else:
-                                print(f"[{datetime.now().isoformat()}] ⚠️ 客户端不支持获取 listenKey，跳过用户数据流")
+                            # 尝试启动用户数据流，如果失败（404等）会在这里被捕获
+                            twm.start_user_socket(callback=_on_user_msg)
+                            ws_user_enabled = True
+                            print(f"[{datetime.now().isoformat()}] ✅ 用户数据流已启动")
                         except BinanceAPIException as e:
-                            print(f"[{datetime.now().isoformat()}] ⚠️ 用户数据流不可用，跳过启动 (原因: {e})")
+                            # API 异常（如 404 Not Found, 403 Forbidden）
+                            print(f"[{datetime.now().isoformat()}] ⚠️ 用户数据流启动失败 (API错误: {e.status_code if hasattr(e, 'status_code') else 'unknown'} - {e.message if hasattr(e, 'message') else str(e)})")
+                            print(f"[{datetime.now().isoformat()}] ℹ️ 将使用 REST 轮询作为回退方案")
                         except Exception as e:
-                            print(f"[{datetime.now().isoformat()}] ⚠️ 用户数据流启动检测失败，跳过启动 (原因: {e})")
+                            # 其他异常
+                            print(f"[{datetime.now().isoformat()}] ⚠️ 用户数据流启动失败 ({type(e).__name__}: {e})")
+                            print(f"[{datetime.now().isoformat()}] ℹ️ 将使用 REST 轮询作为回退方案")
                     else:
-                        print(f"[{datetime.now().isoformat()}] ⚠️ 未提供 API Key/Secret，跳过用户数据流，仅启用行情流")
+                        print(f"[{datetime.now().isoformat()}] ⚠️ 未提供 API Key/Secret，跳过用户数据流")
 
                     bot_data['twm'] = twm
                     bot_data['ws_started'] = True
