@@ -196,23 +196,48 @@ class BackpackAdapter(BaseExchange):
                     raise
         
         try:
+            # 调试：打印原始订单数据
+            print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 原始订单数据类型: {type(orders)}")
+            print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 原始订单数据长度: {len(orders) if isinstance(orders, list) else 'N/A'}")
+            
             # 检查返回数据格式
             if orders is None or not orders:
+                print(f"[{datetime.now().isoformat()}] ℹ️ [Backpack] 订单数据为空")
                 return []
             
             # 确保是列表
             if not isinstance(orders, list):
+                print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 订单数据不是列表，转换中")
                 orders = [orders]
             
             # 转换为统一格式
             result = []
-            for order in orders:
+            for i, order in enumerate(orders):
+                print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 处理订单 {i}")
+                
                 # 确保 order 是字典
                 if not isinstance(order, dict):
+                    print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 订单 {i} 不是字典: {type(order)}")
                     continue
                 
-                result.append({
-                    'orderId': order.get('id'),
+                # 调试：打印订单的所有字段
+                print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 订单 {i} 字段: {list(order.keys())}")
+                
+                # 获取订单 ID（尝试多个可能的字段名）
+                order_id = order.get('id') or order.get('orderId') or order.get('order_id')
+                print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 订单 {i} ID 获取:")
+                print(f"[{datetime.now().isoformat()}]    - order.get('id') = {order.get('id')}")
+                print(f"[{datetime.now().isoformat()}]    - order.get('orderId') = {order.get('orderId')}")
+                print(f"[{datetime.now().isoformat()}]    - order.get('order_id') = {order.get('order_id')}")
+                print(f"[{datetime.now().isoformat()}]    - 最终 order_id = {order_id}")
+                
+                # 如果 ID 仍为 None，打印完整订单数据
+                if order_id is None:
+                    print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 订单 {i} ID 为 None!")
+                    print(f"[{datetime.now().isoformat()}] 📋 [Backpack] 完整订单数据: {order}")
+                
+                converted_order = {
+                    'orderId': order_id,
                     'symbol': order.get('symbol'),
                     'side': 'BUY' if order.get('side') == 'Bid' else 'SELL',
                     'price': order.get('price'),
@@ -221,7 +246,10 @@ class BackpackAdapter(BaseExchange):
                     'status': self._convert_order_status(order.get('status')),
                     'type': order.get('orderType'),
                     'timeInForce': order.get('timeInForce')
-                })
+                }
+                
+                print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 转换后订单 {i}: {converted_order}")
+                result.append(converted_order)
             
             if result:
                 print(f"[{datetime.now().isoformat()}] ✅ [Backpack] 找到 {len(result)} 个未完成订单")
