@@ -131,15 +131,40 @@ def trading_loop(username, symbol):
                         print(f"[{datetime.now().isoformat()}] ❌ [WS USER ERR] {e}")
 
                 try:
-                    twm = ThreadedWebsocketManager(api_key=getattr(client, 'API_KEY', None), api_secret=getattr(client, 'API_SECRET', None))
+                    api_key = getattr(client, 'API_KEY', None)
+                    api_secret = getattr(client, 'API_SECRET', None)
+                    twm = ThreadedWebsocketManager(api_key=api_key, api_secret=api_secret)
                     twm.start()
                     # 行情：单币对 ticker
                     twm.start_symbol_ticker_socket(callback=_on_ticker_msg, symbol=config['symbol'])
-                    # 用户数据：订单回报
-                    twm.start_user_socket(callback=_on_user_msg)
+
+                    # 用户数据：仅当密钥存在且 listenKey 可获取时才启动，避免 404 报错
+                    ws_user_enabled = False
+                    if api_key and api_secret:
+                        try:
+                            # 兼容不同版本 Client 方法名
+                            get_lk = getattr(client, 'stream_get_listen_key', None) or getattr(client, 'get_listen_key', None)
+                            if callable(get_lk):
+                                lk = get_lk()
+                                if lk:
+                                    twm.start_user_socket(callback=_on_user_msg)
+                                    ws_user_enabled = True
+                                    print(f"[{datetime.now().isoformat()}] ✅ 用户数据流已启用")
+                                else:
+                                    print(f"[{datetime.now().isoformat()}] ⚠️ 无法获取 listenKey，跳过用户数据流")
+                            else:
+                                print(f"[{datetime.now().isoformat()}] ⚠️ 客户端不支持获取 listenKey，跳过用户数据流")
+                        except BinanceAPIException as e:
+                            print(f"[{datetime.now().isoformat()}] ⚠️ 用户数据流不可用，跳过启动 (原因: {e})")
+                        except Exception as e:
+                            print(f"[{datetime.now().isoformat()}] ⚠️ 用户数据流启动检测失败，跳过启动 (原因: {e})")
+                    else:
+                        print(f"[{datetime.now().isoformat()}] ⚠️ 未提供 API Key/Secret，跳过用户数据流，仅启用行情流")
+
                     bot_data['twm'] = twm
                     bot_data['ws_started'] = True
-                    print(f"[{datetime.now().isoformat()}] ✅ WebSocket 已启动 (ticker + user_stream)")
+                    bot_data['ws_user_enabled'] = ws_user_enabled
+                    print(f"[{datetime.now().isoformat()}] ✅ WebSocket 已启动 (ticker{' + user_stream' if ws_user_enabled else ''})")
                 except Exception as e:
                     print(f"[{datetime.now().isoformat()}] ❌ WebSocket 启动失败: {e}")
 
@@ -209,7 +234,40 @@ def trading_loop(username, symbol):
                                         updated.append(p)
                                     bot_data['pending_buys'] = updated
                                 else:
-                                    print(f"[{datetime.now().isoformat()}] ⚠️ [REPRICE] 客户端未提供 cancelReplace 方法，跳过替换。")
+                                    # 兼容旧版库：直接调用底层 POST 到 /api/v3/order/cancelReplace
+                                    raw_post = getattr(client, '_post', None)
+                                    if raw_post:
+                                        try:
+                                            resp = raw_post(
+                                                'order/cancelReplace', True,
+                                                data={
+                                                    'symbol': config['symbol'],
+                                                    'side': 'BUY',
+                                                    'type': 'LIMIT',
+                                                    'timeInForce': 'GTC',
+                                                    'quantity': aligned_quantity,
+                                                    'price': buy_price_str,
+                                                    'cancelOrderId': order['orderId'],
+                                                    'cancelReplaceMode': 'STOP_ON_FAILURE'
+                                                }
+                                            )
+                                            new_part = resp.get('newOrderResult') if isinstance(resp, dict) else None
+                                            new_order_id = str((new_part or {}).get('orderId') or order.get('orderId'))
+                                            print(f"[{datetime.now().isoformat()}] ✅ [REPRICE] (RAW) 订单 {order['orderId']} 已替换为新价格 {buy_price_str}，新订单ID={new_order_id}")
+
+                                            updated = []
+                                            for p in bot_data.get('pending_buys', []):
+                                                if p['order_id'] == str(order['orderId']):
+                                                    p['order_id'] = new_order_id
+                                                    p['price'] = float(buy_price_str)
+                                                updated.append(p)
+                                            bot_data['pending_buys'] = updated
+                                        except BinanceAPIException as e:
+                                            print(f"[{datetime.now().isoformat()}] ❌ [REPRICE ERR] (RAW) 订单 {order['orderId']} 替换价格异常: {e}")
+                                        except Exception as e:
+                                            print(f"[{datetime.now().isoformat()}] ❌ [REPRICE ERR] (RAW) 订单 {order['orderId']} 替换价格错误: {e}")
+                                    else:
+                                        print(f"[{datetime.now().isoformat()}] ⚠️ [REPRICE] 客户端未提供 cancelReplace 方法，且无法调用底层 _post，跳过替换。")
 
                             except BinanceAPIException as e:
                                 print(f"[{datetime.now().isoformat()}] ❌ [REPRICE ERR] 订单 {order['orderId']} 替换价格异常: {e}")
@@ -271,7 +329,61 @@ def trading_loop(username, symbol):
                 except Exception as e:
                     print(f"[{datetime.now().isoformat()}] ❌ [FAILURE] 下单错误: {e}")
 
-            # 取消原先基于 REST 的订单状态轮询，改由 WS 用户数据流驱动
+            # 当用户数据流不可用时，使用 REST 轮询作为回退，确保买单成交后能挂卖单
+            if not bot_data.get('ws_user_enabled'):
+                pending = bot_data.get('pending_buys', [])
+                if pending:
+                    remaining = []
+                    for pb in pending:
+                        try:
+                            order_info = client.get_order(symbol=pb['symbol'], orderId=int(pb['order_id']))
+                            status = order_info.get('status')
+
+                            if status == 'FILLED':
+                                buy_price = float(order_info.get('price')) if order_info.get('price') else pb['price']
+                                if not buy_price:
+                                    buy_price = pb['price']
+
+                                sell_offset = config.get('sell_offset_percent', 0.5) / 100.0
+                                raw_sell_price = buy_price * (1 + sell_offset)
+
+                                price_decimals = int(abs(math.log10(tick_size))) if tick_size else 2
+                                aligned_sell_price = math.floor(raw_sell_price / tick_size) * tick_size if tick_size else raw_sell_price
+                                aligned_sell_price = round(aligned_sell_price, price_decimals)
+
+                                sell_qty = float(pb['quantity'])
+                                qty_decimals = int(abs(math.log10(step_size))) if step_size else 6
+                                aligned_sell_qty = math.floor(sell_qty / step_size) * step_size if step_size else sell_qty
+                                aligned_sell_qty = round(aligned_sell_qty, qty_decimals)
+
+                                try:
+                                    sell_order = client.order_limit_sell(
+                                        symbol=pb['symbol'],
+                                        quantity=aligned_sell_qty,
+                                        price=f"{aligned_sell_price}",
+                                        timeInForce='GTC'
+                                    )
+                                    sell_order_id = str(sell_order.get('orderId'))
+
+                                    insert_order(pb['user_id'], pb['symbol'], str(aligned_sell_price), str(aligned_sell_qty),
+                                                 'SELL', 'PLACED', sell_order_id)
+                                    update_order_status(pb['order_id'], 'FILLED')
+
+                                    print(f"[{datetime.now().isoformat()}] ✅ [REST-FALLBACK] 买单 {pb['order_id']} 成交，自动挂卖单 {sell_order_id} @ {aligned_sell_price}")
+                                except BinanceAPIException as e:
+                                    print(f"[{datetime.now().isoformat()}] ❌ [SELL ERR] 卖单下单异常: {e}")
+                                except Exception as e:
+                                    print(f"[{datetime.now().isoformat()}] ❌ [SELL ERR] 卖单下单错误: {e}")
+                            else:
+                                remaining.append(pb)
+                        except BinanceAPIException as e:
+                            print(f"[{datetime.now().isoformat()}] ❌ [POLL ERR] 查询订单 {pb['order_id']} 状态异常: {e}")
+                            remaining.append(pb)
+                        except Exception as e:
+                            print(f"[{datetime.now().isoformat()}] ❌ [POLL ERR] 轮询订单错误: {e}")
+                            remaining.append(pb)
+
+                    bot_data['pending_buys'] = remaining
 
             time.sleep(config.get('interval', 1))
 
