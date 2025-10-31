@@ -320,9 +320,21 @@ class BackpackAdapter(BaseExchange):
                 time_in_force=time_in_force
             )
             
+            # 调试：打印完整的 API 响应
+            print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] order_limit_buy API 响应类型: {type(result)}")
+            print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] order_limit_buy API 响应内容: {result}")
+            
             if result:
+                # 尝试多个可能的字段名获取订单ID
+                order_id = result.get('id') or result.get('orderId') or result.get('order_id') or result.get('clientId')
+                print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 提取的订单ID: {order_id}")
+                
+                if not order_id:
+                    print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 无法从响应中提取订单ID，响应字段: {list(result.keys()) if isinstance(result, dict) else 'N/A'}")
+                
                 return {
-                    'orderId': result.get('id'),
+                    'orderId': order_id,
+                    'id': order_id,  # 同时提供 id 字段以兼容
                     'symbol': bpx_symbol,
                     'side': 'BUY',
                     'price': price,
@@ -350,9 +362,21 @@ class BackpackAdapter(BaseExchange):
                 time_in_force=time_in_force
             )
             
+            # 调试：打印完整的 API 响应
+            print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] order_limit_sell API 响应类型: {type(result)}")
+            print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] order_limit_sell API 响应内容: {result}")
+            
             if result:
+                # 尝试多个可能的字段名获取订单ID
+                order_id = result.get('id') or result.get('orderId') or result.get('order_id') or result.get('clientId')
+                print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 提取的订单ID: {order_id}")
+                
+                if not order_id:
+                    print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 无法从响应中提取订单ID，响应字段: {list(result.keys()) if isinstance(result, dict) else 'N/A'}")
+                
                 return {
-                    'orderId': result.get('id'),
+                    'orderId': order_id,
+                    'id': order_id,  # 同时提供 id 字段以兼容
                     'symbol': bpx_symbol,
                     'side': 'SELL',
                     'price': price,
