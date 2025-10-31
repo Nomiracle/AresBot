@@ -261,6 +261,13 @@ def trading_loop(username, symbol):
                         for order in open_buy_orders:
                             try:
                                 buy_price_str = f"{target_price}"
+                                
+                                # 检查替换价格是否与当前挂单价格一致
+                                current_order_price = float(order.get('price', 0))
+                                if current_order_price == target_price:
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ [REPRICE SKIP] 订单 {order['orderId']} 当前价格 {current_order_price} 与目标价格 {target_price} 一致，跳过替换")
+                                    continue
+                                
                                 # 使用适配器的 cancel_replace_order 方法
                                 try:
                                     resp = exchange.cancel_replace_order(
