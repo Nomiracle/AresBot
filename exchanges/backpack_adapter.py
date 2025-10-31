@@ -180,14 +180,32 @@ class BackpackAdapter(BaseExchange):
             return None
     
     def get_symbol_ticker(self, symbol: str) -> Dict:
-        """获取交易对当前价格"""
+        """获取交易对实时价格
+        
+        优先使用订单簿获取最实时的买一价格，失败则使用 ticker 的最新成交价
+        """
         try:
             bpx_symbol = self._convert_symbol(symbol)
-            ticker = self.public.get_ticker(bpx_symbol)
             
-            # 调试：打印完整的 ticker 响应
-            print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] get_ticker API 响应类型: {type(ticker)}")
-            print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] get_ticker API 响应内容: {ticker}")
+            # 方法1: 尝试从订单簿获取买一价格（最实时）
+            try:
+                depth = self.public.get_depth(bpx_symbol)
+                if depth and 'asks' in depth and len(depth['asks']) > 0:
+                    # 卖一价格 [price, quantity] - 这是买入时的最低价格
+                    best_ask = depth['asks'][0][0]
+                    print(f"[{datetime.now().isoformat()}] 💰 [Backpack] 从订单簿获取实时价格(卖一): {best_ask}")
+                    return {
+                        'symbol': bpx_symbol,
+                        'price': best_ask
+                    }
+            except AttributeError:
+                # get_depth 方法不存在，继续使用 ticker
+                print(f"[{datetime.now().isoformat()}] ℹ️ [Backpack] SDK 不支持 get_depth，使用 ticker")
+            except Exception as depth_error:
+                print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 获取订单簿失败: {depth_error}，回退到 ticker")
+            
+            # 方法2: 使用 ticker 的最新成交价（实时价格）
+            ticker = self.public.get_ticker(bpx_symbol)
             
             # 检查是否是错误响应
             if self._check_api_error(ticker, "获取价格"):
@@ -195,7 +213,7 @@ class BackpackAdapter(BaseExchange):
             
             if ticker and 'lastPrice' in ticker:
                 price_value = ticker['lastPrice']
-                print(f"[{datetime.now().isoformat()}] 💰 [Backpack] 提取的价格: {price_value}")
+                print(f"[{datetime.now().isoformat()}] 💰 [Backpack] 从 ticker 获取实时价格(最新成交): {price_value}")
                 return {
                     'symbol': bpx_symbol,
                     'price': price_value
