@@ -188,9 +188,12 @@ def trading_loop(username, symbol):
             # 如果 WebSocket 未启用（如 Backpack），每次循环都获取最新价格
             if not bot_data.get('ws_user_enabled'):
                 try:
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 [PRICE] 正在获取最新价格...")
                     ticker = exchange.get_symbol_ticker(symbol=config['symbol'])
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 [PRICE] ticker 返回值: {ticker}")
                     if ticker and 'price' in ticker:
                         current_price = float(ticker['price'])
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} 💰 [PRICE] 解析后的价格: {current_price}")
                         bot_data['current_price'] = current_price  # 更新缓存
                     else:
                         print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 无法获取当前价格，跳过本次循环")

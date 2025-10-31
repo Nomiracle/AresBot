@@ -185,18 +185,30 @@ class BackpackAdapter(BaseExchange):
             bpx_symbol = self._convert_symbol(symbol)
             ticker = self.public.get_ticker(bpx_symbol)
             
+            # 调试：打印完整的 ticker 响应
+            print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] get_ticker API 响应类型: {type(ticker)}")
+            print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] get_ticker API 响应内容: {ticker}")
+            
             # 检查是否是错误响应
             if self._check_api_error(ticker, "获取价格"):
                 return None
             
             if ticker and 'lastPrice' in ticker:
+                price_value = ticker['lastPrice']
+                print(f"[{datetime.now().isoformat()}] 💰 [Backpack] 提取的价格: {price_value}")
                 return {
                     'symbol': bpx_symbol,
-                    'price': ticker['lastPrice']
+                    'price': price_value
                 }
+            else:
+                print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] ticker 响应中没有 'lastPrice' 字段")
+                if ticker:
+                    print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] ticker 可用字段: {list(ticker.keys()) if isinstance(ticker, dict) else 'N/A'}")
             return None
         except Exception as e:
+            import traceback
             print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 获取价格失败 ({symbol}): {e}")
+            print(f"[{datetime.now().isoformat()}] 📋 [Backpack] 错误堆栈:\n{traceback.format_exc()}")
             return None
     
     def get_open_orders(self, symbol: str) -> List[Dict]:
