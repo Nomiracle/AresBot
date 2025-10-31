@@ -88,6 +88,34 @@ class BackpackAdapter(BaseExchange):
                 return []
         return self._markets_cache or []
     
+    def _check_api_error(self, result, operation: str = "API调用") -> bool:
+        """检查API响应是否包含错误
+        
+        Args:
+            result: API响应结果
+            operation: 操作描述，用于日志
+            
+        Returns:
+            True 如果是错误响应，False 如果正常
+        """
+        if isinstance(result, dict) and 'code' in result and 'message' in result:
+            error_code = result.get('code')
+            error_msg = result.get('message')
+            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] {operation}失败: {error_code} - {error_msg}")
+            
+            # 针对常见错误给出建议
+            if error_code == 'INSUFFICIENT_FUNDS':
+                print(f"[{datetime.now().isoformat()}] 💡 [Backpack] 账户余额不足，请充值")
+            elif error_code == 'INVALID_CLIENT_REQUEST' and 'signature' in error_msg.lower():
+                print(f"[{datetime.now().isoformat()}] 💡 [Backpack] 签名错误，请检查 API 密钥配置")
+            elif 'unauthorized' in error_msg.lower():
+                print(f"[{datetime.now().isoformat()}] 💡 [Backpack] 认证失败，请检查 API 密钥")
+            elif 'rate limit' in error_msg.lower():
+                print(f"[{datetime.now().isoformat()}] 💡 [Backpack] API 请求频率超限，请稍后重试")
+            
+            return True
+        return False
+    
     def _convert_symbol(self, symbol: str) -> str:
         """转换交易对格式
         
@@ -156,6 +184,10 @@ class BackpackAdapter(BaseExchange):
         try:
             bpx_symbol = self._convert_symbol(symbol)
             ticker = self.public.get_ticker(bpx_symbol)
+            
+            # 检查是否是错误响应
+            if self._check_api_error(ticker, "获取价格"):
+                return None
             
             if ticker and 'lastPrice' in ticker:
                 return {
@@ -289,6 +321,10 @@ class BackpackAdapter(BaseExchange):
             bpx_symbol = self._convert_symbol(symbol)
             order = self.account.get_open_order(symbol=bpx_symbol, order_id=orderId)
             
+            # 检查是否是错误响应
+            if self._check_api_error(order, "查询订单"):
+                return None
+            
             if order:
                 return {
                     'orderId': order.get('id'),
@@ -302,7 +338,7 @@ class BackpackAdapter(BaseExchange):
                 }
             return None
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 查询订单失败 ({symbol}, {order_id}): {e}")
+            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 查询订单失败 ({symbol}, {orderId}): {e}")
             return None
     
     def order_limit_buy(self, symbol: str, quantity: float, price: str, **kwargs) -> Dict:
@@ -323,6 +359,10 @@ class BackpackAdapter(BaseExchange):
             # 调试：打印完整的 API 响应
             print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] order_limit_buy API 响应类型: {type(result)}")
             print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] order_limit_buy API 响应内容: {result}")
+            
+            # 检查是否是错误响应
+            if self._check_api_error(result, "限价买单"):
+                raise Exception(f"Backpack API 错误: {result.get('code')} - {result.get('message')}")
             
             if result:
                 # 尝试多个可能的字段名获取订单ID
@@ -366,6 +406,10 @@ class BackpackAdapter(BaseExchange):
             print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] order_limit_sell API 响应类型: {type(result)}")
             print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] order_limit_sell API 响应内容: {result}")
             
+            # 检查是否是错误响应
+            if self._check_api_error(result, "限价卖单"):
+                raise Exception(f"Backpack API 错误: {result.get('code')} - {result.get('message')}")
+            
             if result:
                 # 尝试多个可能的字段名获取订单ID
                 order_id = result.get('id') or result.get('orderId') or result.get('order_id') or result.get('clientId')
@@ -394,6 +438,11 @@ class BackpackAdapter(BaseExchange):
         try:
             bpx_symbol = self._convert_symbol(symbol)
             result = self.account.cancel_order(bpx_symbol, order_id)
+            
+            # 检查是否是错误响应
+            if self._check_api_error(result, "取消订单"):
+                raise Exception(f"Backpack API 错误: {result.get('code')} - {result.get('message')}")
+            
             return result or {'success': True}
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 取消订单失败 ({symbol}, {order_id}): {e}")

@@ -395,6 +395,13 @@ def trading_loop(username, symbol):
                     for pb in pending:
                         try:
                             order_info = exchange.get_order(symbol=pb['symbol'], orderId=pb['order_id'])
+                            
+                            # 检查订单查询是否成功
+                            if not order_info:
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [POLL] 无法查询订单 {pb['order_id']} 状态，保留在 pending_buys 中")
+                                remaining.append(pb)
+                                continue
+                            
                             status = order_info.get('status')
 
                             if status == 'FILLED':
