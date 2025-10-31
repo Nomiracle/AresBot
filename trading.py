@@ -185,12 +185,13 @@ def trading_loop(username, symbol):
                     print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ WebSocket 启动失败: {e}")
 
             # 当前价格与目标价格
-            current_price = bot_data.get('current_price')
-            if not current_price:
+            # 如果 WebSocket 未启用（如 Backpack），每次循环都获取最新价格
+            if not bot_data.get('ws_user_enabled'):
                 try:
                     ticker = exchange.get_symbol_ticker(symbol=config['symbol'])
                     if ticker and 'price' in ticker:
                         current_price = float(ticker['price'])
+                        bot_data['current_price'] = current_price  # 更新缓存
                     else:
                         print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 无法获取当前价格，跳过本次循环")
                         time.sleep(config.get('interval', 1))
@@ -200,6 +201,25 @@ def trading_loop(username, symbol):
                     traceback.print_exc()
                     time.sleep(config.get('interval', 1))
                     continue
+            else:
+                # WebSocket 已启用，使用缓存的价格
+                current_price = bot_data.get('current_price')
+                if not current_price:
+                    # 如果缓存为空，主动获取一次
+                    try:
+                        ticker = exchange.get_symbol_ticker(symbol=config['symbol'])
+                        if ticker and 'price' in ticker:
+                            current_price = float(ticker['price'])
+                            bot_data['current_price'] = current_price
+                        else:
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 无法获取当前价格，跳过本次循环")
+                            time.sleep(config.get('interval', 1))
+                            continue
+                    except Exception as e:
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 获取价格失败: {e}")
+                        traceback.print_exc()
+                        time.sleep(config.get('interval', 1))
+                        continue
             
             offset = config['offset_percent'] / 100.0
             target_price = current_price * (1 + offset)
