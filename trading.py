@@ -185,12 +185,16 @@ def trading_loop(username, symbol):
                     print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ WebSocket 启动失败: {e}")
 
             # 当前价格与目标价格
-            current_price = bot_data.get('current_price')
-            if not current_price:
+            # 如果 WebSocket 未启用（如 Backpack），每次循环都获取最新价格
+            if not bot_data.get('ws_user_enabled'):
                 try:
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 [PRICE] 正在获取最新价格...")
                     ticker = exchange.get_symbol_ticker(symbol=config['symbol'])
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 [PRICE] ticker 返回值: {ticker}")
                     if ticker and 'price' in ticker:
                         current_price = float(ticker['price'])
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} 💰 [PRICE] 解析后的价格: {current_price}")
+                        bot_data['current_price'] = current_price  # 更新缓存
                     else:
                         print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 无法获取当前价格，跳过本次循环")
                         time.sleep(config.get('interval', 1))
@@ -200,6 +204,25 @@ def trading_loop(username, symbol):
                     traceback.print_exc()
                     time.sleep(config.get('interval', 1))
                     continue
+            else:
+                # WebSocket 已启用，使用缓存的价格
+                current_price = bot_data.get('current_price')
+                if not current_price:
+                    # 如果缓存为空，主动获取一次
+                    try:
+                        ticker = exchange.get_symbol_ticker(symbol=config['symbol'])
+                        if ticker and 'price' in ticker:
+                            current_price = float(ticker['price'])
+                            bot_data['current_price'] = current_price
+                        else:
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 无法获取当前价格，跳过本次循环")
+                            time.sleep(config.get('interval', 1))
+                            continue
+                    except Exception as e:
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 获取价格失败: {e}")
+                        traceback.print_exc()
+                        time.sleep(config.get('interval', 1))
+                        continue
             
             offset = config['offset_percent'] / 100.0
             target_price = current_price * (1 + offset)
@@ -261,6 +284,13 @@ def trading_loop(username, symbol):
                         for order in open_buy_orders:
                             try:
                                 buy_price_str = f"{target_price}"
+                                
+                                # 检查替换价格是否与当前挂单价格一致
+                                current_order_price = float(order.get('price', 0))
+                                if current_order_price == target_price:
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ [REPRICE SKIP] 订单 {order['orderId']} 当前价格 {current_order_price} 与目标价格 {target_price} 一致，跳过替换")
+                                    continue
+                                
                                 # 使用适配器的 cancel_replace_order 方法
                                 try:
                                     resp = exchange.cancel_replace_order(
@@ -391,6 +421,13 @@ def trading_loop(username, symbol):
                     for pb in pending:
                         try:
                             order_info = exchange.get_order(symbol=pb['symbol'], orderId=pb['order_id'])
+                            
+                            # 检查订单查询是否成功
+                            if not order_info:
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [POLL] 无法查询订单 {pb['order_id']} 状态，保留在 pending_buys 中")
+                                remaining.append(pb)
+                                continue
+                            
                             status = order_info.get('status')
 
                             if status == 'FILLED':
