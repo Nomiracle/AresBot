@@ -16,25 +16,28 @@ Backpack 的 `get_open_orders()` API 可能返回已成交或已取消的订单�
 
 ## 修复内容
 
-### 1. 过滤非 Open 状态的订单 ✅
+### 1. 过滤非未完成状态的订单 ✅
 
 **文件：** `exchanges/backpack_adapter.py`
 
-**位置：** `get_open_orders()` 方法，第248-252行
+**位置：** `get_open_orders()` 方法，第310-315行
 
 **修改：**
 ```python
-# ⚠️ 关键修复：只处理 Open 状态的订单，过滤已成交/已取消的订单
+# ⚠️ 关键修复：只处理未完成状态的订单，过滤已成交/已取消的订单
+# Backpack 未完成订单的状态：New（新订单）、Open（挂单中）
 order_status = order.get('status')
-if order_status != 'Open':
-    print(f"[{datetime.now().isoformat()}] ⏭️ [Backpack] 订单 {i} 状态为 {order_status}，跳过（非 Open 状态）")
+if order_status not in ['New', 'Open']:
+    print(f"[{datetime.now().isoformat()}] ⏭️ [Backpack] 订单 {i} 状态为 {order_status}，跳过（非未完成状态）")
     continue
 ```
 
 **效果：**
-- 只返回真正未完成的订单（状态为 `Open`）
-- 已成交（`Filled`）或已取消（`Cancelled`）的订单不会被返回
+- 只返回真正未完成的订单（状态为 `'New'` 或 `'Open'`）
+- 已成交（`'Filled'`）或已取消（`'Cancelled'`）的订单不会被返回
 - 避免尝试改价不存在的订单
+
+**重要发现：** Backpack API 返回的新订单状态是 `'New'`（不是 `'Open'`），必须同时接受这两个状态！
 
 ### 2. 改价失败时清理 pending_buys ✅
 
@@ -110,8 +113,15 @@ except Exception as e:
 
 ### Backpack 特性
 - Backpack 不支持 WebSocket，使用 REST 轮询（默认 1 秒）
-- `get_open_orders()` 可能返回非 Open 状态的订单（API 特性）
+- `get_open_orders()` 可能返回非未完成状态的订单（API 特性）
 - 需要显式过滤订单状态
+- **Backpack 订单状态：**
+  - `'New'` - 新下的订单（未完成）⚠️
+  - `'Open'` - 挂单中（未完成）
+  - `'Filled'` - 已成交
+  - `'Cancelled'` - 已取消
+  - `'PartiallyFilled'` - 部分成交
+  - `'Expired'` - 已过期
 
 ### 监控建议
 1. 定期检查 `pending_buys` 是否有积压

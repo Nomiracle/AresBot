@@ -297,34 +297,32 @@ class BackpackAdapter(BaseExchange):
             # 转换为统一格式
             result = []
             for i, order in enumerate(orders):
-                print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 处理订单 {i}")
-                
                 # 确保 order 是字典
                 if not isinstance(order, dict):
                     print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 订单 {i} 不是字典: {type(order)}")
                     continue
                 
-                # 调试：打印订单的所有字段
-                print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 订单 {i} 字段: {list(order.keys())}")
+                # 提前获取订单 ID 用于日志前缀
+                order_id = order.get('id') or order.get('orderId') or order.get('order_id') or order.get('clientId')
+                order_prefix = f"[Order#{order_id}]" if order_id else f"[Order#{i}]"
                 
-                # ⚠️ 关键修复：只处理 Open 状态的订单，过滤已成交/已取消的订单
+                print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] {order_prefix} 处理订单")
+                print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] {order_prefix} 字段: {list(order.keys())}")
+                
+                # ⚠️ 关键修复：只处理未完成状态的订单，过滤已成交/已取消的订单
+                # Backpack 未完成订单的状态：New（新订单）、Open（挂单中）
                 order_status = order.get('status')
-                if order_status != 'Open':
-                    print(f"[{datetime.now().isoformat()}] ⏭️ [Backpack] 订单 {i} 状态为 {order_status}，跳过（非 Open 状态）")
+                if order_status not in ['New', 'Open']:
+                    print(f"[{datetime.now().isoformat()}] ⏭️ [Backpack] {order_prefix} 状态为 {order_status}，跳过（非未完成状态）")
                     continue
                 
-                # 获取订单 ID（尝试多个可能的字段名）
-                order_id = order.get('id') or order.get('orderId') or order.get('order_id')
-                print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 订单 {i} ID 获取:")
-                print(f"[{datetime.now().isoformat()}]    - order.get('id') = {order.get('id')}")
-                print(f"[{datetime.now().isoformat()}]    - order.get('orderId') = {order.get('orderId')}")
-                print(f"[{datetime.now().isoformat()}]    - order.get('order_id') = {order.get('order_id')}")
-                print(f"[{datetime.now().isoformat()}]    - 最终 order_id = {order_id}")
-                
-                # 如果 ID 仍为 None，打印完整订单数据
+                # 验证订单 ID
                 if order_id is None:
-                    print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 订单 {i} ID 为 None!")
-                    print(f"[{datetime.now().isoformat()}] 📋 [Backpack] 完整订单数据: {order}")
+                    print(f"[{datetime.now().isoformat()}] ❌ [Backpack] {order_prefix} ID 为 None!")
+                    print(f"[{datetime.now().isoformat()}] 📋 [Backpack] {order_prefix} 完整订单数据: {order}")
+                    continue
+                
+                print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] {order_prefix} ID 验证通过: {order_id}")
                 
                 converted_order = {
                     'orderId': order_id,
@@ -338,11 +336,12 @@ class BackpackAdapter(BaseExchange):
                     'timeInForce': order.get('timeInForce')
                 }
                 
-                print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 转换后订单 {i}: {converted_order}")
+                print(f"[{datetime.now().isoformat()}] ✅ [Backpack] {order_prefix} 转换完成: {order.get('side')} {order.get('quantity')} @ {order.get('price')}")
                 result.append(converted_order)
             
             if result:
-                print(f"[{datetime.now().isoformat()}] ✅ [Backpack] 找到 {len(result)} 个未完成订单")
+                order_ids = ', '.join([str(o['orderId']) for o in result])
+                print(f"[{datetime.now().isoformat()}] ✅ [Backpack] 找到 {len(result)} 个未完成订单: [{order_ids}]")
             return result
             
         except Exception as e:
@@ -353,15 +352,19 @@ class BackpackAdapter(BaseExchange):
     
     def get_order(self, symbol: str, orderId: str) -> Dict:
         """查询订单状态"""
+        order_prefix = f"[Order#{orderId}]"
         try:
             bpx_symbol = self._convert_symbol(symbol)
+            print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] {order_prefix} 查询订单状态...")
             order = self.account.get_open_order(symbol=bpx_symbol, order_id=orderId)
             
             # 检查是否是错误响应
-            if self._check_api_error(order, "查询订单"):
+            if self._check_api_error(order, f"{order_prefix} 查询订单"):
                 return None
             
             if order:
+                status = self._convert_order_status(order.get('status'))
+                print(f"[{datetime.now().isoformat()}] ✅ [Backpack] {order_prefix} 状态: {order.get('status')} -> {status}")
                 return {
                     'orderId': order.get('id'),
                     'symbol': order.get('symbol'),
@@ -369,12 +372,13 @@ class BackpackAdapter(BaseExchange):
                     'price': order.get('price'),
                     'origQty': order.get('quantity'),
                     'executedQty': order.get('executedQuantity', '0'),
-                    'status': self._convert_order_status(order.get('status')),
+                    'status': status,
                     'type': order.get('orderType')
                 }
+            print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] {order_prefix} 未找到订单")
             return None
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 查询订单失败 ({symbol}, {orderId}): {e}")
+            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] {order_prefix} 查询失败: {e}")
             return None
     
     def order_limit_buy(self, symbol: str, quantity: float, price: str, **kwargs) -> Dict:
@@ -382,6 +386,8 @@ class BackpackAdapter(BaseExchange):
         try:
             bpx_symbol = self._convert_symbol(symbol)
             time_in_force = kwargs.get('timeInForce', 'GTC')
+            
+            print(f"[{datetime.now().isoformat()}] 📤 [Backpack] 下限价买单: {bpx_symbol} BUY {quantity} @ {price}")
             
             result = self.account.execute_order(
                 symbol=bpx_symbol,
@@ -392,10 +398,6 @@ class BackpackAdapter(BaseExchange):
                 time_in_force=time_in_force
             )
             
-            # 调试：打印完整的 API 响应
-            print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] order_limit_buy API 响应类型: {type(result)}")
-            print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] order_limit_buy API 响应内容: {result}")
-            
             # 检查是否是错误响应
             if self._check_api_error(result, "限价买单"):
                 raise Exception(f"Backpack API 错误: {result.get('code')} - {result.get('message')}")
@@ -403,10 +405,12 @@ class BackpackAdapter(BaseExchange):
             if result:
                 # 尝试多个可能的字段名获取订单ID
                 order_id = result.get('id') or result.get('orderId') or result.get('order_id') or result.get('clientId')
-                print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 提取的订单ID: {order_id}")
+                order_prefix = f"[Order#{order_id}]" if order_id else "[Order#?]"
                 
                 if not order_id:
-                    print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 无法从响应中提取订单ID，响应字段: {list(result.keys()) if isinstance(result, dict) else 'N/A'}")
+                    print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] {order_prefix} 无法提取订单ID，响应字段: {list(result.keys()) if isinstance(result, dict) else 'N/A'}")
+                else:
+                    print(f"[{datetime.now().isoformat()}] ✅ [Backpack] {order_prefix} 买单下单成功")
                 
                 return {
                     'orderId': order_id,
@@ -429,6 +433,8 @@ class BackpackAdapter(BaseExchange):
             bpx_symbol = self._convert_symbol(symbol)
             time_in_force = kwargs.get('timeInForce', 'GTC')
             
+            print(f"[{datetime.now().isoformat()}] 📤 [Backpack] 下限价卖单: {bpx_symbol} SELL {quantity} @ {price}")
+            
             result = self.account.execute_order(
                 symbol=bpx_symbol,
                 side='Ask',  # Backpack 使用 Bid/Ask
@@ -438,10 +444,6 @@ class BackpackAdapter(BaseExchange):
                 time_in_force=time_in_force
             )
             
-            # 调试：打印完整的 API 响应
-            print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] order_limit_sell API 响应类型: {type(result)}")
-            print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] order_limit_sell API 响应内容: {result}")
-            
             # 检查是否是错误响应
             if self._check_api_error(result, "限价卖单"):
                 raise Exception(f"Backpack API 错误: {result.get('code')} - {result.get('message')}")
@@ -449,10 +451,12 @@ class BackpackAdapter(BaseExchange):
             if result:
                 # 尝试多个可能的字段名获取订单ID
                 order_id = result.get('id') or result.get('orderId') or result.get('order_id') or result.get('clientId')
-                print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 提取的订单ID: {order_id}")
+                order_prefix = f"[Order#{order_id}]" if order_id else "[Order#?]"
                 
                 if not order_id:
-                    print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 无法从响应中提取订单ID，响应字段: {list(result.keys()) if isinstance(result, dict) else 'N/A'}")
+                    print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] {order_prefix} 无法提取订单ID，响应字段: {list(result.keys()) if isinstance(result, dict) else 'N/A'}")
+                else:
+                    print(f"[{datetime.now().isoformat()}] ✅ [Backpack] {order_prefix} 卖单下单成功")
                 
                 return {
                     'orderId': order_id,
@@ -471,17 +475,20 @@ class BackpackAdapter(BaseExchange):
     
     def cancel_order(self, symbol: str, order_id: str) -> Dict:
         """取消订单"""
+        order_prefix = f"[Order#{order_id}]"
         try:
             bpx_symbol = self._convert_symbol(symbol)
+            print(f"[{datetime.now().isoformat()}] 🗑️ [Backpack] {order_prefix} 取消订单...")
             result = self.account.cancel_order(bpx_symbol, order_id)
             
             # 检查是否是错误响应
-            if self._check_api_error(result, "取消订单"):
+            if self._check_api_error(result, f"{order_prefix} 取消订单"):
                 raise Exception(f"Backpack API 错误: {result.get('code')} - {result.get('message')}")
             
+            print(f"[{datetime.now().isoformat()}] ✅ [Backpack] {order_prefix} 订单已取消")
             return result or {'success': True}
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 取消订单失败 ({symbol}, {order_id}): {e}")
+            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] {order_prefix} 取消失败: {e}")
             raise
     
     def cancel_replace_order(self, symbol: str, side: str, order_type: str, 
@@ -589,7 +596,8 @@ class BackpackAdapter(BaseExchange):
     def _convert_order_status(self, bpx_status: str) -> str:
         """转换订单状态为统一格式"""
         status_map = {
-            'Open': 'NEW',
+            'New': 'NEW',           # Backpack 新订单状态
+            'Open': 'NEW',          # Backpack 挂单中状态
             'Filled': 'FILLED',
             'PartiallyFilled': 'PARTIALLY_FILLED',
             'Cancelled': 'CANCELED',
