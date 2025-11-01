@@ -171,7 +171,7 @@ class BackpackAdapter(BaseExchange):
             for market in markets:
                 if market.get('symbol') == bpx_symbol:
                     return market
-                print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 交易对 {market.get('symbol')} 不存在：{bpx_symbol}")
+                # print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 交易对 {market.get('symbol')} 不存在：{bpx_symbol}")
             
             print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 交易对 {bpx_symbol} 不存在")
             return None
