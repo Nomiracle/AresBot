@@ -245,6 +245,12 @@ class BackpackAdapter(BaseExchange):
                 # 调试：打印订单的所有字段
                 print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 订单 {i} 字段: {list(order.keys())}")
                 
+                # ⚠️ 关键修复：只处理 Open 状态的订单，过滤已成交/已取消的订单
+                order_status = order.get('status')
+                if order_status != 'Open':
+                    print(f"[{datetime.now().isoformat()}] ⏭️ [Backpack] 订单 {i} 状态为 {order_status}，跳过（非 Open 状态）")
+                    continue
+                
                 # 获取订单 ID（尝试多个可能的字段名）
                 order_id = order.get('id') or order.get('orderId') or order.get('order_id')
                 print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] 订单 {i} ID 获取:")

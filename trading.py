@@ -320,6 +320,9 @@ def trading_loop(username, symbol):
                                     update_order_status(str(order['orderId']), 'FAILED')
                             except Exception as e:
                                 print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [REPRICE ERR] 订单 {order['orderId']} 外层错误: {e}")
+                                # 外层错误也需要从pending_buys中移除以避免永久阻塞
+                                bot_data['pending_buys'] = [p for p in bot_data.get('pending_buys', []) if p['order_id'] != str(order['orderId'])]
+                                update_order_status(str(order['orderId']), 'FAILED')
 
                     if open_sell_orders:
                         sell_ids = ', '.join([str(o['orderId']) for o in open_sell_orders])
