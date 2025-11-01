@@ -377,7 +377,7 @@ class BackpackAdapter(BaseExchange):
                     print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] {order_prefix} 未完成订单中未找到，等待 10 秒后查询历史订单...")
                     
                     # 等待 2 秒让 API 同步订单状态
-                    time.sleep(10)
+                    time.sleep(15)
                     
                     # 步骤 2：查询历史订单
                     try:

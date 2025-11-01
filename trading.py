@@ -450,7 +450,11 @@ def trading_loop(username, symbol):
                                 aligned_sell_price = math.floor(raw_sell_price / tick_size) * tick_size if tick_size else raw_sell_price
                                 aligned_sell_price = round(aligned_sell_price, price_decimals)
 
-                                sell_qty = float(pb['quantity'])
+                                # 使用实际成交数量（扣除手续费后），而不是原始下单数量
+                                executed_qty = float(order_info.get('executedQty', pb['quantity']))
+                                sell_qty = executed_qty
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [SELL] 买单成交数量: {executed_qty}（原始: {pb['quantity']}）")
+                                
                                 qty_decimals = int(abs(math.log10(step_size))) if step_size else 6
                                 aligned_sell_qty = math.floor(sell_qty / step_size) * step_size if step_size else sell_qty
                                 aligned_sell_qty = round(aligned_sell_qty, qty_decimals)
