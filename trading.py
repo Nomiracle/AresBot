@@ -272,7 +272,8 @@ def trading_loop(username, symbol):
                                 'price': float(order['price']),
                                 'quantity': float(order['origQty']),
                                 'symbol': config['symbol'],
-                                'user_id': user_id
+                                'user_id': user_id,
+                                'created_at': 0  # 恢复的订单设为 0，立即可查询
                             })
                         print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [RECOVER] 已恢复 {len(open_buy_orders)} 笔买单到 pending_buys")
                         pending_buys_recovered = True
@@ -405,7 +406,8 @@ def trading_loop(username, symbol):
                             'price': float(buy_price_str),
                             'quantity': aligned_quantity,
                             'symbol': config['symbol'],
-                            'user_id': user_id
+                            'user_id': user_id,
+                            'created_at': datetime.now().timestamp()  # 记录创建时间
                         })
                     else:
                         print(f"[{datetime.now().isoformat()}] {log_prefix} ⏸️ [SWITCH OFF] 下单逻辑被禁用 (enable_buy_logic=False)，跳过本次挂单操作。")
@@ -424,11 +426,17 @@ def trading_loop(username, symbol):
                             
                             # 检查订单查询是否成功
                             if not order_info:
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [POLL] 无法查询订单 {pb['order_id']} 状态，保留在 pending_buys 中")
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [POLL] 网络错误，无法查询订单 {pb['order_id']} 状态，保留在 pending_buys 中")
                                 remaining.append(pb)
                                 continue
                             
                             status = order_info.get('status')
+                            
+                            # 订单不存在（已成交或已取消），从 pending_buys 移除
+                            if status == 'NOT_FOUND':
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [POLL] 订单 {pb['order_id']} 不存在，从 pending_buys 移除")
+                                update_order_status(pb['order_id'], 'NOT_FOUND')
+                                continue
 
                             if status == 'FILLED':
                                 buy_price = float(order_info.get('price')) if order_info.get('price') else pb['price']

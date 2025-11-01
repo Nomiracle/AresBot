@@ -5,6 +5,7 @@ Backpack (BPX) 交易所适配器
 from datetime import datetime
 from typing import Dict, List, Optional, Callable
 import math
+import time
 from .base import BaseExchange
 
 try:
@@ -351,17 +352,73 @@ class BackpackAdapter(BaseExchange):
             return []
     
     def get_order(self, symbol: str, orderId: str) -> Dict:
-        """查询订单状态"""
-        order_prefix = f"[Order#{orderId}]"
+        """查询订单状态
+        
+        先查询未完成订单，如果不存在则查询历史订单
+        
+        Returns:
+            Dict: 订单信息，如果订单不存在返回 {'status': 'NOT_FOUND'}，网络错误返回 None
+        """
+        order_prefix = f"[Order#{orderId}@{symbol}]"
         try:
             bpx_symbol = self._convert_symbol(symbol)
             print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] {order_prefix} 查询订单状态...")
+            
+            # 步骤 1：先查询未完成订单
             order = self.account.get_open_order(symbol=bpx_symbol, order_id=orderId)
             
             # 检查是否是错误响应
-            if self._check_api_error(order, f"{order_prefix} 查询订单"):
+            if isinstance(order, dict) and 'code' in order and 'message' in order:
+                error_code = order.get('code')
+                error_msg = order.get('message')
+                
+                # 订单不在未完成列表中（可能已成交或已取消），查询历史订单
+                if error_code in ['RESOURCE_NOT_FOUND', 'ORDER_NOT_FOUND']:
+                    print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] {order_prefix} 未完成订单中未找到，等待 10 秒后查询历史订单...")
+                    
+                    # 等待 2 秒让 API 同步订单状态
+                    time.sleep(10)
+                    
+                    # 步骤 2：查询历史订单
+                    try:
+                        history = self.account.get_order_history(symbol=bpx_symbol, order_id=orderId)
+                        
+                        if isinstance(history, list) and len(history) > 0:
+                            # 在历史订单中找到了
+                            hist_order = history[0]
+                            status = self._convert_order_status(hist_order.get('status'))
+                            print(f"[{datetime.now().isoformat()}] ✅ [Backpack] {order_prefix} 在历史订单中找到，状态: {hist_order.get('status')} -> {status}")
+                            return {
+                                'orderId': hist_order.get('id'),
+                                'symbol': hist_order.get('symbol'),
+                                'side': 'BUY' if hist_order.get('side') == 'Bid' else 'SELL',
+                                'price': hist_order.get('price'),
+                                'origQty': hist_order.get('quantity'),
+                                'executedQty': hist_order.get('executedQuantity', '0'),
+                                'status': status,
+                                'type': hist_order.get('orderType')
+                            }
+                        elif isinstance(history, dict):
+                            # 可能是错误响应
+                            print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] {order_prefix} 历史订单返回字典（可能是错误）: {history}")
+                            if 'code' in history and 'message' in history:
+                                print(f"[{datetime.now().isoformat()}] ❌ [Backpack] {order_prefix} API 错误: {history.get('code')} - {history.get('message')}")
+                            return {'status': 'NOT_FOUND', 'orderId': orderId}
+                        else:
+                            # 历史订单中也没找到
+                            print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] {order_prefix} 订单不存在（历史订单返回空列表）")
+                            return {'status': 'NOT_FOUND', 'orderId': orderId}
+                    except Exception as hist_error:
+                        print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] {order_prefix} 查询历史订单异常: {hist_error}")
+                        import traceback
+                        print(f"[{datetime.now().isoformat()}] 📋 [Backpack] {order_prefix} 异常堆栈:\n{traceback.format_exc()}")
+                        return {'status': 'NOT_FOUND', 'orderId': orderId}
+                
+                # 其他错误
+                print(f"[{datetime.now().isoformat()}] ❌ [Backpack] {order_prefix} 查询失败: {error_code} - {error_msg}")
                 return None
             
+            # 步骤 3：在未完成订单中找到了
             if order:
                 status = self._convert_order_status(order.get('status'))
                 print(f"[{datetime.now().isoformat()}] ✅ [Backpack] {order_prefix} 状态: {order.get('status')} -> {status}")
@@ -375,10 +432,14 @@ class BackpackAdapter(BaseExchange):
                     'status': status,
                     'type': order.get('orderType')
                 }
+            
             print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] {order_prefix} 未找到订单")
-            return None
+            return {'status': 'NOT_FOUND', 'orderId': orderId}
+            
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] {order_prefix} 查询失败: {e}")
+            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] {order_prefix} 查询异常: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def order_limit_buy(self, symbol: str, quantity: float, price: str, **kwargs) -> Dict:

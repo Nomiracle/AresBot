@@ -49,7 +49,6 @@ if order_status not in ['New', 'Open']:
 ```python
 except Exception as e:
     print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [REPRICE ERR] 订单 {order['orderId']} 外层错误: {e}")
-    # 外层错误也需要从pending_buys中移除以避免永久阻塞
     bot_data['pending_buys'] = [p for p in bot_data.get('pending_buys', []) if p['order_id'] != str(order['orderId'])]
     update_order_status(str(order['orderId']), 'FAILED')
 ```
@@ -57,6 +56,57 @@ except Exception as e:
 **效果：**
 - 改价失败时，从 `pending_buys` 中移除该订单
 - 避免订单永久阻塞交易循环
+- 允许程序继续下新买单
+
+### 3. 查询历史订单获取已成交状态 ✅
+
+**文件：** `exchanges/backpack_adapter.py` 和 `trading.py`
+
+**位置：** 
+- `backpack_adapter.py` 第353-426行
+- `trading.py` 第433-437行
+
+**问题：** `get_open_order()` 只返回未完成订单，已成交订单会返回 `RESOURCE_NOT_FOUND` 错误
+
+**修改：**
+
+**backpack_adapter.py:**
+```python
+def get_order(self, symbol: str, orderId: str) -> Dict:
+    """查询订单状态
+    
+    先查询未完成订单，如果不存在则查询历史订单
+    """
+    # 1. 先查询未完成订单
+    order = self.account.get_open_order(symbol=bpx_symbol, order_id=orderId)
+    
+    # 订单不在未完成列表中
+    if error_code in ['RESOURCE_NOT_FOUND', 'ORDER_NOT_FOUND']:
+        # 2. 查询历史订单
+        history = self.account.get_order_history(symbol=bpx_symbol, limit=100)
+        for hist_order in history:
+            if str(hist_order.get('id')) == str(orderId):
+                # 找到了！返回历史订单状态（可能是 Filled/Cancelled）
+                return convert_order(hist_order)
+        
+        # 历史订单中也没找到
+        return {'status': 'NOT_FOUND', 'orderId': orderId}
+```
+
+**trading.py:**
+```python
+# 订单不存在（已成交或已取消），从 pending_buys 移除
+if status == 'NOT_FOUND':
+    print(f"订单 {pb['order_id']} 不存在，从 pending_buys 移除")
+    update_order_status(pb['order_id'], 'NOT_FOUND')
+    continue  # 不加入 remaining
+```
+
+**效果：**
+- 区分"订单不存在"和"网络错误"
+- 订单不存在时自动从 `pending_buys` 移除
+- 网络错误时保留在 `pending_buys` 等待重试
+- 避免已成交/已取消的订单永久阻塞
 - 允许程序继续下新买单
 
 ## 修复后的行为
