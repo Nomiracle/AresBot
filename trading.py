@@ -1,6 +1,6 @@
 import time
 from datetime import datetime
-from database import get_user_id, insert_order, update_order_status
+from database import get_user_id, insert_order, update_order_status, get_order_buy_price
 import math
 import traceback
 
@@ -150,10 +150,10 @@ def trading_loop(username, symbol):
                                 # 兼容不同交易所：Binance用'orderId'，Backpack用'id'
                                 sell_order_id = str(sell_order.get('orderId') or sell_order.get('id'))
                                 insert_order(user_id, symbol_, str(aligned_sell_price), str(aligned_sell_qty),
-                                             'SELL', 'PLACED', sell_order_id)
+                                             'SELL', 'PLACED', sell_order_id, buy_price=str(buy_price))
                                 update_order_status(order_id, 'FILLED')
                                 sell_success = True
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [WS] 买单 {order_id} 成交，自动挂卖单 {sell_order_id} @ {aligned_sell_price}")
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [WS] 买单 {order_id} 成交 @ {buy_price}，自动挂卖单 {sell_order_id} @ {aligned_sell_price}")
                             except Exception as e:
                                 print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [WS SELL ERR] 卖单下单错误: {e}，将保留 pending_buy 以便重试")
 
@@ -357,7 +357,93 @@ def trading_loop(username, symbol):
 
                     if open_sell_orders:
                         sell_ids = ', '.join([str(o['orderId']) for o in open_sell_orders])
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} 📌 [CHECK] 保留 {len(open_sell_orders)} 笔未完成卖单 (ID: {sell_ids})。")
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} 📌 [CHECK] 检测到 {len(open_sell_orders)} 笔未完成卖单 (ID: {sell_ids})，正在检查是否需要调整价格...")
+                        
+                        # 对每个卖单，根据实时价格计算目标卖价并决定是否修改
+                        for sell_order in open_sell_orders:
+                            try:
+                                sell_order_id = str(sell_order['orderId'])
+                                current_sell_price = float(sell_order.get('price', 0))
+                                sell_quantity = float(sell_order.get('origQty', 0))
+                                
+                                # 从数据库中查找对应的买入价格
+                                buy_price = get_order_buy_price(sell_order_id)
+                                
+                                if not buy_price:
+                                    # 如果数据库中没有记录买入价格（可能是旧订单），使用反推方式
+                                    sell_offset = config.get('sell_offset_percent', 0.5) / 100.0
+                                    buy_price = current_sell_price / (1 + sell_offset)
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [SELL CHECK] 订单 {sell_order_id} 未找到买入价格记录，使用反推价格 {buy_price}")
+                                
+                                # 根据实时价格计算新的目标卖价
+                                sell_offset = config.get('sell_offset_percent', 0.5) / 100.0
+                                raw_target_sell_price = current_price * (1 + sell_offset)
+                                
+                                # 对齐价格精度
+                                price_decimals = int(abs(math.log10(tick_size))) if tick_size else 2
+                                target_sell_price = math.floor(raw_target_sell_price / tick_size) * tick_size if tick_size else raw_target_sell_price
+                                target_sell_price = round(target_sell_price, price_decimals)
+                                
+                                # 计算最低可接受卖价（买入价 + 0.2% 手续费保护）
+                                min_acceptable_price = buy_price * 1.002
+                                min_acceptable_price = math.ceil(min_acceptable_price / tick_size) * tick_size if tick_size else min_acceptable_price
+                                min_acceptable_price = round(min_acceptable_price, price_decimals)
+                                
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 [SELL CHECK] 订单 {sell_order_id}: 买入价={buy_price}, 当前卖价={current_sell_price}, 目标卖价={target_sell_price}, 最低可接受价={min_acceptable_price}")
+                                
+                                # 判断是否需要修改卖单价格
+                                if target_sell_price > min_acceptable_price:
+                                    # 目标价格高于最低可接受价格，可以修改
+                                    if abs(target_sell_price - current_sell_price) < tick_size * 0.5:
+                                        # 价格变化太小，跳过
+                                        print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ [SELL SKIP] 订单 {sell_order_id} 价格变化太小，跳过修改")
+                                        continue
+                                    
+                                    # 使用 cancel_replace 修改卖单价格
+                                    try:
+                                        # 对齐数量精度
+                                        qty_decimals = int(abs(math.log10(step_size))) if step_size else 6
+                                        aligned_sell_qty = math.floor(sell_quantity / step_size) * step_size if step_size else sell_quantity
+                                        aligned_sell_qty = round(aligned_sell_qty, qty_decimals)
+                                        
+                                        resp = exchange.cancel_replace_order(
+                                            symbol=config['symbol'],
+                                            side='SELL',
+                                            order_type='LIMIT',
+                                            quantity=aligned_sell_qty,
+                                            price=f"{target_sell_price}",
+                                            cancel_order_id=sell_order_id,
+                                            timeInForce='GTC',
+                                            cancelReplaceMode='STOP_ON_FAILURE'
+                                        )
+                                        
+                                        # 提取新订单ID
+                                        new_order_id = None
+                                        if isinstance(resp, dict):
+                                            new_order_data = resp.get('newOrderResponse', {})
+                                            if isinstance(new_order_data, dict):
+                                                new_order_id = str(new_order_data.get('orderId') or new_order_data.get('id') or sell_order_id)
+                                            else:
+                                                new_order_id = str(resp.get('orderId') or resp.get('id') or sell_order_id)
+                                        else:
+                                            new_order_id = sell_order_id
+                                        
+                                        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [SELL REPRICE] 卖单 {sell_order_id} 价格已从 {current_sell_price} 更新为 {target_sell_price}，新订单ID={new_order_id}")
+                                        
+                                        # 更新数据库
+                                        if new_order_id != sell_order_id:
+                                            update_order_status(sell_order_id, 'REPLACED')
+                                            insert_order(user_id, config['symbol'], f"{target_sell_price}", str(aligned_sell_qty),
+                                                        'SELL', 'PLACED', new_order_id, buy_price=str(buy_price))
+                                    except Exception as e:
+                                        print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [SELL REPRICE ERR] 修改卖单 {sell_order_id} 价格失败: {e}")
+                                else:
+                                    # 目标价格低于最低可接受价格，保持不变
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} 📌 [SELL KEEP] 订单 {sell_order_id} 目标价格 {target_sell_price} 低于最低可接受价格 {min_acceptable_price}，保持当前价格 {current_sell_price}")
+                            
+                            except Exception as e:
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [SELL CHECK ERR] 检查卖单错误: {e}")
+                                traceback.print_exc()
                 else:
                     print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [CHECK] 未发现交易所未完成订单。")
 
@@ -471,11 +557,11 @@ def trading_loop(username, symbol):
                                     sell_order_id = str(sell_order.get('orderId') or sell_order.get('id'))
 
                                     insert_order(pb['user_id'], pb['symbol'], str(aligned_sell_price), str(aligned_sell_qty),
-                                                 'SELL', 'PLACED', sell_order_id)
+                                                 'SELL', 'PLACED', sell_order_id, buy_price=str(buy_price))
                                     update_order_status(pb['order_id'], 'FILLED')
                                     sell_success = True
 
-                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [REST-FALLBACK] 买单 {pb['order_id']} 成交，自动挂卖单 {sell_order_id} @ {aligned_sell_price}")
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [REST-FALLBACK] 买单 {pb['order_id']} 成交 @ {buy_price}，自动挂卖单 {sell_order_id} @ {aligned_sell_price}")
                                 except Exception as e:
                                     print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [SELL ERR] 卖单下单错误: {e}，将保留 pending_buy 以便重试")
                                 

@@ -64,8 +64,16 @@ def init_db(recreate=False):
                   side TEXT NOT NULL,
                   status TEXT NOT NULL,
                   order_id TEXT,
+                  buy_price TEXT,
                   timestamp TEXT NOT NULL,
                   FOREIGN KEY (user_id) REFERENCES users(id))''')
+    
+    # 为已存在的 orders 表添加 buy_price 列（如果不存在）
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN buy_price TEXT")
+        print(f"[{datetime.now().isoformat()}] ✅ orders 表已添加 buy_price 列")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
 
     # 新增：交易对管理表
     c.execute('''CREATE TABLE IF NOT EXISTS trading_pairs
@@ -268,12 +276,12 @@ def get_user_orders(username):
     ]
 
 
-def insert_order(user_id, symbol, price, quantity, side, status, order_id):
+def insert_order(user_id, symbol, price, quantity, side, status, order_id, buy_price=None):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, timestamp)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-              (user_id, symbol, price, quantity, side, status, order_id, datetime.now().isoformat()))
+    c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, buy_price, timestamp)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+              (user_id, symbol, price, quantity, side, status, order_id, buy_price, datetime.now().isoformat()))
     conn.commit()
     conn.close()
 
@@ -284,6 +292,16 @@ def update_order_status(order_id, status):
     c.execute("""UPDATE orders SET status=? WHERE order_id=?""", (status, order_id))
     conn.commit()
     conn.close()
+
+
+def get_order_buy_price(order_id):
+    """根据卖单 order_id 查询对应的买入价格"""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""SELECT buy_price FROM orders WHERE order_id=? AND side='SELL'""", (order_id,))
+    result = c.fetchone()
+    conn.close()
+    return float(result[0]) if result and result[0] else None
 
 
 # 新增：交易对管理功能
