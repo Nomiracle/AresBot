@@ -31,10 +31,10 @@ def trading_loop(username, symbol):
     
     print(f"[{datetime.now().isoformat()}] {log_prefix} ▶️ 交易循环已启动")
 
-    price_filter = None
-    lot_filter = None
     tick_size = None
     step_size = None
+    price_decimals = None
+    qty_decimals = None
     
     # 标记是否已恢复 pending_buys
     pending_buys_recovered = False
@@ -56,7 +56,7 @@ def trading_loop(username, symbol):
             user_id = get_user_id(username)
 
             # 只在第一次循环中查询交易精度与过滤规则
-            if price_filter is None or lot_filter is None:
+            if tick_size is None or step_size is None:
                 try:
                     info = exchange.get_symbol_info(symbol=config['symbol'])
                     if info:
