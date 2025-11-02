@@ -145,13 +145,27 @@ class BinanceAdapter(BaseExchange):
             # 启动用户数据流（需要认证）
             if on_user and self.api_key and self.api_secret:
                 try:
-                    twm.start_user_socket(callback=on_user)
+                    # 创建包装回调函数，过滤不匹配的交易对
+                    def filtered_on_user(msg):
+                        try:
+                            # 检查消息中的交易对是否匹配
+                            msg_symbol = msg.get('s')  # 币安用户数据流中交易对字段为 's'
+                            if msg_symbol and msg_symbol != symbol:
+                                # 交易对不匹配，丢弃此消息
+                                print(f"[{datetime.now().isoformat()}] 🔇 [Binance] 丢弃不匹配交易对的消息: {msg_symbol} (期望: {symbol})")
+                                return
+                            # 交易对匹配或消息中没有交易对字段，调用原始回调
+                            on_user(msg)
+                        except Exception as e:
+                            print(f"[{datetime.now().isoformat()}] ❌ [Binance] 用户数据回调过滤错误: {e}")
+                    
+                    twm.start_user_socket(callback=filtered_on_user)
                     result['user_enabled'] = True
                     print(f"[{datetime.now().isoformat()}] ✅ [Binance] 用户数据流已启动")
                 except BinanceAPIException as e:
                     print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 用户数据流启动失败 (API错误: {e.status_code if hasattr(e, 'status_code') else 'unknown'} - {e.message if hasattr(e, 'message') else str(e)})")
                 except Exception as e:
-                    print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 用户数据流启动失败 ({type(e).__name__}: {e})")
+                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 用户数据流启动失败 ({type(e).__name__}: {e})")
             
             return result
             
