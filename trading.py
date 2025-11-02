@@ -96,6 +96,13 @@ def trading_loop(username, symbol):
                             price_str = event.get('price') or '0'
                             qty_str = event.get('quantity') or '0'
                             
+                            # 🔒 去重检查：确保同一个买单只处理一次
+                            # 如果订单ID不在 pending_buys 中，说明已经处理过了，跳过
+                            is_pending = any(pb['order_id'] == order_id for pb in bot_data.get('pending_buys', []))
+                            if not is_pending:
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ [去重] 买单 {order_id} 已处理过，跳过重复事件")
+                                return
+                            
                             # 买单成交 -> 自动挂卖单（按精度对齐）
                             try:
                                 buy_price = float(price_str) if float(price_str) > 0 else None

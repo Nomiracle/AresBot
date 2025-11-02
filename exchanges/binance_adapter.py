@@ -204,14 +204,25 @@ class BinanceAdapter(BaseExchange):
             
             # 订单更新（executionReport）
             if msg.get('e') == 'executionReport':
+                order_status = msg.get('X')  # NEW/PARTIALLY_FILLED/FILLED/CANCELED...
+                order_id = str(msg.get('i'))
+                
+                # 🔍 调试日志：记录所有订单事件
+                print(f"[{datetime.now().isoformat()}] 📨 [Binance] 收到订单事件: ID={order_id}, 状态={order_status}, 方向={msg.get('S')}")
+                
+                # 只有完全成交的订单才触发 order_filled 事件
+                event_type = 'order_filled' if order_status == 'FILLED' else 'order_update'
+                
                 return {
-                    'event_type': 'order_filled' if msg.get('X') == 'FILLED' else 'order_update',
-                    'order_id': str(msg.get('i')),
+                    'event_type': event_type,
+                    'order_id': order_id,
                     'symbol': msg.get('s'),
                     'side': msg.get('S'),  # BUY/SELL
-                    'status': msg.get('X'),  # NEW/PARTIALLY_FILLED/FILLED...
-                    'price': msg.get('p'),
-                    'quantity': msg.get('q')
+                    'status': order_status,
+                    'price': msg.get('p'),  # 订单价格
+                    'quantity': msg.get('q'),  # 订单数量
+                    'executedQty': msg.get('z'),  # 累计成交数量（重要：用于计算卖单数量）
+                    'lastExecutedQty': msg.get('l')  # 本次成交数量
                 }
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ [Binance] 解析用户消息失败: {e}")
@@ -307,9 +318,16 @@ class BinanceAdapter(BaseExchange):
                 self._ws_manager = ThreadedWebsocketManager(api_key=self.api_key, api_secret=self.api_secret)
                 self._ws_manager.start()
             
-            # 定义内部回调函数
+            # 定义内部回调函数（带交易对过滤）
             def _on_user_msg(msg):
                 try:
+                    # 🔒 关键修复：过滤交易对
+                    msg_symbol = msg.get('s')  # 币安用户数据流中交易对字段为 's'
+                    if msg_symbol and msg_symbol != symbol:
+                        # 交易对不匹配，丢弃此消息
+                        print(f"[{datetime.now().isoformat()}] 🔇 [Binance] 丢弃不匹配交易对的订单消息: {msg_symbol} (期望: {symbol})")
+                        return
+                    
                     event = self.parse_user_message(msg)
                     if event and self._on_order_callback:
                         self._on_order_callback(event)
