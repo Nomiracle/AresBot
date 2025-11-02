@@ -21,6 +21,13 @@ class BinanceAdapter(BaseExchange):
         self.api_key = api_key
         self.api_secret = api_secret
         self.testnet = testnet
+        
+        # 监听器状态
+        self._price_monitor_active = False
+        self._order_monitor_active = False
+        self._ws_manager = None
+        self._on_price_callback = None
+        self._on_order_callback = None
     
     def ping(self) -> bool:
         """测试连接"""
@@ -225,3 +232,107 @@ class BinanceAdapter(BaseExchange):
     def get_client(self):
         """获取原始客户端（用于兼容旧代码）"""
         return self.client
+    
+    def start_price_monitor(self, symbol: str, on_price_update: Callable[[float], None]) -> bool:
+        """启动价格监听（使用 WebSocket）"""
+        try:
+            if self._price_monitor_active:
+                print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 价格监听已在运行")
+                return True
+            
+            self._on_price_callback = on_price_update
+            
+            # 创建 WebSocket 管理器（如果还没有）
+            if not self._ws_manager:
+                if self.api_key and self.api_secret:
+                    self._ws_manager = ThreadedWebsocketManager(api_key=self.api_key, api_secret=self.api_secret)
+                else:
+                    self._ws_manager = ThreadedWebsocketManager()
+                self._ws_manager.start()
+            
+            # 定义内部回调函数
+            def _on_ticker_msg(msg):
+                try:
+                    price = self.parse_ticker_message(msg)
+                    if price is not None and self._on_price_callback:
+                        self._on_price_callback(price)
+                except Exception as e:
+                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 价格回调错误: {e}")
+            
+            # 启动行情流
+            self._ws_manager.start_symbol_ticker_socket(callback=_on_ticker_msg, symbol=symbol)
+            self._price_monitor_active = True
+            print(f"[{datetime.now().isoformat()}] ✅ [Binance] 价格监听已启动 ({symbol})")
+            return True
+            
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ [Binance] 启动价格监听失败: {e}")
+            return False
+    
+    def stop_price_monitor(self) -> None:
+        """停止价格监听"""
+        self._price_monitor_active = False
+        self._on_price_callback = None
+        print(f"[{datetime.now().isoformat()}] ⏹️ [Binance] 价格监听已停止")
+    
+    def start_order_monitor(self, symbol: str, on_order_update: Callable[[Dict], None]) -> bool:
+        """启动订单监听（使用 WebSocket）"""
+        try:
+            if self._order_monitor_active:
+                print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 订单监听已在运行")
+                return True
+            
+            if not self.api_key or not self.api_secret:
+                print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 缺少 API 密钥，无法启动订单监听")
+                return False
+            
+            self._on_order_callback = on_order_update
+            
+            # 创建 WebSocket 管理器（如果还没有）
+            if not self._ws_manager:
+                self._ws_manager = ThreadedWebsocketManager(api_key=self.api_key, api_secret=self.api_secret)
+                self._ws_manager.start()
+            
+            # 定义内部回调函数
+            def _on_user_msg(msg):
+                try:
+                    event = self.parse_user_message(msg)
+                    if event and self._on_order_callback:
+                        self._on_order_callback(event)
+                except Exception as e:
+                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 订单回调错误: {e}")
+            
+            # 启动用户数据流
+            try:
+                self._ws_manager.start_user_socket(callback=_on_user_msg)
+                self._order_monitor_active = True
+                print(f"[{datetime.now().isoformat()}] ✅ [Binance] 订单监听已启动")
+                return True
+            except BinanceAPIException as e:
+                print(f"[{datetime.now().isoformat()}] ❌ [Binance] 订单监听启动失败 (API错误): {e}")
+                return False
+                
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ [Binance] 启动订单监听失败: {e}")
+            return False
+    
+    def stop_order_monitor(self) -> None:
+        """停止订单监听"""
+        self._order_monitor_active = False
+        self._on_order_callback = None
+        
+        # 如果价格监听也停止了，关闭整个 WebSocket 管理器
+        if not self._price_monitor_active and self._ws_manager:
+            try:
+                self._ws_manager.stop()
+                self._ws_manager = None
+                print(f"[{datetime.now().isoformat()}] ⏹️ [Binance] WebSocket 管理器已关闭")
+            except Exception as e:
+                print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 关闭 WebSocket 失败: {e}")
+        
+        print(f"[{datetime.now().isoformat()}] ⏹️ [Binance] 订单监听已停止")
+    
+    def check_pending_orders(self, pending_orders: List[Dict]):
+        """检查待处理订单（Binance 使用 WebSocket，此方法返回空列表）"""
+        # Binance 通过 WebSocket 实时推送订单更新，不需要轮询
+

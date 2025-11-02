@@ -26,7 +26,7 @@ class BaseExchange(ABC):
     
     @abstractmethod
     def get_symbol_ticker(self, symbol: str) -> Dict:
-        """获取交易对当前价格"""
+        """获取交易对当前价格（内部使用）"""
         pass
     
     @abstractmethod
@@ -36,7 +36,7 @@ class BaseExchange(ABC):
     
     @abstractmethod
     def get_order(self, symbol: str, order_id: str) -> Dict:
-        """查询订单状态"""
+        """查询订单状态（内部使用）"""
         pass
     
     @abstractmethod
@@ -51,52 +51,13 @@ class BaseExchange(ABC):
     
     @abstractmethod
     def cancel_order(self, symbol: str, order_id: str) -> Dict:
-        """取消订单"""
+        """取消订单（内部使用）"""
         pass
     
     @abstractmethod
     def cancel_replace_order(self, symbol: str, side: str, order_type: str, 
                             quantity: float, price: str, cancel_order_id: str, **kwargs) -> Dict:
         """取消并替换订单（改价）"""
-        pass
-    
-    @abstractmethod
-    def start_websocket(self, symbol: str, on_ticker: Callable, on_user: Optional[Callable] = None) -> Dict:
-        """启动 WebSocket 连接（行情流 + 用户数据流）
-        
-        Returns:
-            Dict with keys:
-                - 'manager': WebSocket manager instance
-                - 'ticker_enabled': bool
-                - 'user_enabled': bool
-        """
-        pass
-    
-    @abstractmethod
-    def stop_websocket(self, ws_manager) -> None:
-        """停止 WebSocket 连接"""
-        pass
-    
-    @abstractmethod
-    def parse_ticker_message(self, msg: Dict) -> Optional[float]:
-        """解析行情消息，返回最新价格"""
-        pass
-    
-    @abstractmethod
-    def parse_user_message(self, msg: Dict) -> Optional[Dict]:
-        """解析用户数据消息，返回标准化的订单事件
-        
-        Returns:
-            Dict with keys:
-                - 'event_type': 'order_filled' | 'order_update' | 'error' | None
-                - 'order_id': str
-                - 'symbol': str
-                - 'side': 'BUY' | 'SELL'
-                - 'status': 'NEW' | 'FILLED' | 'PARTIALLY_FILLED' | ...
-                - 'price': float (optional)
-                - 'quantity': float (optional)
-                - 'error_message': str (optional, for errors)
-        """
         pass
     
     @abstractmethod
@@ -114,5 +75,60 @@ class BaseExchange(ABC):
         
         Returns:
             (step_size: float, qty_decimals: int)
+        """
+        pass
+    
+    @abstractmethod
+    def start_price_monitor(self, symbol: str, on_price_update: Callable[[float], None]) -> bool:
+        """启动价格监听（WebSocket 或 HTTP 轮询）
+        
+        Args:
+            symbol: 交易对
+            on_price_update: 价格更新回调函数，参数为最新价格
+            
+        Returns:
+            bool: 是否成功启动
+        """
+        pass
+    
+    @abstractmethod
+    def stop_price_monitor(self) -> None:
+        """停止价格监听"""
+        pass
+    
+    @abstractmethod
+    def start_order_monitor(self, symbol: str, on_order_update: Callable[[Dict], None]) -> bool:
+        """启动订单监听（WebSocket 或 HTTP 轮询）
+        
+        Args:
+            symbol: 交易对
+            on_order_update: 订单更新回调函数，参数为订单事件字典
+                {
+                    'event_type': 'order_filled' | 'order_update',
+                    'order_id': str,
+                    'symbol': str,
+                    'side': 'BUY' | 'SELL',
+                    'status': 'FILLED' | 'PARTIALLY_FILLED' | ...,
+                    'price': float,
+                    'quantity': float
+                }
+            
+        Returns:
+            bool: 是否成功启动
+        """
+        pass
+    
+    @abstractmethod
+    def stop_order_monitor(self) -> None:
+        """停止订单监听"""
+        pass
+    
+    @abstractmethod
+    def check_pending_orders(self, pending_orders: List[Dict]):
+        """检查待处理订单的状态（用于 HTTP 轮询模式）
+        
+        Args:
+            pending_orders: 待检查的订单列表，每个订单包含 order_id, symbol 等信息
+            
         """
         pass

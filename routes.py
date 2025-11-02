@@ -231,6 +231,16 @@ def register_routes(app):
                 if b.get('running'):
                     exchange_name = b.get('config', {}).get('exchange', 'binance').upper()
                     b['running'] = False
+                    
+                    # 停止监听器
+                    exchange = b.get('exchange')
+                    if exchange:
+                        try:
+                            exchange.stop_price_monitor()
+                            exchange.stop_order_monitor()
+                        except Exception as e:
+                            print(f"[{datetime.now().isoformat()}] [{username}-{exchange_name}-{symbol}] ⚠️ 停止监听器时出错: {e}")
+                    
                     stopped_any = True
                     stopped_bots.append(f"{exchange_name}-{symbol}")
                     print(f"[{datetime.now().isoformat()}] [{username}-{exchange_name}-{symbol}] ⏹️ 通过 /api/stop 停止")
@@ -494,7 +504,18 @@ def register_routes(app):
             bot = user_data.get('bots', {}).get(symbol)
         if not bot or not bot.get('running'):
             return jsonify({'success': False, 'message': '机器人未在运行'})
+        
         bot['running'] = False
+        
+        # 停止监听器
+        exchange = bot.get('exchange')
+        if exchange:
+            try:
+                exchange.stop_price_monitor()
+                exchange.stop_order_monitor()
+            except Exception as e:
+                print(f"[{datetime.now().isoformat()}] [{username}-{symbol}] ⚠️ 停止监听器时出错: {e}")
+        
         return jsonify({'success': True, 'message': f'{symbol} 机器人已停止'})
 
     @app.route('/api/bot/update', methods=['POST'])

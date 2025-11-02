@@ -75,27 +75,18 @@ def trading_loop(username, symbol):
                     print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 获取交易规则失败: {e}，使用默认精度")
                     traceback.print_exc()
 
-            # 启动 WebSocket（仅一次）：行情与用户数据
-            if not bot_data.get('ws_started'):
-                def _on_ticker_msg(msg):
+            # 启动价格和订单监听（仅一次）
+            if not bot_data.get('monitor_started'):
+                # 价格更新回调
+                def _on_price_update(price: float):
+                    bot_data['current_price'] = price
+                
+                # 订单更新回调
+                def _on_order_update(event: dict):
                     try:
-                        # 使用适配器解析行情消息
-                        price = exchange.parse_ticker_message(msg)
-                        if price is not None:
-                            bot_data['current_price'] = price
-                    except Exception as e:
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [WS TICKER ERR] {e}")
-
-                def _on_user_msg(msg):
-                    try:
-                        # 使用适配器解析用户消息
-                        event = exchange.parse_user_message(msg)
-                        if not event:
-                            return
-                        
                         # 处理错误
                         if event.get('event_type') == 'error':
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [WS USER ERROR] {event.get('error_message')}")
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [订单监听错误] {event.get('error_message')}")
                             return
                         
                         # 处理买单成交
@@ -153,76 +144,47 @@ def trading_loop(username, symbol):
                                              'SELL', 'PLACED', sell_order_id, buy_price=str(buy_price))
                                 update_order_status(order_id, 'FILLED')
                                 sell_success = True
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [WS] 买单 {order_id} 成交 @ {buy_price}，自动挂卖单 {sell_order_id} @ {aligned_sell_price}")
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单 {order_id} 成交 @ {buy_price}，自动挂卖单 {sell_order_id} @ {aligned_sell_price}")
                             except Exception as e:
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [WS SELL ERR] 卖单下单错误: {e}，将保留 pending_buy 以便重试")
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [卖单错误] 卖单下单错误: {e}，将保留 pending_buy 以便重试")
 
                             # 只有卖单成功才从 pending_buys 移除
                             if sell_success:
                                 bot_data['pending_buys'] = [pb for pb in bot_data.get('pending_buys', []) if pb['order_id'] != order_id]
                             else:
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [WS] 买单 {order_id} 已成交但卖单下单失败，保留在 pending_buys 中等待重试")
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 买单 {order_id} 已成交但卖单下单失败，保留在 pending_buys 中等待重试")
 
                     except Exception as e:
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [WS USER ERR] {e}")
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [订单回调错误] {e}")
                         traceback.print_exc()
-
+                
                 try:
-                    # 使用适配器启动 WebSocket
-                    ws_result = exchange.start_websocket(
-                        symbol=config['symbol'],
-                        on_ticker=_on_ticker_msg,
-                        on_user=_on_user_msg
-                    )
+                    # 启动价格监听
+                    price_ok = exchange.start_price_monitor(config['symbol'], _on_price_update)
                     
-                    bot_data['twm'] = ws_result['manager']
-                    bot_data['ws_started'] = True
-                    bot_data['ws_user_enabled'] = ws_result['user_enabled']
+                    # 启动订单监听
+                    order_ok = exchange.start_order_monitor(config['symbol'], _on_order_update)
                     
-                    if not ws_result['user_enabled']:
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} ℹ️ 用户数据流未启用，将使用 REST 轮询作为回退方案")
-                except Exception as e:
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ WebSocket 启动失败: {e}")
-
-            # 当前价格与目标价格
-            # 如果 WebSocket 未启用（如 Backpack），每次循环都获取最新价格
-            if not bot_data.get('ws_user_enabled'):
-                try:
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 [PRICE] 正在获取最新价格...")
-                    ticker = exchange.get_symbol_ticker(symbol=config['symbol'])
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 [PRICE] ticker 返回值: {ticker}")
-                    if ticker and 'price' in ticker:
-                        current_price = float(ticker['price'])
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} 💰 [PRICE] 解析后的价格: {current_price}")
-                        bot_data['current_price'] = current_price  # 更新缓存
+                    bot_data['monitor_started'] = True
+                    bot_data['order_monitor_enabled'] = order_ok
+                    
+                    if price_ok:
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 价格监听已启动")
+                    if order_ok:
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 订单监听已启动")
                     else:
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 无法获取当前价格，跳过本次循环")
-                        time.sleep(config.get('interval', 1))
-                        continue
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} ℹ️ 订单监听未启用，将使用轮询模式")
+                        
                 except Exception as e:
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 获取价格失败: {e}")
-                    traceback.print_exc()
-                    time.sleep(config.get('interval', 1))
-                    continue
-            else:
-                # WebSocket 已启用，使用缓存的价格
-                current_price = bot_data.get('current_price')
-                if not current_price:
-                    # 如果缓存为空，主动获取一次
-                    try:
-                        ticker = exchange.get_symbol_ticker(symbol=config['symbol'])
-                        if ticker and 'price' in ticker:
-                            current_price = float(ticker['price'])
-                            bot_data['current_price'] = current_price
-                        else:
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 无法获取当前价格，跳过本次循环")
-                            time.sleep(config.get('interval', 1))
-                            continue
-                    except Exception as e:
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 获取价格失败: {e}")
-                        traceback.print_exc()
-                        time.sleep(config.get('interval', 1))
-                        continue
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 启动监听失败: {e}")
+
+            # 获取当前价格（由监听器更新）
+            current_price = bot_data.get('current_price')
+            if not current_price:
+                # 监听器未提供价格，跳过本次循环
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 监听器未更新价格，跳过本次循环")
+                time.sleep(config.get('interval', 1))
+                continue
             
             offset = config['offset_percent'] / 100.0
             target_price = current_price * (1 + offset)
@@ -251,6 +213,21 @@ def trading_loop(username, symbol):
             is_buy_enabled = (config.get('simulate_trading', 1) != 1)
             print(f"[{datetime.now().isoformat()}] {log_prefix} 当前价: ${current_price} -> 计划挂买价: ${target_price}（数量: {aligned_quantity}）. 是否可以下单: {is_buy_enabled}")
 
+            # 提前检查是否有待跟踪买单，如果有则先检查是否成交
+            has_pending_buys = bool(bot_data.get('pending_buys', []))
+            if has_pending_buys:
+                pending_count = len(bot_data.get('pending_buys', []))
+                print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 [CHECK] 存在 {pending_count} 笔待跟踪买单，检查是否成交...")
+                
+                # 如果订单监听未启用，使用 adapter 的轮询方法检查订单状态
+                if not bot_data.get('order_monitor_enabled'):
+                    # 调用 adapter 的 check_pending_orders 方法
+                    # 订单成交会通过 _on_order_update 回调处理，回调中会自动挂卖单并从 pending_buys 移除
+                    exchange.check_pending_orders(bot_data.get('pending_buys', []))
+                
+                time.sleep(config.get('interval', 1))
+                continue
+            
             # 默认无未完成订单集合，便于后续流程判断
             open_buy_orders = []
             open_sell_orders = []
@@ -452,9 +429,8 @@ def trading_loop(username, symbol):
                 time.sleep(config.get('interval', 1))
                 continue
 
-            # 只有在没有未完成买/卖单且没有待跟踪的买单时，才允许挂新买单
-            has_pending_buys = bool(bot_data.get('pending_buys', []))
-            can_place_buy = (not open_buy_orders) and (not open_sell_orders) and (not has_pending_buys)
+            # 只有在没有未完成买/卖单时，才允许挂新买单（pending_buys 已在前面检查）
+            can_place_buy = (not open_buy_orders) and (not open_sell_orders)
 
             if not can_place_buy:
                 skip_reasons = []
@@ -462,9 +438,6 @@ def trading_loop(username, symbol):
                     skip_reasons.append(f"{len(open_buy_orders)}笔未完成买单")
                 if open_sell_orders:
                     skip_reasons.append(f"{len(open_sell_orders)}笔未完成卖单")
-                if has_pending_buys:
-                    pending_count = len(bot_data.get('pending_buys', []))
-                    skip_reasons.append(f"{pending_count}笔待跟踪买单")
                 reason_text = "、".join(skip_reasons)
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ [SKIP] 存在{reason_text}，跳过本次买单挂单。")
             else:
@@ -500,82 +473,6 @@ def trading_loop(username, symbol):
 
                 except Exception as e:
                     print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [FAILURE] 下单错误: {e}")
-
-            # 当用户数据流不可用时，使用 REST 轮询作为回退，确保买单成交后能挂卖单
-            if not bot_data.get('ws_user_enabled'):
-                pending = bot_data.get('pending_buys', [])
-                if pending:
-                    remaining = []
-                    for pb in pending:
-                        try:
-                            order_info = exchange.get_order(symbol=pb['symbol'], orderId=pb['order_id'])
-                            
-                            # 检查订单查询是否成功
-                            if not order_info:
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [POLL] 网络错误，无法查询订单 {pb['order_id']} 状态，保留在 pending_buys 中")
-                                remaining.append(pb)
-                                continue
-                            
-                            status = order_info.get('status')
-                            
-                            # 订单不存在（已成交或已取消），从 pending_buys 移除
-                            if status == 'NOT_FOUND':
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [POLL] 订单 {pb['order_id']} 不存在，从 pending_buys 移除")
-                                update_order_status(pb['order_id'], 'NOT_FOUND')
-                                continue
-
-                            if status == 'FILLED':
-                                buy_price = float(order_info.get('price')) if order_info.get('price') else pb['price']
-                                if not buy_price:
-                                    buy_price = pb['price']
-
-                                sell_offset = config.get('sell_offset_percent', 0.5) / 100.0
-                                raw_sell_price = buy_price * (1 + sell_offset)
-
-                                price_decimals = int(abs(math.log10(tick_size))) if tick_size else 2
-                                aligned_sell_price = math.floor(raw_sell_price / tick_size) * tick_size if tick_size else raw_sell_price
-                                aligned_sell_price = round(aligned_sell_price, price_decimals)
-
-                                # 使用实际成交数量（扣除手续费后），而不是原始下单数量
-                                executed_qty = float(order_info.get('executedQty', pb['quantity']))
-                                sell_qty = executed_qty
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [SELL] 买单成交数量: {executed_qty}（原始: {pb['quantity']}）")
-                                
-                                qty_decimals = int(abs(math.log10(step_size))) if step_size else 6
-                                aligned_sell_qty = math.floor(sell_qty / step_size) * step_size if step_size else sell_qty
-                                aligned_sell_qty = round(aligned_sell_qty, qty_decimals)
-
-                                sell_success = False
-                                try:
-                                    sell_order = exchange.order_limit_sell(
-                                        symbol=pb['symbol'],
-                                        quantity=aligned_sell_qty,
-                                        price=f"{aligned_sell_price}",
-                                        timeInForce='GTC'
-                                    )
-                                    # 兼容不同交易所：Binance用'orderId'，Backpack用'id'
-                                    sell_order_id = str(sell_order.get('orderId') or sell_order.get('id'))
-
-                                    insert_order(pb['user_id'], pb['symbol'], str(aligned_sell_price), str(aligned_sell_qty),
-                                                 'SELL', 'PLACED', sell_order_id, buy_price=str(buy_price))
-                                    update_order_status(pb['order_id'], 'FILLED')
-                                    sell_success = True
-
-                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [REST-FALLBACK] 买单 {pb['order_id']} 成交 @ {buy_price}，自动挂卖单 {sell_order_id} @ {aligned_sell_price}")
-                                except Exception as e:
-                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [SELL ERR] 卖单下单错误: {e}，将保留 pending_buy 以便重试")
-                                
-                                # 只有卖单成功才不加入 remaining（即移除），失败则保留以便重试
-                                if not sell_success:
-                                    remaining.append(pb)
-                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [REST-FALLBACK] 买单 {pb['order_id']} 已成交但卖单下单失败，保留在 pending_buys 中等待重试")
-                            else:
-                                remaining.append(pb)
-                        except Exception as e:
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [POLL ERR] 轮询订单错误: {e}")
-                            remaining.append(pb)
-
-                    bot_data['pending_buys'] = remaining
 
             time.sleep(config.get('interval', 1))
 

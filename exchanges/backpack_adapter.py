@@ -39,6 +39,15 @@ class BackpackAdapter(BaseExchange):
         self.api_secret = api_secret
         self.testnet = testnet
         
+        # 监听器状态（HTTP 轮询模式）
+        self._price_monitor_active = False
+        self._order_monitor_active = False
+        self._price_poll_thread = None
+        self._order_poll_thread = None
+        self._on_price_callback = None
+        self._on_order_callback = None
+        self._monitor_symbol = None
+        
         try:
             # 初始化账户客户端（私有 API）
             # secret_key 必须是 base64 编码的字符串
@@ -372,47 +381,55 @@ class BackpackAdapter(BaseExchange):
                 error_code = order.get('code')
                 error_msg = order.get('message')
                 
-                # 订单不在未完成列表中（可能已成交或已取消），查询历史订单
+                # 订单不在未完成列表中（可能已成交或已取消），轮询查询历史订单
                 if error_code in ['RESOURCE_NOT_FOUND', 'ORDER_NOT_FOUND']:
-                    print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] {order_prefix} 未完成订单中未找到，等待 10 秒后查询历史订单...")
+                    print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] {order_prefix} 未完成订单中未找到，开始轮询历史订单（超时 20 秒）...")
                     
-                    # 等待 2 秒让 API 同步订单状态
-                    time.sleep(20)
+                    # 步骤 2：轮询查询历史订单，超时时间 20 秒
+                    timeout = 20
+                    start_time = time.time()
+                    poll_count = 0
                     
-                    # 步骤 2：查询历史订单
-                    try:
-                        history = self.account.get_order_history(symbol=bpx_symbol, order_id=orderId)
+                    while time.time() - start_time < timeout:
+                        poll_count += 1
+                        try:
+                            history = self.account.get_order_history(symbol=bpx_symbol, order_id=orderId)
+                            
+                            if isinstance(history, list) and len(history) > 0:
+                                # 在历史订单中找到了
+                                hist_order = history[0]
+                                status = self._convert_order_status(hist_order.get('status'))
+                                elapsed = time.time() - start_time
+                                print(f"[{datetime.now().isoformat()}] ✅ [Backpack] {order_prefix} 在历史订单中找到（第 {poll_count} 次查询，耗时 {elapsed:.1f}s），状态: {hist_order.get('status')} -> {status}")
+                                return {
+                                    'orderId': hist_order.get('id'),
+                                    'symbol': hist_order.get('symbol'),
+                                    'side': 'BUY' if hist_order.get('side') == 'Bid' else 'SELL',
+                                    'price': hist_order.get('price'),
+                                    'origQty': hist_order.get('quantity'),
+                                    'executedQty': hist_order.get('executedQuantity', '0'),
+                                    'status': status,
+                                    'type': hist_order.get('orderType')
+                                }
+                            elif isinstance(history, dict):
+                                # 可能是错误响应
+                                if 'code' in history and 'message' in history:
+                                    print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] {order_prefix} 第 {poll_count} 次查询 API 错误: {history.get('code')} - {history.get('message')}")
+                                else:
+                                    print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] {order_prefix} 第 {poll_count} 次查询返回字典（非列表）: {history}")
+                            else:
+                                # 历史订单返回空列表，继续轮询
+                                print(f"[{datetime.now().isoformat()}] 🔄 [Backpack] {order_prefix} 第 {poll_count} 次查询未找到，继续轮询...")
+                            
+                        except Exception as hist_error:
+                            print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] {order_prefix} 第 {poll_count} 次查询异常: {hist_error}")
                         
-                        if isinstance(history, list) and len(history) > 0:
-                            # 在历史订单中找到了
-                            hist_order = history[0]
-                            status = self._convert_order_status(hist_order.get('status'))
-                            print(f"[{datetime.now().isoformat()}] ✅ [Backpack] {order_prefix} 在历史订单中找到，状态: {hist_order.get('status')} -> {status}")
-                            return {
-                                'orderId': hist_order.get('id'),
-                                'symbol': hist_order.get('symbol'),
-                                'side': 'BUY' if hist_order.get('side') == 'Bid' else 'SELL',
-                                'price': hist_order.get('price'),
-                                'origQty': hist_order.get('quantity'),
-                                'executedQty': hist_order.get('executedQuantity', '0'),
-                                'status': status,
-                                'type': hist_order.get('orderType')
-                            }
-                        elif isinstance(history, dict):
-                            # 可能是错误响应
-                            print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] {order_prefix} 历史订单返回字典（可能是错误）: {history}")
-                            if 'code' in history and 'message' in history:
-                                print(f"[{datetime.now().isoformat()}] ❌ [Backpack] {order_prefix} API 错误: {history.get('code')} - {history.get('message')}")
-                            return {'status': 'NOT_FOUND', 'orderId': orderId}
-                        else:
-                            # 历史订单中也没找到
-                            print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] {order_prefix} 订单不存在（历史订单返回空列表）")
-                            return {'status': 'NOT_FOUND', 'orderId': orderId}
-                    except Exception as hist_error:
-                        print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] {order_prefix} 查询历史订单异常: {hist_error}")
-                        import traceback
-                        print(f"[{datetime.now().isoformat()}] 📋 [Backpack] {order_prefix} 异常堆栈:\n{traceback.format_exc()}")
-                        return {'status': 'NOT_FOUND', 'orderId': orderId}
+                        # 等待 1 秒后继续下次查询
+                        time.sleep(1)
+                    
+                    # 超时仍未找到
+                    print(f"[{datetime.now().isoformat()}] ⏱️ [Backpack] {order_prefix} 轮询超时（{poll_count} 次查询，{timeout}s），订单未找到")
+                    return {'status': 'NOT_FOUND', 'orderId': orderId}
                 
                 # 其他错误
                 print(f"[{datetime.now().isoformat()}] ❌ [Backpack] {order_prefix} 查询失败: {error_code} - {error_msg}")
@@ -673,3 +690,118 @@ class BackpackAdapter(BaseExchange):
     def get_public(self):
         """获取原始公共客户端（用于扩展功能）"""
         return self.public
+    
+    def start_price_monitor(self, symbol: str, on_price_update: Callable[[float], None]) -> bool:
+        """启动价格监听（使用 HTTP 轮询）"""
+        import threading
+        
+        try:
+            if self._price_monitor_active:
+                print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 价格监听已在运行")
+                return True
+            
+            self._on_price_callback = on_price_update
+            self._monitor_symbol = symbol
+            self._price_monitor_active = True
+            
+            # 启动轮询线程
+            def _price_poll_loop():
+                while self._price_monitor_active:
+                    try:
+                        ticker = self.get_symbol_ticker(symbol)
+                        if ticker and 'price' in ticker:
+                            price = float(ticker['price'])
+                            if self._on_price_callback:
+                                self._on_price_callback(price)
+                    except Exception as e:
+                        print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 价格轮询错误: {e}")
+                    
+                    # 每秒轮询一次
+                    time.sleep(1)
+            
+            self._price_poll_thread = threading.Thread(target=_price_poll_loop, daemon=True)
+            self._price_poll_thread.start()
+            
+            print(f"[{datetime.now().isoformat()}] ✅ [Backpack] 价格监听已启动 (HTTP 轮询模式, {symbol})")
+            return True
+            
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 启动价格监听失败: {e}")
+            return False
+    
+    def stop_price_monitor(self) -> None:
+        """停止价格监听"""
+        self._price_monitor_active = False
+        self._on_price_callback = None
+        
+        if self._price_poll_thread:
+            self._price_poll_thread.join(timeout=2)
+            self._price_poll_thread = None
+        
+        print(f"[{datetime.now().isoformat()}] ⏹️ [Backpack] 价格监听已停止")
+    
+    def start_order_monitor(self, symbol: str, on_order_update: Callable[[Dict], None]) -> bool:
+        """启动订单监听（使用 HTTP 轮询）"""
+        # Backpack 不支持 WebSocket 订单推送，订单监听通过 check_pending_orders 实现
+        # 返回 False 表示不支持实时监听，需要调用 check_pending_orders 轮询
+        self._order_monitor_active = True
+        self._on_order_callback = on_order_update
+        self._monitor_symbol = symbol
+        
+        print(f"[{datetime.now().isoformat()}] ℹ️ [Backpack] 订单监听已启用 (需要通过 check_pending_orders 轮询)")
+        return False  # 返回 False，让 trading.py 调用 check_pending_orders
+    
+    def stop_order_monitor(self) -> None:
+        """停止订单监听"""
+        self._order_monitor_active = False
+        self._on_order_callback = None
+        print(f"[{datetime.now().isoformat()}] ⏹️ [Backpack] 订单监听已停止")
+    
+    def check_pending_orders(self, pending_orders: List[Dict]):
+        """检查待处理订单的状态（HTTP 轮询）
+        
+        Args:
+            pending_orders: 待检查的订单列表，格式：
+                [{'order_id': str, 'symbol': str, 'price': float, 'quantity': float, ...}]
+        
+        Returns:
+            List[Dict]: 空列表（为了兼容性保留，实际通过回调通知）
+        """
+        if not self._order_monitor_active or not pending_orders:
+            return []
+        
+        for pb in pending_orders:
+            try:
+                order_info = self.get_order(symbol=pb['symbol'], orderId=pb['order_id'])
+                
+                # 检查订单查询是否成功
+                if not order_info:
+                    # 网络错误，跳过
+                    continue
+                
+                status = order_info.get('status')
+                
+                # 订单不存在（已成交或已取消）
+                if status == 'NOT_FOUND':
+                    continue
+                
+                # 订单已成交
+                if status == 'FILLED':
+                    buy_price = float(order_info.get('price')) if order_info.get('price') else pb.get('price')
+                    
+                    # 构造订单事件，触发回调
+                    if self._on_order_callback:
+                        event = {
+                            'event_type': 'order_filled',
+                            'order_id': pb['order_id'],
+                            'symbol': pb['symbol'],
+                            'side': 'BUY',  # pending_orders 通常是买单
+                            'status': 'FILLED',
+                            'price': str(buy_price),
+                            'quantity': str(order_info.get('executedQty', pb.get('quantity')))
+                        }
+                        self._on_order_callback(event)
+                    
+            except Exception as e:
+                print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 检查订单 {pb.get('order_id')} 失败: {e}")
+        
