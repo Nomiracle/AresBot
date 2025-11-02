@@ -798,7 +798,8 @@ class BackpackAdapter(BaseExchange):
                             'side': 'BUY',  # pending_orders 通常是买单
                             'status': 'FILLED',
                             'price': str(buy_price),
-                            'quantity': str(order_info.get('executedQty', pb.get('quantity')))
+                            'executedQty': str(order_info.get('executedQty', '0')),
+                            'quantity': str(order_info.get('quantity', '0'))
                         }
                         self._on_order_callback(event)
                     
