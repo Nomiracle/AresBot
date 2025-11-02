@@ -255,21 +255,6 @@ def trading_loop(username, symbol):
             is_buy_enabled = (config.get('simulate_trading', 1) != 1)
             print(f"[{datetime.now().isoformat()}] {log_prefix} 当前价: ${current_price} -> 计划挂买价: ${target_price}（数量: {aligned_quantity}）. 是否可以下单: {is_buy_enabled}")
 
-            # 提前检查是否有待跟踪买单，如果有则先检查是否成交
-            has_pending_buys = bool(bot_data.get('pending_buys', []))
-            if has_pending_buys:
-                pending_count = len(bot_data.get('pending_buys', []))
-                print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 [CHECK] 存在 {pending_count} 笔待跟踪买单，检查是否成交...")
-                
-                # 如果订单监听未启用，使用 adapter 的轮询方法检查订单状态
-                if not bot_data.get('order_monitor_enabled'):
-                    # 调用 adapter 的 check_pending_orders 方法
-                    # 订单成交会通过 _on_order_update 回调处理，回调中会自动挂卖单并从 pending_buys 移除
-                    exchange.check_pending_orders(bot_data.get('pending_buys', []))
-                
-                time.sleep(config.get('interval', 1))
-                continue
-            
             # 默认无未完成订单集合，便于后续流程判断
             open_buy_orders = []
             open_sell_orders = []
@@ -471,8 +456,25 @@ def trading_loop(username, symbol):
                 time.sleep(config.get('interval', 1))
                 continue
 
-            # 只有在没有未完成买/卖单时，才允许挂新买单（pending_buys 已在前面检查）
-            can_place_buy = (not open_buy_orders) and (not open_sell_orders)
+            # 🔍 优化：只有当 open_orders 为空但 pending_buys 有数据时，才需要查询订单状态
+            # 原因：如果 open_orders 有数据，说明订单还在交易所，会通过改价逻辑或 WebSocket 处理
+            #      如果 open_orders 为空但 pending_buys 有数据，说明订单可能已成交，需要主动查询确认
+            has_pending_buys = bool(bot_data.get('pending_buys', []))
+            if not open_buy_orders and has_pending_buys:
+                pending_count = len(bot_data.get('pending_buys', []))
+                print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 [CHECK] 交易所无未完成买单，但存在 {pending_count} 笔待跟踪买单，检查是否成交...")
+                
+                # 如果订单监听未启用，使用 adapter 的轮询方法检查订单状态
+                if not bot_data.get('order_monitor_enabled'):
+                    # 调用 adapter 的 check_pending_orders 方法
+                    # 订单成交会通过 _on_order_update 回调处理，回调中会自动挂卖单并从 pending_buys 移除
+                    exchange.check_pending_orders(bot_data.get('pending_buys', []))
+                
+                time.sleep(config.get('interval', 1))
+                continue
+
+            # 只有在没有未完成买/卖单，且没有待跟踪买单时，才允许挂新买单
+            can_place_buy = (not open_buy_orders) and (not open_sell_orders) and (not has_pending_buys)
 
             if not can_place_buy:
                 skip_reasons = []
@@ -480,6 +482,8 @@ def trading_loop(username, symbol):
                     skip_reasons.append(f"{len(open_buy_orders)}笔未完成买单")
                 if open_sell_orders:
                     skip_reasons.append(f"{len(open_sell_orders)}笔未完成卖单")
+                if has_pending_buys:
+                    skip_reasons.append(f"{len(bot_data.get('pending_buys', []))}笔待跟踪买单")
                 reason_text = "、".join(skip_reasons)
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ [SKIP] 存在{reason_text}，跳过本次买单挂单。")
             else:
