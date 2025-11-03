@@ -25,5 +25,7 @@ def decrypt_data(encrypted_data):
         return None
     try:
         return cipher_suite.decrypt(encrypted_data.encode()).decode()
-    except:
-        return None
+    except Exception as e:
+        # 解密失败时记录错误并返回空字符串（避免返回损坏的数据）
+        print(f"[DECRYPT ERROR] 解密失败: {str(e)[:100]}, 数据前20字符: {encrypted_data[:20] if len(encrypted_data) > 20 else encrypted_data}")
+        return ""  # 返回空字符串而不是None，避免前端显示undefined

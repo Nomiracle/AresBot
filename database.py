@@ -221,7 +221,7 @@ def get_user_config_list(username):
     configs = c.fetchall()
     conn.close()
 
-    return [
+    config_list = [
         {
             'config_name': c[0],
             'exchange': c[1],
@@ -230,6 +230,31 @@ def get_user_config_list(username):
         }
         for c in configs
     ]
+    
+    # 如果用户没有任何配置，自动创建default配置
+    if not config_list:
+        print(f"[{datetime.now().isoformat()}] ⚠️ 用户 {username} 没有配置，自动创建default配置")
+        default_config = {
+            'exchange': 'binance',
+            'api_key': '',
+            'api_secret': '',
+            'symbol': 'BTCUSDT',
+            'offset_percent': -0.1,
+            'sell_offset_percent': 0.5,
+            'quantity': 0.001,
+            'interval': 1,
+            'testnet': 1,
+            'simulate_trading': 1
+        }
+        save_user_config(username, default_config, 'default')
+        config_list = [{
+            'config_name': 'default',
+            'exchange': 'binance',
+            'symbol': 'BTCUSDT',
+            'updated_at': datetime.now().isoformat()
+        }]
+    
+    return config_list
 
 
 def delete_user_config(username, config_name):

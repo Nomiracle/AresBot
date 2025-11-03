@@ -122,6 +122,23 @@ def register_routes(app):
                 conn.commit()
                 conn.close()
 
+                # 为新用户创建默认配置
+                from database import save_user_config
+                default_config = {
+                    'exchange': 'binance',
+                    'api_key': '',
+                    'api_secret': '',
+                    'symbol': 'BTCUSDT',
+                    'offset_percent': -0.1,
+                    'sell_offset_percent': 0.5,
+                    'quantity': 0.001,
+                    'interval': 1,
+                    'testnet': 1,
+                    'simulate_trading': 1
+                }
+                save_user_config(username, default_config, 'default')
+                print(f"[{datetime.now().isoformat()}] ✅ 新用户 {username} 注册成功，已创建默认配置")
+
                 session['user'] = username
                 return redirect(url_for('index'))
             except Exception as e:

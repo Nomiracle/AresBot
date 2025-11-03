@@ -700,20 +700,28 @@
       }
 
       function loadConfigByName(config_name) {
+        console.log(`[加载配置] 开始加载配置: ${config_name}`);
         fetch(`/api/config/load?config_name=${encodeURIComponent(config_name)}`)
           .then((r) => r.json())
           .then((data) => {
             if (data.success) {
+              console.log(`[加载配置] 成功加载配置: ${config_name}`, data.config);
+              
               // 加载交易所选择
               if (data.config.exchange) {
                 document.getElementById("exchange").value = data.config.exchange;
                 updateExchangeUI(); // 更新 UI
               }
               
-              document.getElementById("apiKey").value =
-                data.config.api_key || "";
-              document.getElementById("apiSecret").value =
-                data.config.api_secret || "";
+              // 安全地设置API密钥（确保不会设置undefined或null）
+              const apiKey = data.config.api_key || "";
+              const apiSecret = data.config.api_secret || "";
+              
+              console.log(`[加载配置] API Key长度: ${apiKey.length}, API Secret长度: ${apiSecret.length}`);
+              
+              document.getElementById("apiKey").value = apiKey;
+              document.getElementById("apiSecret").value = apiSecret;
+              
               desiredSymbolFromConfig = data.config.symbol;
               document.getElementById("symbol").value = data.config.symbol;
               document.getElementById("offsetPercent").value =
@@ -725,9 +733,16 @@
               document.getElementById("testnet").value = data.config.testnet;
               document.getElementById("simulateTrading").value =
                 data.config.simulate_trading;
+              
+              console.log(`[加载配置] 配置加载完成`);
             } else {
+              console.error(`[加载配置] 加载失败: ${data.message}`);
               alert(data.message);
             }
+          })
+          .catch((error) => {
+            console.error(`[加载配置] 请求失败:`, error);
+            alert(`加载配置失败: ${error.message}`);
           });
       }
 
@@ -1041,17 +1056,9 @@
       }
 
       window.onload = function () {
-        // 页面加载时即加载交易对列表，确保“交易配置”页的下拉框完整
+        // 页面加载时即加载交易对列表，确保"交易配置"页的下拉框完整
         loadTradingPairs();
-        // 同时尝试加载已保存配置，二者互不依赖，通过 desiredSymbolFromConfig 对齐最终选择
-        fetch("/api/config/load")
-          .then((r) => r.json())
-          .then((data) => {
-            if (data.success) {
-              desiredSymbolFromConfig = data.config.symbol || desiredSymbolFromConfig;
-              console.log("已保存配置可用");
-            }
-          });
+        // 注意：配置加载已由 updateConfigSelect(true) 在第766行处理，此处不再重复加载
       };
     </script>
   </body>
