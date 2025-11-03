@@ -407,7 +407,7 @@
           </div>
           <div class="input-group">
             <label>API Key 🔒</label>
-            <input type="password" id="apiKey" placeholder="输入 API Key" />
+            <input type="password" id="apiKey" placeholder="输入 API Key" autocomplete="new-password" data-form-type="other" />
           </div>
           <div class="input-group">
             <label>API Secret 🔒</label>
@@ -415,6 +415,8 @@
               type="password"
               id="apiSecret"
               placeholder="输入 API Secret"
+              autocomplete="new-password"
+              data-form-type="other"
             />
           </div>
           <div class="input-group">
@@ -814,7 +816,7 @@
           .then((r) => r.json())
           .then((data) => {
             if (data.success) {
-              console.log(`[加载配置] 成功加载配置: ${config_name}`, data.config);
+
               
               // 加载交易所选择
               if (data.config.exchange) {
