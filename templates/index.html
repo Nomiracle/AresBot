@@ -346,9 +346,70 @@
       .order-history::-webkit-scrollbar-thumb:hover {
         background: #555;
       }
+      /* Toast通知样式 */
+      .toast-container {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .toast {
+        min-width: 300px;
+        padding: 15px 20px;
+        border-radius: 8px;
+        color: white;
+        font-size: 14px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        animation: slideIn 0.3s ease-out;
+      }
+      .toast.success {
+        background: #28a745;
+      }
+      .toast.error {
+        background: #dc3545;
+      }
+      .toast.warning {
+        background: #ffc107;
+        color: #333;
+      }
+      .toast.info {
+        background: #17a2b8;
+      }
+      @keyframes slideIn {
+        from {
+          transform: translateX(400px);
+          opacity: 0;
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+        }
+      }
+      @keyframes slideOut {
+        from {
+          transform: translateX(0);
+          opacity: 1;
+        }
+        to {
+          transform: translateX(400px);
+          opacity: 0;
+        }
+      }
+      .toast.hiding {
+        animation: slideOut 0.3s ease-out forwards;
+      }
     </style>
   </head>
   <body>
+    <!-- Toast通知容器 -->
+    <div class="toast-container" id="toastContainer"></div>
+    
     <div class="container">
       <div class="header">
         <div>
@@ -628,6 +689,39 @@
       let currentTab = "trading";
       let desiredSymbolFromConfig = null;
 
+      // Toast通知函数
+      function showToast(message, type = 'info') {
+        const container = document.getElementById('toastContainer');
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        
+        // 根据类型添加图标
+        const icons = {
+          success: '✓',
+          error: '✗',
+          warning: '⚠',
+          info: 'ℹ'
+        };
+        
+        toast.innerHTML = `<strong>${icons[type] || 'ℹ'}</strong> <span>${message}</span>`;
+        container.appendChild(toast);
+        
+        // 3秒后移除
+        setTimeout(() => {
+          toast.classList.add('hiding');
+          setTimeout(() => {
+            container.removeChild(toast);
+          }, 300);
+        }, 3000);
+      }
+
+      // 根据响应数据自动显示toast
+      function showResponseToast(data) {
+        if (!data || !data.message) return;
+        const type = data.success ? 'success' : 'error';
+        showToast(data.message, type);
+      }
+
       function switchTab(tabName) {
         document
           .querySelectorAll(".tab-content")
@@ -711,7 +805,7 @@
         const config_name = document.getElementById("configAlias").value.trim();
         
         if (config_name === 'default') {
-          alert("不能删除 default 配置");
+          showToast("不能删除 default 配置", 'warning');
           return;
         }
         
@@ -724,7 +818,7 @@
         })
           .then((r) => r.json())
           .then((data) => {
-            alert(data.message);
+            showResponseToast(data);
             if (data.success) {
               updateConfigSelect();
               // 切换到 default
@@ -839,7 +933,7 @@
         
         // 必须选择密钥
         if (!credId) {
-          alert('请先在"API密钥管理"页面添加密钥，然后选择一个密钥');
+          showToast('请先在"API密钥管理"页面添加密钥，然后选择一个密钥', 'warning');
           return;
         }
         
@@ -873,7 +967,7 @@
         })
           .then((r) => r.json())
           .then((data) => {
-            alert(data.message);
+            showResponseToast(data);
             if (data.success) updateStatus();
           });
       }
@@ -882,7 +976,7 @@
         fetch("/api/stop", { method: "POST" })
           .then((r) => r.json())
           .then((data) => {
-            alert(data.message);
+            showResponseToast(data);
             updateStatus();
           });
       }
@@ -893,7 +987,7 @@
         
         // 必须选择密钥
         if (!credId) {
-          alert('请先在"API密钥管理"页面添加密钥，然后选择一个密钥');
+          showToast('请先在"API密钥管理"页面添加密钥，然后选择一个密钥', 'warning');
           return;
         }
         
@@ -927,7 +1021,7 @@
         })
           .then((r) => r.json())
           .then((data) => {
-            alert(data.message);
+            showResponseToast(data);
             if (data.success) {
               // 更新下拉框
               updateConfigSelect();
@@ -968,7 +1062,7 @@
                 document.getElementById("credentialSelect").value = "";
                 document.getElementById("apiKey").value = "";
                 document.getElementById("apiSecret").value = "";
-                alert(`配置 "${config_name}" 没有关联API密钥。\n请在"API密钥管理"页面添加密钥后,重新选择并保存配置。`);
+                showToast(`配置 "${config_name}" 没有关联API密钥。请在"API密钥管理"页面添加密钥后,重新选择并保存配置。`, 'warning');
               }
               
               desiredSymbolFromConfig = data.config.symbol;
@@ -986,12 +1080,12 @@
               console.log(`[加载配置] 配置加载完成`);
             } else {
               console.error(`[加载配置] 加载失败: ${data.message}`);
-              alert(data.message);
+              showResponseToast(data);
             }
           })
           .catch((error) => {
             console.error(`[加载配置] 请求失败:`, error);
-            alert(`加载配置失败: ${error.message}`);
+            showToast(`加载配置失败: ${error.message}`, 'error');
           });
       }
 
@@ -1103,7 +1197,7 @@
           .value.trim();
 
         if (!symbol || !displayName) {
-          alert("请输入交易对和显示名称");
+          showToast("请输入交易对和显示名称", 'warning');
           return;
         }
 
@@ -1114,7 +1208,7 @@
         })
           .then((r) => r.json())
           .then((data) => {
-            alert(data.message);
+            showResponseToast(data);
             if (data.success) {
               document.getElementById("newSymbol").value = "";
               document.getElementById("newDisplayName").value = "";
@@ -1133,7 +1227,7 @@
         })
           .then((r) => r.json())
           .then((data) => {
-            alert(data.message);
+            showResponseToast(data);
             if (data.success) loadTradingPairs();
           });
       }
@@ -1179,12 +1273,12 @@
         }
 
         if (!symbol || !displayName) {
-          alert("交易对和显示名称不能为空");
+          showToast("交易对和显示名称不能为空", 'warning');
           return;
         }
         
         if (exchanges.length === 0) {
-          alert("请至少选择一个交易所");
+          showToast("请至少选择一个交易所", 'warning');
           return;
         }
 
@@ -1200,7 +1294,7 @@
         })
           .then((r) => r.json())
           .then((data) => {
-            alert(data.message);
+            showResponseToast(data);
             if (data.success) loadTradingPairs();
           });
       }
@@ -1354,7 +1448,7 @@
         })
           .then(r => r.json())
           .then(data => {
-            alert(data.message);
+            showResponseToast(data);
             if (data.success) loadBots();
           });
       }
@@ -1368,7 +1462,7 @@
         })
           .then(r => r.json())
           .then(data => {
-            alert(data.message);
+            showResponseToast(data);
             if (data.success) loadBots();
           });
       }
@@ -1415,7 +1509,7 @@
         const apiSecret = document.getElementById("newCredApiSecret").value.trim();
 
         if (!alias || !apiKey || !apiSecret) {
-          alert("请填写所有字段");
+          showToast("请填写所有字段", 'warning');
           return;
         }
 
@@ -1426,7 +1520,7 @@
         })
           .then((r) => r.json())
           .then((data) => {
-            alert(data.message);
+            showResponseToast(data);
             if (data.success) {
               document.getElementById("newCredAlias").value = "";
               document.getElementById("newCredApiKey").value = "";
@@ -1447,7 +1541,7 @@
         })
           .then((r) => r.json())
           .then((data) => {
-            alert(data.message);
+            showResponseToast(data);
             if (data.success) {
               loadCredentials();
               updateCredentialSelect(); // 同时更新密钥选择器
@@ -1466,7 +1560,7 @@
         })
           .then((r) => r.json())
           .then((data) => {
-            alert(data.message);
+            showResponseToast(data);
             if (data.success) {
               loadCredentials();
               updateCredentialSelect(); // 同时更新密钥选择器
