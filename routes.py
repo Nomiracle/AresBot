@@ -8,7 +8,8 @@ from exchanges.factory import ExchangeFactory
 from config import DB_FILE
 from database import (save_user_config, load_user_config, get_user_orders, get_user_id,
                      get_user_trading_pairs, add_trading_pair, delete_trading_pair, 
-                     update_trading_pair)
+                     update_trading_pair, get_user_credentials, add_credential,
+                     delete_credential, update_credential)
 
 from trading import trading_loop, user_bots
 
@@ -185,8 +186,23 @@ def register_routes(app):
             return jsonify({'success': False, 'message': '未授权'}), 401
 
         username = session['user']
+        user_id = get_user_id(username)
         config = request.json or {}
-        if not config.get('api_key') or not config.get('api_secret'):
+        
+        # 支持通过credential_id引用密钥
+        credential_id = config.get('credential_id')
+        if credential_id:
+            from database import get_credential_by_id
+            credential = get_credential_by_id(user_id, credential_id)
+            if not credential:
+                return jsonify({'success': False, 'message': 'API凭证不存在'}), 400
+            api_key = credential['api_key']
+            api_secret = credential['api_secret']
+        else:
+            api_key = config.get('api_key')
+            api_secret = config.get('api_secret')
+        
+        if not api_key or not api_secret:
             return jsonify({'success': False, 'message': 'API密钥不能为空'}), 400
         if not config.get('symbol'):
             return jsonify({'success': False, 'message': '缺少symbol'}), 400
@@ -196,8 +212,8 @@ def register_routes(app):
             exchange_name = config.get('exchange', 'binance').lower()
             exchange = ExchangeFactory.create(
                 exchange_name,
-                config['api_key'],
-                config['api_secret'],
+                api_key,
+                api_secret,
                 testnet=testnet
             )
             
@@ -276,8 +292,11 @@ def register_routes(app):
         config = data.get('config', data)  # 兼容旧格式
         config_name = data.get('config_name', 'default')
         
-        if not config.get('api_key') or not config.get('api_secret'):
+        # 支持通过credential_id或直接传入api_key/api_secret
+        credential_id = config.get('credential_id')
+        if not credential_id:
             return jsonify({'success': False, 'message': 'API密钥不能为空'}), 400
+                
 
         if save_user_config(username, config, config_name):
             return jsonify({'success': True, 'message': f'配置 "{config_name}" 已加密保存到服务器'})
@@ -515,18 +534,33 @@ def register_routes(app):
         if 'user' not in session:
             return jsonify({'success': False, 'message': '未授权'}), 401
         username = session['user']
+        user_id = get_user_id(username)
         config = request.json or {}
         if not config or not config.get('symbol'):
             return jsonify({'success': False, 'message': '缺少symbol'}), 400
-        if not config.get('api_key') or not config.get('api_secret'):
+        
+        # 支持通过credential_id引用密钥
+        credential_id = config.get('credential_id')
+        if credential_id:
+            from database import get_credential_by_id
+            credential = get_credential_by_id(user_id, credential_id)
+            if not credential:
+                return jsonify({'success': False, 'message': 'API凭证不存在'}), 400
+            api_key = credential['api_key']
+            api_secret = credential['api_secret']
+        else:
+            api_key = config.get('api_key')
+            api_secret = config.get('api_secret')
+        
+        if not api_key or not api_secret:
             return jsonify({'success': False, 'message': 'API密钥不能为空'}), 400
         try:
             testnet = bool(config.get('testnet', 1))
             exchange_name = config.get('exchange', 'binance').lower()
             exchange = ExchangeFactory.create(
                 exchange_name,
-                config['api_key'],
-                config['api_secret'],
+                api_key,
+                api_secret,
                 testnet=testnet
             )
             
@@ -636,3 +670,75 @@ def register_routes(app):
                 cfg[k] = data[k]
         bot['config'] = cfg
         return jsonify({'success': True, 'message': f'{symbol} 配置已更新'})
+
+    # API凭证管理路由
+    @app.route('/api/credentials')
+    def api_credentials():
+        """获取用户的所有API凭证列表(不返回secret)"""
+        if 'user' not in session:
+            return jsonify({'success': False, 'credentials': []}), 401
+        
+        username = session['user']
+        credentials = get_user_credentials(username)
+        return jsonify({'success': True, 'credentials': credentials})
+
+    @app.route('/api/credentials/add', methods=['POST'])
+    def api_add_credential():
+        """添加新的API凭证"""
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未授权'}), 401
+        
+        username = session['user']
+        data = request.json
+        alias = data.get('alias', '').strip()
+        exchange = data.get('exchange', '').strip().lower()
+        api_key = data.get('api_key', '').strip()
+        api_secret = data.get('api_secret', '').strip()
+        
+        if not alias or not exchange or not api_key or not api_secret:
+            return jsonify({'success': False, 'message': '所有字段都不能为空'})
+        
+        credential_id = add_credential(username, alias, exchange, api_key, api_secret)
+        if credential_id:
+            return jsonify({'success': True, 'message': 'API凭证添加成功', 'credential_id': credential_id})
+        else:
+            return jsonify({'success': False, 'message': '别名已存在或添加失败'})
+
+    @app.route('/api/credentials/delete', methods=['POST'])
+    def api_delete_credential():
+        """删除API凭证"""
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未授权'}), 401
+        
+        username = session['user']
+        credential_id = request.json.get('id')
+        
+        result = delete_credential(username, credential_id)
+        if isinstance(result, dict):
+            return jsonify(result)
+        return jsonify({'success': False, 'message': '删除失败'})
+
+    @app.route('/api/credentials/update', methods=['POST'])
+    def api_update_credential():
+        """更新API凭证"""
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未授权'}), 401
+        
+        username = session['user']
+        data = request.json
+        credential_id = data.get('id')
+        alias = data.get('alias', '').strip()
+        api_key = data.get('api_key', '').strip() if data.get('api_key') else None
+        api_secret = data.get('api_secret', '').strip() if data.get('api_secret') else None
+        
+        if not alias:
+            return jsonify({'success': False, 'message': '别名不能为空'})
+        
+        # 如果提供了api_key,必须同时提供api_secret
+        if (api_key and not api_secret) or (not api_key and api_secret):
+            return jsonify({'success': False, 'message': 'API Key和Secret必须同时提供'})
+        
+        if update_credential(username, credential_id, alias, api_key, api_secret):
+            return jsonify({'success': True, 'message': 'API凭证更新成功'})
+        else:
+            return jsonify({'success': False, 'message': '更新失败或别名已存在'})

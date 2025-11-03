@@ -29,8 +29,7 @@ def init_db(recreate=False):
                   user_id INTEGER NOT NULL,
                   config_name TEXT NOT NULL DEFAULT 'default',
                   exchange TEXT NOT NULL DEFAULT 'binance',
-                  api_key TEXT NOT NULL,
-                  api_secret TEXT NOT NULL,
+                  credential_id INTEGER,
                   symbol TEXT NOT NULL,
                   offset_percent REAL NOT NULL,
                   sell_offset_percent REAL NOT NULL DEFAULT 0.5,
@@ -40,6 +39,7 @@ def init_db(recreate=False):
                   simulate_trading INTEGER DEFAULT 1,
                   updated_at TEXT NOT NULL,
                   FOREIGN KEY (user_id) REFERENCES users(id),
+                  FOREIGN KEY (credential_id) REFERENCES api_credentials(id),
                   UNIQUE(user_id, config_name))''')
     
     # 为已存在的表添加新列（如果不存在）
@@ -71,10 +71,23 @@ def init_db(recreate=False):
     # 为已存在的 orders 表添加 buy_price 列（如果不存在）
     try:
         c.execute("ALTER TABLE orders ADD COLUMN buy_price TEXT")
-        print(f"[{datetime.now().isoformat()}] ✅ orders 表已添加 buy_price 列")
+        print(f"[{datetime.now().isoformat()}] orders 表已添加 buy_price 列")
     except sqlite3.OperationalError:
         pass  # 列已存在
 
+    # 新增：API凭证管理表
+    c.execute('''CREATE TABLE IF NOT EXISTS api_credentials
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user_id INTEGER NOT NULL,
+                  alias TEXT NOT NULL,
+                  exchange TEXT NOT NULL,
+                  api_key TEXT NOT NULL,
+                  api_secret TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  FOREIGN KEY (user_id) REFERENCES users(id),
+                  UNIQUE(user_id, alias))''')
+    
     # 新增：交易对管理表
     c.execute('''CREATE TABLE IF NOT EXISTS trading_pairs
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,7 +102,14 @@ def init_db(recreate=False):
     # 为已存在的表添加 exchanges 列（如果不存在）
     try:
         c.execute("ALTER TABLE trading_pairs ADD COLUMN exchanges TEXT DEFAULT 'binance,backpack'")
-        print(f"[{datetime.now().isoformat()}] ✅ trading_pairs 表已添加 exchanges 列")
+        print(f"[{datetime.now().isoformat()}] trading_pairs 表已添加 exchanges 列")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
+
+    # 为user_configs表添加credential_id列(如果不存在)
+    try:
+        c.execute("ALTER TABLE user_configs ADD COLUMN credential_id INTEGER")
+        print(f"[{datetime.now().isoformat()}] user_configs 表已添加 credential_id 列")
     except sqlite3.OperationalError:
         pass  # 列已存在
 
@@ -97,6 +117,7 @@ def init_db(recreate=False):
         c.execute("INSERT INTO users (username, password, created_at) VALUES (?, ?, ?)",
                   ('admin', generate_password_hash('admin123'), datetime.now().isoformat()))
         conn.commit()
+        print(f"[{datetime.now().isoformat()}] 默认 admin 账号已创建（admin/admin123）")
         print(f"[{datetime.now().isoformat()}] ✅ 默认 admin 账号已创建（admin/admin123）")
     except sqlite3.IntegrityError:
         pass
@@ -143,28 +164,32 @@ def save_user_config(username, config, config_name='default'):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
 
-    encrypted_api_key = encrypt_data(config['api_key'])
-    encrypted_api_secret = encrypt_data(config['api_secret'])
     exchange = config.get('exchange', 'binance')
+    credential_id = config.get('credential_id')
+    
+    if not credential_id:
+        conn.close()
+        print(f"[{datetime.now().isoformat()}] ❌ 保存配置失败: 缺少credential_id")
+        return False
 
     c.execute("SELECT id FROM user_configs WHERE user_id=? AND config_name=?", (user_id, config_name))
     exists = c.fetchone()
 
     if exists:
         c.execute("""UPDATE user_configs
-                     SET exchange=?, api_key=?, api_secret=?, symbol=?, offset_percent=?, sell_offset_percent=?,
+                     SET exchange=?, credential_id=?, symbol=?, offset_percent=?, sell_offset_percent=?,
                          quantity=?, interval=?, testnet=?, simulate_trading=?, updated_at=?
                      WHERE user_id=? AND config_name=?""",
-                  (exchange, encrypted_api_key, encrypted_api_secret, config['symbol'],
+                  (exchange, credential_id, config['symbol'],
                    config['offset_percent'], config.get('sell_offset_percent', 0.5),
                    config['quantity'], config['interval'],
                    config.get('testnet', 1), config.get('simulate_trading', 1),
                    datetime.now().isoformat(), user_id, config_name))
     else:
         c.execute("""INSERT INTO user_configs
-                     (user_id, config_name, exchange, api_key, api_secret, symbol, offset_percent, sell_offset_percent, quantity, interval, testnet, simulate_trading, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                  (user_id, config_name, exchange, encrypted_api_key, encrypted_api_secret, config['symbol'],
+                     (user_id, config_name, exchange, credential_id, symbol, offset_percent, sell_offset_percent, quantity, interval, testnet, simulate_trading, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (user_id, config_name, exchange, credential_id, config['symbol'],
                    config['offset_percent'], config.get('sell_offset_percent', 0.5),
                    config['quantity'], config['interval'],
                    config.get('testnet', 1), config.get('simulate_trading', 1),
@@ -172,7 +197,7 @@ def save_user_config(username, config, config_name='default'):
 
     conn.commit()
     conn.close()
-    print(f"[{datetime.now().isoformat()}] ✅ 配置已保存到 DB (user={username}, config={config_name})")
+    print(f"[{datetime.now().isoformat()}] ✅ 配置已保存到 DB (user={username}, config={config_name}, credential_id={credential_id})")
     return True
 
 
@@ -183,7 +208,7 @@ def load_user_config(username, config_name='default'):
 
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("""SELECT config_name, exchange, api_key, api_secret, symbol, 
+    c.execute("""SELECT config_name, exchange, credential_id, symbol, 
                         offset_percent, sell_offset_percent, quantity, interval, 
                         testnet, simulate_trading
                  FROM user_configs WHERE user_id=? AND config_name=?""", (user_id, config_name))
@@ -193,18 +218,30 @@ def load_user_config(username, config_name='default'):
     if not result:
         return None
 
+    credential_id = result[2]
+    
+    # 从 api_credentials 表获取密钥
+    api_key = ''
+    api_secret = ''
+    if credential_id:
+        credential = get_credential_by_id(user_id, credential_id)
+        if credential:
+            api_key = credential['api_key']
+            api_secret = credential['api_secret']
+
     return {
         'config_name': result[0],
         'exchange': result[1],
-        'api_key': decrypt_data(result[2]),
-        'api_secret': decrypt_data(result[3]),
-        'symbol': result[4],
-        'offset_percent': result[5],
-        'sell_offset_percent': result[6],
-        'quantity': result[7],
-        'interval': result[8],
-        'testnet': result[9],
-        'simulate_trading': result[10]
+        'credential_id': credential_id,
+        'api_key': api_key,
+        'api_secret': api_secret,
+        'symbol': result[3],
+        'offset_percent': result[4],
+        'sell_offset_percent': result[5],
+        'quantity': result[6],
+        'interval': result[7],
+        'testnet': result[8],
+        'simulate_trading': result[9]
     }
 
 
@@ -421,3 +458,139 @@ def update_trading_pair(username, pair_id, symbol, display_name, exchanges=None)
     except sqlite3.IntegrityError:
         conn.close()
         return False
+
+
+# API凭证管理功能
+def get_user_credentials(username):
+    """获取用户的所有API凭证列表(不返回secret)"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return []
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""SELECT id, alias, exchange, api_key, created_at, updated_at
+                 FROM api_credentials WHERE user_id=? ORDER BY created_at DESC""", (user_id,))
+    creds = c.fetchall()
+    conn.close()
+
+    return [
+        {
+            'id': cr[0],
+            'alias': cr[1],
+            'exchange': cr[2],
+            'api_key': decrypt_data(cr[3]),  # 解密后返回
+            'created_at': cr[4],
+            'updated_at': cr[5]
+        }
+        for cr in creds
+    ]
+
+
+def add_credential(username, alias, exchange, api_key, api_secret):
+    """添加API凭证"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return False
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        encrypted_api_key = encrypt_data(api_key)
+        encrypted_api_secret = encrypt_data(api_secret)
+        now = datetime.now().isoformat()
+        
+        c.execute("""INSERT INTO api_credentials (user_id, alias, exchange, api_key, api_secret, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                  (user_id, alias, exchange, encrypted_api_key, encrypted_api_secret, now, now))
+        conn.commit()
+        credential_id = c.lastrowid
+        conn.close()
+        print(f"[{datetime.now().isoformat()}] ✅ 添加API凭证: {alias} ({exchange})")
+        return credential_id
+    except sqlite3.IntegrityError:
+        conn.close()
+        return False
+
+
+def delete_credential(username, credential_id):
+    """删除API凭证"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return False
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    # 检查是否有配置在使用此凭证
+    c.execute("SELECT COUNT(*) FROM user_configs WHERE user_id=? AND credential_id=?", (user_id, credential_id))
+    count = c.fetchone()[0]
+    if count > 0:
+        conn.close()
+        return {'success': False, 'message': f'该凭证正在被 {count} 个配置使用,无法删除'}
+    
+    c.execute("DELETE FROM api_credentials WHERE id=? AND user_id=?", (credential_id, user_id))
+    deleted = c.rowcount > 0
+    conn.commit()
+    conn.close()
+
+    if deleted:
+        print(f"[{datetime.now().isoformat()}] ✅ 删除API凭证 ID: {credential_id}")
+        return {'success': True, 'message': f'API凭证删除成功 ID: {credential_id}'}
+    return {'success': False, 'message': '删除失败'}
+
+
+def update_credential(username, credential_id, alias, api_key=None, api_secret=None):
+    """更新API凭证(可选择性更新key和secret)"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return False
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        now = datetime.now().isoformat()
+        
+        if api_key and api_secret:
+            # 更新完整信息
+            encrypted_api_key = encrypt_data(api_key)
+            encrypted_api_secret = encrypt_data(api_secret)
+            c.execute("""UPDATE api_credentials SET alias=?, api_key=?, api_secret=?, updated_at=?
+                         WHERE id=? AND user_id=?""",
+                      (alias, encrypted_api_key, encrypted_api_secret, now, credential_id, user_id))
+        else:
+            # 只更新别名
+            c.execute("""UPDATE api_credentials SET alias=?, updated_at=?
+                         WHERE id=? AND user_id=?""",
+                      (alias, now, credential_id, user_id))
+        
+        updated = c.rowcount > 0
+        conn.commit()
+        conn.close()
+        
+        if updated:
+            print(f"[{datetime.now().isoformat()}] ✅ 更新API凭证 ID {credential_id}: {alias}")
+        return updated
+    except sqlite3.IntegrityError:
+        conn.close()
+        return False
+
+
+def get_credential_by_id(user_id, credential_id):
+    """根据ID获取凭证(包含解密后的key和secret)"""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""SELECT alias, exchange, api_key, api_secret
+                 FROM api_credentials WHERE id=? AND user_id=?""", (credential_id, user_id))
+    result = c.fetchone()
+    conn.close()
+
+    if not result:
+        return None
+
+    return {
+        'alias': result[0],
+        'exchange': result[1],
+        'api_key': decrypt_data(result[2]),
+        'api_secret': decrypt_data(result[3])
+    }

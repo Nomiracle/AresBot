@@ -380,6 +380,7 @@
         <button class="tab active" onclick="switchTab('trading')">
           交易配置
         </button>
+        <button class="tab" onclick="switchTab('credentials')">API密钥管理</button>
         <button class="tab" onclick="switchTab('pairs')">交易对管理</button>
         <button class="tab" onclick="switchTab('bots')">挂单机器人</button>
         <button class="tab" onclick="switchTab('history')">订单历史</button>
@@ -406,18 +407,18 @@
             </select>
           </div>
           <div class="input-group">
-            <label>API Key 🔒</label>
-            <input type="password" id="apiKey" placeholder="输入 API Key" autocomplete="new-password" data-form-type="other" />
-          </div>
-          <div class="input-group">
-            <label>API Secret 🔒</label>
-            <input
-              type="password"
-              id="apiSecret"
-              placeholder="输入 API Secret"
-              autocomplete="new-password"
-              data-form-type="other"
-            />
+            <label>
+              密钥 🔑
+              <span style="font-size: 10px; color: #999; font-weight: normal;">
+                (在"API密钥管理"页面添加)
+              </span>
+            </label>
+            <select id="credentialSelect" onchange="onCredentialChange()">
+              <option value="">-- 请选择已保存的密钥 --</option>
+            </select>
+            <!-- 隐藏字段用于存储API密钥 -->
+            <input type="hidden" id="apiKey" />
+            <input type="hidden" id="apiSecret" />
           </div>
           <div class="input-group">
             <label>交易对</label>
@@ -490,6 +491,62 @@
           <button class="btn btn-danger" onclick="deleteCurrentConfig()">
             🗑️ 删除配置
           </button>
+        </div>
+      </div>
+
+      <div id="credentials-tab" class="tab-content">
+        <h3>API密钥管理 <span class="encrypted">🔐 密钥永久存储在服务器</span></h3>
+        <p style="color:#666; margin: 8px 0 15px;">
+          为每个交易所的API密钥设置别名。密钥只在首次录入时上传,之后仅显示别名和API Key。配置通过别名引用密钥,无需重复输入。
+        </p>
+        
+        <div style="margin-bottom: 20px; padding: 15px; background: #fff3cd; border-radius: 8px; border-left: 4px solid #ffc107;">
+          <strong>⚠️ 安全提示:</strong>
+          <ul style="margin: 8px 0 0 20px; color: #856404;">
+            <li>API密钥和Secret仅在首次添加时上传到服务器</li>
+            <li>服务器使用Fernet加密算法存储所有密钥</li>
+            <li>前端永远不会显示完整的API Secret</li>
+            <li>删除密钥前请确保没有配置在使用</li>
+          </ul>
+        </div>
+
+        <div style="margin-bottom: 20px">
+          <h4 style="margin-bottom: 10px;">➕ 添加新密钥</h4>
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 10px;">
+            <input
+              type="text"
+              id="newCredAlias"
+              placeholder="别名 (如: 我的币安账户)"
+              style="padding: 10px; border: 2px solid #ddd; border-radius: 6px;"
+            />
+            <select
+              id="newCredExchange"
+              style="padding: 10px; border: 2px solid #ddd; border-radius: 6px;"
+            >
+              <option value="binance">Binance</option>
+              <option value="backpack">Backpack</option>
+            </select>
+            <input
+              type="text"
+              id="newCredApiKey"
+              placeholder="API Key"
+              style="padding: 10px; border: 2px solid #ddd; border-radius: 6px;"
+            />
+            <input
+              type="password"
+              id="newCredApiSecret"
+              placeholder="API Secret"
+              style="padding: 10px; border: 2px solid #ddd; border-radius: 6px;"
+            />
+          </div>
+          <button class="btn btn-success" onclick="addCredential()" style="width: 100%;">
+            ➕ 添加密钥
+          </button>
+        </div>
+
+        <h4 style="margin-bottom: 10px;">📋 已保存的密钥</h4>
+        <div id="credentialsList" class="order-history">
+          <p>加载中...</p>
         </div>
       </div>
 
@@ -587,6 +644,8 @@
           loadOrderHistory();
         } else if (tabName === "pairs") {
           loadTradingPairs();
+        } else if (tabName === "credentials") {
+          loadCredentials();
         } else if (tabName === "bots") {
           loadBots();
           // 启动自动刷新
@@ -691,6 +750,62 @@
         
         // 重新加载交易对列表（会根据当前交易所过滤）
         loadTradingPairs();
+        // 更新密钥选择器
+        updateCredentialSelect();
+      }
+
+      // 更新密钥选择器
+      let credentialsCache = [];
+      function updateCredentialSelect() {
+        const exchange = document.getElementById("exchange").value;
+        fetch("/api/credentials")
+          .then((r) => r.json())
+          .then((data) => {
+            credentialsCache = data.credentials || [];
+            const select = document.getElementById("credentialSelect");
+            const currentValue = select.value;
+            
+            // 过滤当前交易所的密钥
+            const filtered = credentialsCache.filter(c => c.exchange === exchange);
+            
+            select.innerHTML = '<option value="">—— 请选择已保存的密钥 ——</option>';
+            filtered.forEach(cred => {
+              const option = document.createElement('option');
+              option.value = cred.id;
+              option.textContent = `${cred.alias} (${cred.api_key.substring(0, 8)}...)`;
+              select.appendChild(option);
+            });
+            
+            // 恢复之前的选择
+            if (currentValue) {
+              select.value = currentValue;
+            }
+            
+            // 如果没有密钥,提示用户
+            if (filtered.length === 0) {
+              select.innerHTML = '<option value="">—— 请先在"API密钥管理"页面添加密钥 ——</option>';
+            }
+          });
+      }
+
+      // 密钥选择器变化时
+      function onCredentialChange() {
+        const credId = document.getElementById("credentialSelect").value;
+        const apiKeyInput = document.getElementById("apiKey");
+        const apiSecretInput = document.getElementById("apiSecret");
+        
+        if (credId) {
+          // 选择了已保存的密钥
+          const cred = credentialsCache.find(c => c.id == credId);
+          if (cred) {
+            apiKeyInput.value = cred.api_key;
+            apiSecretInput.value = "***SAVED***"; // 占位符,表示使用已保存的secret
+          }
+        } else {
+          // 未选择密钥
+          apiKeyInput.value = "";
+          apiSecretInput.value = "";
+        }
       }
 
       function updateStatus() {
@@ -720,10 +835,22 @@
       }
 
       function startBot() {
+        const credId = document.getElementById("credentialSelect").value;
+        
+        // 必须选择密钥
+        if (!credId) {
+          alert('请先在"API密钥管理"页面添加密钥，然后选择一个密钥');
+          return;
+        }
+        
+        const apiKey = document.getElementById("apiKey").value;
+        const apiSecret = document.getElementById("apiSecret").value;
+        
         const config = {
           exchange: document.getElementById("exchange").value,
-          api_key: document.getElementById("apiKey").value,
-          api_secret: document.getElementById("apiSecret").value,
+          api_key: apiKey,
+          api_secret: apiSecret === "***SAVED***" ? "" : apiSecret,
+          credential_id: credId,
           symbol: document.getElementById("symbol").value,
           offset_percent: parseFloat(
             document.getElementById("offsetPercent").value
@@ -738,11 +865,6 @@
             document.getElementById("simulateTrading").value
           ),
         };
-
-        if (!config.api_key || !config.api_secret) {
-          alert('请先输入API Key和Secret，或点击"加载已保存配置"');
-          return;
-        }
 
         fetch("/api/start", {
           method: "POST",
@@ -767,10 +889,22 @@
 
       function saveConfig() {
         const config_name = document.getElementById("configAlias").value.trim() || 'default';
+        const credId = document.getElementById("credentialSelect").value;
+        
+        // 必须选择密钥
+        if (!credId) {
+          alert('请先在"API密钥管理"页面添加密钥，然后选择一个密钥');
+          return;
+        }
+        
+        const apiKey = document.getElementById("apiKey").value;
+        const apiSecret = document.getElementById("apiSecret").value;
+        
         const config = {
           exchange: document.getElementById("exchange").value,
-          api_key: document.getElementById("apiKey").value,
-          api_secret: document.getElementById("apiSecret").value,
+          credential_id: credId,
+          api_key: apiKey,
+          api_secret: apiSecret === "***SAVED***" ? "" : apiSecret,
           symbol: document.getElementById("symbol").value,
           offset_percent: parseFloat(
             document.getElementById("offsetPercent").value
@@ -785,11 +919,6 @@
             document.getElementById("simulateTrading").value
           ),
         };
-
-        if (!config.api_key || !config.api_secret) {
-          alert("请输入API Key和Secret");
-          return;
-        }
 
         fetch("/api/config/save", {
           method: "POST",
@@ -821,17 +950,26 @@
               // 加载交易所选择
               if (data.config.exchange) {
                 document.getElementById("exchange").value = data.config.exchange;
-                updateExchangeUI(); // 更新 UI
+                updateExchangeUI(); // 更新 UI,会同时更新密钥选择器
               }
               
-              // 安全地设置API密钥（确保不会设置undefined或null）
-              const apiKey = data.config.api_key || "";
-              const apiSecret = data.config.api_secret || "";
-              
-              console.log(`[加载配置] API Key长度: ${apiKey.length}, API Secret长度: ${apiSecret.length}`);
-              
-              document.getElementById("apiKey").value = apiKey;
-              document.getElementById("apiSecret").value = apiSecret;
+              // 处理credential_id
+              const credentialId = data.config.credential_id;
+              if (credentialId) {
+                // 如果配置使用了credential_id,选择对应的凭证
+                setTimeout(() => {
+                  const credSelect = document.getElementById("credentialSelect");
+                  credSelect.value = credentialId;
+                  onCredentialChange(); // 触发密钥选择器变化事件
+                }, 200); // 延迟以确保updateExchangeUI完成
+              } else {
+                // 旧配置(没有credential_id),提示用户需要重新选择密钥
+                console.warn(`[加载配置] 配置 ${config_name} 没有关联API密钥,请重新选择`);
+                document.getElementById("credentialSelect").value = "";
+                document.getElementById("apiKey").value = "";
+                document.getElementById("apiSecret").value = "";
+                alert(`配置 "${config_name}" 没有关联API密钥。\n请在"API密钥管理"页面添加密钥后,重新选择并保存配置。`);
+              }
               
               desiredSymbolFromConfig = data.config.symbol;
               document.getElementById("symbol").value = data.config.symbol;
@@ -1235,9 +1373,112 @@
           });
       }
 
+      // API密钥管理函数
+      function loadCredentials() {
+        fetch("/api/credentials")
+          .then((r) => r.json())
+          .then((data) => {
+            const list = document.getElementById("credentialsList");
+            if (!data.success || data.credentials.length === 0) {
+              list.innerHTML = "<p>暂无保存的API密钥</p>";
+              return;
+            }
+            list.innerHTML = data.credentials
+              .map((cred) => {
+                const exchangeDisplay = cred.exchange.toUpperCase();
+                const keyDisplay = cred.api_key.substring(0, 8) + "..." + cred.api_key.substring(cred.api_key.length - 4);
+                return `
+                  <div class="pair-item">
+                    <div class="pair-info">
+                      <strong style="font-size: 16px;">${cred.alias}</strong>
+                      <div style="margin-top: 5px; color: #666;">
+                        <div>交易所: <strong>${exchangeDisplay}</strong></div>
+                        <div>API Key: <code>${keyDisplay}</code></div>
+                        <div style="font-size: 12px; color: #999;">创建时间: ${new Date(cred.created_at).toLocaleString('zh-CN')}</div>
+                      </div>
+                    </div>
+                    <div class="pair-actions">
+                      <button class="btn btn-primary btn-sm" onclick="editCredential(${cred.id}, '${cred.alias}')">✏️ 编辑别名</button>
+                      <button class="btn btn-danger btn-sm" onclick="deleteCredential(${cred.id})">🗑️ 删除</button>
+                    </div>
+                  </div>
+                `;
+              })
+              .join("");
+          });
+      }
+
+      function addCredential() {
+        const alias = document.getElementById("newCredAlias").value.trim();
+        const exchange = document.getElementById("newCredExchange").value;
+        const apiKey = document.getElementById("newCredApiKey").value.trim();
+        const apiSecret = document.getElementById("newCredApiSecret").value.trim();
+
+        if (!alias || !apiKey || !apiSecret) {
+          alert("请填写所有字段");
+          return;
+        }
+
+        fetch("/api/credentials/add", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ alias, exchange, api_key: apiKey, api_secret: apiSecret }),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            alert(data.message);
+            if (data.success) {
+              document.getElementById("newCredAlias").value = "";
+              document.getElementById("newCredApiKey").value = "";
+              document.getElementById("newCredApiSecret").value = "";
+              loadCredentials();
+              updateCredentialSelect(); // 同时更新密钥选择器
+            }
+          });
+      }
+
+      function deleteCredential(id) {
+        if (!confirm("确定要删除此API密钥吗？如果有配置正在使用此密钥，将无法删除。")) return;
+
+        fetch("/api/credentials/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id }),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            alert(data.message);
+            if (data.success) {
+              loadCredentials();
+              updateCredentialSelect(); // 同时更新密钥选择器
+            }
+          });
+      }
+
+      function editCredential(id, currentAlias) {
+        const newAlias = prompt("请输入新的别名:", currentAlias);
+        if (!newAlias || newAlias === currentAlias) return;
+
+        fetch("/api/credentials/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, alias: newAlias }),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            alert(data.message);
+            if (data.success) {
+              loadCredentials();
+              updateCredentialSelect(); // 同时更新密钥选择器
+            }
+          });
+      }
+
       window.onload = function () {
         // 页面加载时即加载交易对列表，确保"交易配置"页的下拉框完整
         loadTradingPairs();
+        // 初始化密钥选择器
+        updateCredentialSelect();
         // 注意：配置加载已由 updateConfigSelect(true) 在第766行处理，此处不再重复加载
       };
     </script>
