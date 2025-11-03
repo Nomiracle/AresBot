@@ -452,12 +452,61 @@ def register_routes(app):
         bots = []
         if isinstance(user_data, dict):
             for sym, b in user_data.get('bots', {}).items():
+                # 检查线程状态
+                thread = b.get('thread')
+                thread_alive = thread.is_alive() if thread else False
+                
+                # 获取监听器状态
+                monitor_started = b.get('monitor_started', False)
+                order_monitor_enabled = b.get('order_monitor_enabled', False)
+                
+                # 获取pending_buys数量
+                pending_buys_count = len(b.get('pending_buys', []))
+                
+                # 获取错误信息
+                last_error = b.get('last_error')
+                error_count = b.get('error_count', 0)
+                last_error_time = b.get('last_error_time')
+                
+                # 获取警告信息
+                last_warning = b.get('last_warning')
+                warning_count = b.get('warning_count', 0)
+                
+                # 判断机器人健康状态
+                is_running = bool(b.get('running'))
+                is_healthy = is_running and thread_alive and monitor_started and not last_error and not last_warning
+                
+                # 状态描述
+                if not is_running:
+                    status_text = '已停止'
+                elif not thread_alive:
+                    status_text = '异常：线程已终止'
+                elif not monitor_started:
+                    status_text = '启动中...'
+                elif last_error:
+                    status_text = f'错误 (共{error_count}次)'
+                elif last_warning:
+                    status_text = f'警告 (共{warning_count}次)'
+                else:
+                    status_text = '正常运行'
+                
                 bots.append({
                     'symbol': sym,
-                    'running': bool(b.get('running')),
+                    'running': is_running,
+                    'healthy': is_healthy,
+                    'status_text': status_text,
                     'current_price': b.get('current_price'),
                     'target_price': b.get('target_price'),
-                    'config': b.get('config', {})
+                    'config': b.get('config', {}),
+                    'monitor_started': monitor_started,
+                    'order_monitor_enabled': order_monitor_enabled,
+                    'pending_buys_count': pending_buys_count,
+                    'thread_alive': thread_alive,
+                    'last_error': last_error,
+                    'error_count': error_count,
+                    'last_error_time': last_error_time,
+                    'last_warning': last_warning,
+                    'warning_count': warning_count
                 })
         return jsonify({'success': True, 'bots': bots})
 
@@ -508,6 +557,7 @@ def register_routes(app):
 
     @app.route('/api/bot/stop', methods=['POST'])
     def api_bot_stop():
+        """删除机器人并取消所有订单"""
         if 'user' not in session:
             return jsonify({'success': False, 'message': '未授权'}), 401
         username = session['user']
@@ -519,21 +569,51 @@ def register_routes(app):
         bot = None
         if isinstance(user_data, dict):
             bot = user_data.get('bots', {}).get(symbol)
-        if not bot or not bot.get('running'):
-            return jsonify({'success': False, 'message': '机器人未在运行'})
+        if not bot:
+            return jsonify({'success': False, 'message': '机器人不存在'})
         
+        exchange_name = bot.get('config', {}).get('exchange', 'binance').upper()
+        log_prefix = f"[{username}-{exchange_name}-{symbol}]"
+        
+        # 停止机器人运行
         bot['running'] = False
+        print(f"[{datetime.now().isoformat()}] {log_prefix} 🛑 停止机器人运行")
         
-        # 停止监听器
+        # 获取交易所实例
         exchange = bot.get('exchange')
         if exchange:
             try:
+                # 取消所有未完成订单
+                print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 查询未完成订单...")
+                open_orders = exchange.get_open_orders(symbol=symbol)
+                if open_orders:
+                    cancelled_count = 0
+                    for order in open_orders:
+                        try:
+                            order_id = str(order.get('orderId') or order.get('id'))
+                            exchange.cancel_order(symbol=symbol, order_id=order_id)
+                            cancelled_count += 1
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 已取消订单: {order_id}")
+                        except Exception as e:
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 取消订单失败: {e}")
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 共取消 {cancelled_count} 笔订单")
+                else:
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} ℹ️ 无未完成订单")
+                
+                # 停止监听器
                 exchange.stop_price_monitor()
                 exchange.stop_order_monitor()
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 已停止监听器")
             except Exception as e:
-                print(f"[{datetime.now().isoformat()}] [{username}-{symbol}] ⚠️ 停止监听器时出错: {e}")
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 清理订单时出错: {e}")
         
-        return jsonify({'success': True, 'message': f'{symbol} 机器人已停止'})
+        # 从内存中删除机器人
+        if isinstance(user_data, dict) and 'bots' in user_data:
+            if symbol in user_data['bots']:
+                del user_data['bots'][symbol]
+                print(f"[{datetime.now().isoformat()}] {log_prefix} 🗑️ 已从内存中删除机器人")
+        
+        return jsonify({'success': True, 'message': f'{symbol} 机器人已删除，所有订单已取消'})
 
     @app.route('/api/bot/update', methods=['POST'])
     def api_bot_update():

@@ -78,6 +78,15 @@ def trading_loop(username, symbol):
     
     # 标记是否已恢复 pending_buys
     pending_buys_recovered = False
+    
+    # 初始化错误信息
+    bot_data['last_error'] = None
+    bot_data['error_count'] = 0
+    bot_data['last_error_time'] = None
+    
+    # 初始化警告信息
+    bot_data['last_warning'] = None
+    bot_data['warning_count'] = 0
 
     while bot_data.get('running'):
         try:
@@ -268,7 +277,10 @@ def trading_loop(username, symbol):
             current_price = bot_data.get('current_price')
             if not current_price:
                 # 监听器未提供价格，跳过本次循环
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 监听器未更新价格，跳过本次循环")
+                warning_msg = "监听器未更新价格"
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ {warning_msg}，跳过本次循环")
+                bot_data['last_warning'] = warning_msg
+                bot_data['warning_count'] = bot_data.get('warning_count', 0) + 1
                 time.sleep(config.get('interval', 1))
                 continue
             
@@ -295,6 +307,13 @@ def trading_loop(username, symbol):
             bot_data['current_price'] = current_price
             bot_data['target_price'] = aligned_price
             target_price = aligned_price
+            
+            # 循环正常运行，清除错误和警告信息
+            if bot_data.get('last_error') or bot_data.get('last_warning'):
+                bot_data['last_error'] = None
+                bot_data['last_error_time'] = None
+                bot_data['last_warning'] = None
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 循环恢复正常，已清除错误/警告信息")
 
             is_buy_enabled = (config.get('simulate_trading', 1) != 1)
             print(f"[{datetime.now().isoformat()}] {log_prefix} 当前价: ${current_price} -> 计划挂买价: ${target_price}（数量: {aligned_quantity}）. 是否可以下单: {is_buy_enabled}")
@@ -558,9 +577,17 @@ def trading_loop(username, symbol):
             time.sleep(config.get('interval', 1))
 
         except Exception as e:
+            error_msg = str(e)
+            error_type = type(e).__name__
             print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [LOOP ERR] 交易循环主流程错误: {e}")
             print(f"[{datetime.now().isoformat()}] {log_prefix} 📋 [TRACEBACK]")
             traceback.print_exc()
+            
+            # 保存错误信息到 bot_data
+            bot_data['last_error'] = f"{error_type}: {error_msg}"
+            bot_data['error_count'] = bot_data.get('error_count', 0) + 1
+            bot_data['last_error_time'] = datetime.now().isoformat()
+            
             time.sleep(1)
 
     # 循环结束，打印退出原因

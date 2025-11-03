@@ -22,6 +22,7 @@
         border-radius: 12px;
         box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
         padding: 30px;
+        min-height: calc(100vh - 40px);
       }
       .header {
         display: flex;
@@ -204,7 +205,8 @@
         display: block;
       }
       .order-history {
-        max-height: 300px;
+        min-height: 200px;
+        max-height: calc(100vh - 400px);
         overflow-y: auto;
       }
       .order-item {
@@ -245,6 +247,104 @@
         border: 2px solid #667eea;
         border-radius: 4px;
         font-size: 14px;
+      }
+      .status-indicator {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 5px;
+      }
+      .status-indicator.healthy {
+        background: #28a745;
+        box-shadow: 0 0 8px #28a745;
+      }
+      .status-indicator.warning {
+        background: #ffc107;
+        box-shadow: 0 0 8px #ffc107;
+      }
+      .status-indicator.error {
+        background: #dc3545;
+        box-shadow: 0 0 8px #dc3545;
+      }
+      .status-indicator.stopped {
+        background: #6c757d;
+      }
+      .bot-status-detail {
+        font-size: 12px;
+        color: #666;
+        margin-top: 5px;
+      }
+      .bot-status-badge {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 11px;
+        margin-right: 5px;
+      }
+      .badge-success {
+        background: #d4edda;
+        color: #155724;
+      }
+      .badge-warning {
+        background: #fff3cd;
+        color: #856404;
+      }
+      .badge-danger {
+        background: #f8d7da;
+        color: #721c24;
+      }
+      .badge-secondary {
+        background: #e2e3e5;
+        color: #383d41;
+      }
+      .error-message {
+        background: #f8d7da;
+        border: 1px solid #f5c6cb;
+        border-radius: 4px;
+        padding: 8px 10px;
+        margin-top: 8px;
+        font-size: 12px;
+        color: #721c24;
+      }
+      .error-message strong {
+        display: block;
+        margin-bottom: 4px;
+        color: #dc3545;
+      }
+      .error-time {
+        font-size: 11px;
+        color: #999;
+        margin-top: 4px;
+      }
+      .warning-message {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 4px;
+        padding: 8px 10px;
+        margin-top: 8px;
+        font-size: 12px;
+        color: #856404;
+      }
+      .warning-message strong {
+        display: block;
+        margin-bottom: 4px;
+        color: #ff9800;
+      }
+      /* 自定义滚动条样式 */
+      .order-history::-webkit-scrollbar {
+        width: 8px;
+      }
+      .order-history::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 4px;
+      }
+      .order-history::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 4px;
+      }
+      .order-history::-webkit-scrollbar-thumb:hover {
+        background: #555;
       }
     </style>
   </head>
@@ -429,8 +529,8 @@
       </div>
 
       <div id="bots-tab" class="tab-content">
-        <h3>挂单机器人</h3>
-        <p style="color:#666; margin: 8px 0 12px;">展示每个交易对的机器人状态与参数，可在线编辑参数并保存。需要启动新机器人请在“交易配置”页选择交易对并点击“启动机器人”。</p>
+        <h3>挂单机器人 <span style="font-size: 14px; color: #666;">(自动刷新)</span></h3>
+        <p style="color:#666; margin: 8px 0 12px;">展示每个交易对的机器人状态与参数，可在线编辑参数并保存。需要启动新机器人请在"交易配置"页选择交易对并点击"启动机器人"。</p>
         <div id="botsList" class="order-history">
           <p>加载中...</p>
         </div>
@@ -487,6 +587,15 @@
           loadTradingPairs();
         } else if (tabName === "bots") {
           loadBots();
+          // 启动自动刷新
+          if (botsRefreshInterval) clearInterval(botsRefreshInterval);
+          botsRefreshInterval = setInterval(loadBots, 2000);
+        } else {
+          // 切换到其他标签时停止自动刷新
+          if (botsRefreshInterval) {
+            clearInterval(botsRefreshInterval);
+            botsRefreshInterval = null;
+          }
         }
       }
       
@@ -958,6 +1067,7 @@
 
       // 机器人管理
       let botsCache = {};
+      let botsRefreshInterval = null;
 
       function loadBots() {
         fetch("/api/bots")
@@ -975,16 +1085,84 @@
                 const mode = (bot.config && parseInt(bot.config.simulate_trading) === 1) ? '模拟' : '实盘';
                 const cp = bot.current_price != null ? ('$' + Number(bot.current_price).toFixed(2)) : '-';
                 const tp = bot.target_price != null ? ('$' + bot.target_price) : '-';
+                
+                // 状态指示器
+                let statusClass = 'stopped';
+                let statusColor = '#6c757d';
+                if (bot.running) {
+                  if (bot.healthy) {
+                    statusClass = 'healthy';
+                    statusColor = '#28a745';
+                  } else if (bot.thread_alive) {
+                    statusClass = 'warning';
+                    statusColor = '#ffc107';
+                  } else {
+                    statusClass = 'error';
+                    statusColor = '#dc3545';
+                  }
+                }
+                
+                // 状态徽章
+                const monitorBadge = bot.monitor_started 
+                  ? '<span class="bot-status-badge badge-success">✓ 监听器</span>' 
+                  : '<span class="bot-status-badge badge-warning">⏳ 监听器</span>';
+                const orderMonitorBadge = bot.order_monitor_enabled
+                  ? '<span class="bot-status-badge badge-success">✓ 订单监听</span>'
+                  : '<span class="bot-status-badge badge-secondary">轮询模式</span>';
+                const threadBadge = bot.thread_alive
+                  ? '<span class="bot-status-badge badge-success">✓ 线程</span>'
+                  : '<span class="bot-status-badge badge-danger">✗ 线程</span>';
+                const pendingBadge = bot.pending_buys_count > 0
+                  ? `<span class="bot-status-badge badge-warning">⏳ ${bot.pending_buys_count} 待成交</span>`
+                  : '';
+                
+                // 错误信息显示
+                let errorDisplay = '';
+                if (bot.last_error) {
+                  const errorTime = bot.last_error_time ? new Date(bot.last_error_time).toLocaleString('zh-CN') : '';
+                  errorDisplay = `
+                    <div class="error-message">
+                      <strong>❌ 循环错误 (第 ${bot.error_count} 次)</strong>
+                      <div>${bot.last_error}</div>
+                      ${errorTime ? `<div class="error-time">最后发生: ${errorTime}</div>` : ''}
+                    </div>
+                  `;
+                }
+                
+                // 警告信息显示
+                let warningDisplay = '';
+                if (bot.last_warning) {
+                  warningDisplay = `
+                    <div class="warning-message">
+                      <strong>⚠️ ${bot.last_warning} (共 ${bot.warning_count} 次)</strong>
+                      <div>机器人正在等待价格监听器更新数据，请检查网络连接或交易所API状态</div>
+                    </div>
+                  `;
+                }
+                
                 return `
                   <div class="pair-item" id="bot-${bot.symbol}">
                     <div class="pair-info">
-                      <strong>${bot.symbol}</strong> — 状态: ${bot.running ? '运行中' : '已停止'}<br>
-                      当前价: ${cp} | 目标价: ${tp}<br>
-                      参数: 偏移 ${bot.config.offset_percent}% | 卖加价 ${bot.config.sell_offset_percent || 0.5}% | 数量 ${bot.config.quantity} | 间隔 ${bot.config.interval}s | 模式 ${mode}
+                      <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                        <span class="status-indicator ${statusClass}"></span>
+                        <strong style="font-size: 16px;">${bot.symbol}</strong>
+                        <span style="margin-left: 10px; color: ${statusColor}; font-weight: 600;">${bot.status_text}</span>
+                      </div>
+                      <div style="margin-bottom: 5px;">
+                        当前价: <strong>${cp}</strong> | 目标价: <strong>${tp}</strong>
+                      </div>
+                      <div class="bot-status-detail">
+                        ${bot.running ? monitorBadge + orderMonitorBadge + threadBadge + pendingBadge : '<span class="bot-status-badge badge-secondary">已停止</span>'}
+                      </div>
+                      <div style="font-size: 12px; color: #888; margin-top: 5px;">
+                        参数: 偏移 ${bot.config.offset_percent}% | 卖加价 ${bot.config.sell_offset_percent || 0.5}% | 数量 ${bot.config.quantity} | 间隔 ${bot.config.interval}s | 模式 ${mode}
+                      </div>
+                      ${errorDisplay}
+                      ${warningDisplay}
                     </div>
                     <div class="pair-actions">
                       <button class="btn btn-primary btn-sm" onclick="editBot('${bot.symbol}')">✏️ 编辑</button>
-                      <button class="btn btn-danger btn-sm" onclick="stopBotSymbol('${bot.symbol}')">⏹️ 停止</button>
+                      <button class="btn btn-danger btn-sm" onclick="deleteBotSymbol('${bot.symbol}')">🗑️ 删除</button>
                     </div>
                   </div>
                 `;
@@ -1041,8 +1219,8 @@
           });
       }
 
-      function stopBotSymbol(symbol) {
-        if (!confirm(`确定停止 ${symbol} 机器人吗？`)) return;
+      function deleteBotSymbol(symbol) {
+        if (!confirm(`确定删除 ${symbol} 机器人吗？\n\n此操作将：\n✓ 停止机器人运行\n✓ 取消所有未完成订单\n✓ 从列表中移除机器人\n\n此操作不可撤销！`)) return;
         fetch("/api/bot/stop", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
