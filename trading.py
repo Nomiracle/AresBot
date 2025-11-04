@@ -393,14 +393,35 @@ def trading_loop(username, symbol):
                                     if new_order_id and new_order_id != str(order['orderId']):
                                         print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [REPRICE] 订单 {order['orderId']} 已替换为新价格 {buy_price_str}，新订单ID={new_order_id}")
                                         
+                                        # 调试：打印改价前的 pending_buys
+                                        print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 [DEBUG] 改价前 pending_buys: {[p['order_id'] for p in bot_data.get('pending_buys', [])]}")
+                                        
                                         # 同步 pending_buys 中的 order_id 与价格
                                         updated = []
+                                        found = False
                                         for p in bot_data.get('pending_buys', []):
                                             if p['order_id'] == str(order['orderId']):
                                                 p['order_id'] = new_order_id
                                                 p['price'] = float(buy_price_str)
+                                                found = True
                                             updated.append(p)
+                                        
+                                        # 如果旧订单不在 pending_buys 中，添加新订单
+                                        if not found:
+                                            updated.append({
+                                                'order_id': new_order_id,
+                                                'price': float(buy_price_str),
+                                                'quantity': aligned_quantity,
+                                                'symbol': config['symbol'],
+                                                'user_id': user_id,
+                                                'created_at': 0  # 立即可查询
+                                            })
+                                            print(f"[{datetime.now().isoformat()}] {log_prefix} ➕ [REPRICE] 旧订单不在 pending_buys 中，已添加新订单 {new_order_id}")
+                                        
                                         bot_data['pending_buys'] = updated
+                                        
+                                        # 调试：打印改价后的 pending_buys
+                                        print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 [DEBUG] 改价后 pending_buys: {[p['order_id'] for p in bot_data.get('pending_buys', [])]}")
                                         
                                         # 更新数据库：标记旧订单为已替换，插入新订单
                                         update_order_status(str(order['orderId']), 'REPLACED')
@@ -514,15 +535,18 @@ def trading_loop(username, symbol):
             # 原因：如果 open_orders 有数据，说明订单还在交易所，会通过改价逻辑或 WebSocket 处理
             #      如果 open_orders 为空但 pending_buys 有数据，说明订单可能已成交，需要主动查询确认
             has_pending_buys = bool(bot_data.get('pending_buys', []))
+            print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 [DEBUG] open_buy_orders={len(open_buy_orders)}, pending_buys={[p['order_id'] for p in bot_data.get('pending_buys', [])]}")
             if not open_buy_orders and has_pending_buys:
                 pending_count = len(bot_data.get('pending_buys', []))
                 print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 [CHECK] 交易所无未完成买单，但存在 {pending_count} 笔待跟踪买单，检查是否成交...")
                 
                 # 如果订单监听未启用，使用 adapter 的轮询方法检查订单状态
                 if not bot_data.get('order_monitor_enabled'):
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 [DEBUG] 调用轮询检查，pending_buys={[p['order_id'] for p in bot_data.get('pending_buys', [])]}")
                     # 调用 adapter 的 check_pending_orders 方法
                     # 订单成交会通过 _on_order_update 回调处理，回调中会自动挂卖单并从 pending_buys 移除
                     exchange.check_pending_orders(bot_data.get('pending_buys', []))
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 [DEBUG] 轮询检查完成，pending_buys={[p['order_id'] for p in bot_data.get('pending_buys', [])]}")
                 
                 time.sleep(config.get('interval', 1))
                 continue
