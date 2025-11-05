@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 import base64
 from typing import Dict, Any, List, Optional
 from time import time
+from datetime import datetime
 
 class BackpackWsAccount:
     """
@@ -94,32 +95,22 @@ class BackpackWsAccount:
         print(f"subscribe_message: {subscribe_message}")
         await self.ws.send(json.dumps(subscribe_message))
         
-        # 创建后台任务处理消息
-        async def _message_loop():
-            try:
-                while True:
-                    response = await self.ws.recv()
-                    msg = json.loads(response)
-                    # Backpack 返回格式: {'data': {...}, 'stream': '...'}
-                    data = msg.get('data', msg)
-                    if on_message and data.get("e") == "bookTicker" and data.get("s") == self.symbol:
-                        on_message(msg)
-            except asyncio.CancelledError:
-                print(f"订阅 bookTicker.{self.symbol} 已取消")
-            except (ConnectionClosedError, ConnectionClosedOK) as e:
-                print(f"订阅 bookTicker.{self.symbol} 连接已关闭: {e}")
-            except Exception as e:
-                print(f"订阅 bookTicker.{self.symbol} 发生错误: {e}")
-                if self.on_error_callback:
-                    self.on_error_callback(e)
-        
-        # 将消息循环包装在 asyncio.create_task 中
-        if "markPrice" not in self.asyncios:
-            print(f"markPrice 不存在")
-        else:
-            print(f"markPrice 已存在")
-            self.asyncios["markPrice"].cancel()
-        self.asyncios["markPrice"] = asyncio.create_task(_message_loop())
+        try:
+            while True:
+                response = await self.ws.recv()
+                msg = json.loads(response)
+                # Backpack 返回格式: {'data': {...}, 'stream': '...'}
+                data = msg.get('data', msg)
+                if on_message and data.get("e") == "bookTicker" and data.get("s") == self.symbol:
+                    on_message(msg)
+        except asyncio.CancelledError:
+            print(f"订阅 bookTicker.{self.symbol} 已取消")
+        except (ConnectionClosedError, ConnectionClosedOK) as e:
+            print(f"订阅 bookTicker.{self.symbol} 连接已关闭: {e}")
+        except Exception as e:
+            print(f"订阅 bookTicker.{self.symbol} 发生错误: {e}")
+            if self.on_error_callback:
+                self.on_error_callback(e)
     
     def _sign_ws_auth(self, timestamp: int) -> str:
         """
@@ -149,45 +140,83 @@ class BackpackWsAccount:
         # Subscribe to account order updates (需要认证)
         timestamp = int(time() * 1e3)
         signature = self._sign_ws_auth(timestamp)
+        
+        # 尝试不同的订阅格式
+        # 格式1: account.orderUpdate (不带 symbol)
+        # 格式2: account.orderUpdate.{symbol}
         subscribe_message = {
             "method": "SUBSCRIBE",
-            "params": ["account.orderUpdate"],
+            "params": [f"account.orderUpdate.{self.symbol}"],  # 先尝试不带 symbol
             "signature": [self.public_key, signature, str(timestamp), str(self.window)]
         }
-        print(f"subscribe_message: {subscribe_message}")
+        print(f"[{datetime.now().isoformat()}] 📤 订阅订单更新: {subscribe_message}")
         await self.ws.send(json.dumps(subscribe_message))
+        print(f"[{datetime.now().isoformat()}] ✅ 订阅请求已发送，等待响应...")
         
-        # 创建后台任务处理消息
-        async def _message_loop():
+        try:
+            while True:
+                """
+                 {'data': {'E': 1762356307766843, 'O': 'USER', 'Q': '2.90430', 'S': 'Ask', 'T': 1762356307762632, 
+                 'V': 'RejectTaker', 'X': 'Cancelled', 'Z': '0', 'e': 'orderCancelled', 'f': 'GTC', 'i': '17565247891', 
+                 'o': 'LIMIT', 'p': '2.9043', 'q': '1.0', 'r': False, 's': 'APT_USDC', 't': None, 'y': False, 'z': '0'}, 'stream': 'account.orderUpdate'}
+
+                """
+                response = await self.ws.recv()
+                msg = json.loads(response)
+                # 打印所有收到的消息（用于调试）
+                # print(f"[{datetime.now().isoformat()}] 📡 [RAW] 收到消息: {msg}")
+                
+                # Backpack 返回格式: {'data': {...}, 'stream': '...'}
+                data = msg.get('data', msg)
+                stream = msg.get('stream', msg)
+                # 检查是否是订阅确认消息
+                if 'result' in msg:
+                    print(f"[{datetime.now().isoformat()}] ✅ 订阅确认: {msg}")
+                    continue
+                
+                # 检查是否是错误消息
+                if 'error' in msg:
+                    print(f"[{datetime.now().isoformat()}] ❌ 订阅错误: {msg}")
+                    continue
+                
+                # 处理订单更新消息
+                if on_message and stream == f"account.orderUpdate.{self.symbol}":
+                    # print(f"[{datetime.now().isoformat()}] 🎯 订单更新事件: {data}")
+                    on_message(msg)
+                else:
+                    print(f"[{datetime.now().isoformat()}] ℹ️ 其他消息类型: e={data.get('e')}")
+        except asyncio.CancelledError:
+            print(f"[{datetime.now().isoformat()}]订阅 account.orderUpdate 已取消")
+        except (ConnectionClosedError, ConnectionClosedOK) as e:
+            print(f"[{datetime.now().isoformat()}]订阅 account.orderUpdate 连接已关闭: {e}")
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}]订阅 account.orderUpdate 发生错误: {e}")
+            if self.on_error_callback:
+                self.on_error_callback(e)
+    
+    async def close(self):
+        """关闭 WebSocket 连接"""
+        if self.ws:
             try:
-                while True:
-                    response = await self.ws.recv()
-                    msg = json.loads(response)
-                    # Backpack 返回格式: {'data': {...}, 'stream': '...'}
-                    data = msg.get('data', msg)
-                    if on_message and data.get("e") == "orderUpdate":
-                        on_message(msg)
-            except asyncio.CancelledError:
-                print(f"订阅 account.orderUpdate 已取消")
-            except (ConnectionClosedError, ConnectionClosedOK) as e:
-                print(f"订阅 account.orderUpdate 连接已关闭: {e}")
+                await self.ws.close()
+                print(f"WebSocket 连接已关闭")
             except Exception as e:
-                print(f"订阅 account.orderUpdate 发生错误: {e}")
-                if self.on_error_callback:
-                    self.on_error_callback(e)
-        
-        # 将消息循环包装在 asyncio.create_task 中
-        key = "subscribe_account_order_update"
-        if key not in self.asyncios:
-            print(f"{key} 不存在")
-        else:
-            print(f"{key} 已存在")
-            self.asyncios[key].cancel()
-        self.asyncios[key] = asyncio.create_task(_message_loop())
-
-
+                print(f"关闭 WebSocket 连接失败: {e}")
+            self.ws = None
+    
     def clean_up(self):
-        """清理所有后台任务"""
-        for key in self.asyncios:
-            self.asyncios[key].cancel()
-        self.asyncios = {}
+        """清理所有资源（同步方法）"""
+        if self.ws:
+            try:
+                import asyncio
+                # 尝试在当前事件循环中关闭
+                try:
+                    loop = asyncio.get_running_loop()
+                    asyncio.create_task(self.close())
+                except RuntimeError:
+                    # 没有运行中的循环，直接设置为 None
+                    self.ws = None
+            except Exception as e:
+                print(f"清理 WebSocket 失败: {e}")
+
+

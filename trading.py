@@ -136,119 +136,129 @@ def trading_loop(username, symbol):
                         # 处理错误
                         if event.get('event_type') == 'error':
                             print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [订单监听错误] {event.get('error_message')}")
-                            return
+                            
+                        elif event.get('event_type') == 'order_cancelled':
+                            if event.get('side') == 'BUY':
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ [订单取消] {event.get('order_id')} 已取消")
+                                # 从 pending_buys 中移除已取消的买单
+                                bot_data['pending_buys'] = [pb for pb in bot_data.get('pending_buys', []) if pb['order_id'] != event.get('order_id')]
                         
                         # 处理买单成交
-                        if event.get('event_type') == 'order_filled' and event.get('side') == 'BUY':
-                            order_id = event['order_id']
-                            symbol_ = event['symbol']
-                            price_str = event.get('price') or '0'
-                            qty_str = event.get('quantity') or '0'
-                            
-                            # 🔒 去重检查：确保同一个买单只处理一次
-                            # 如果订单ID不在 pending_buys 中，说明已经处理过了，跳过
-                            is_pending = any(pb['order_id'] == order_id for pb in bot_data.get('pending_buys', []))
-                            if not is_pending:
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ [去重] 买单 {order_id} 已处理过，跳过重复事件")
-                                return
-                            
-                            # 买单成交 -> 自动挂卖单（按精度对齐）
-                            try:
-                                buy_price = float(price_str) if float(price_str) > 0 else None
-                            except Exception:
-                                buy_price = None
-                            # 如果订单里没有价格（市价单情况），回退 pending 记录
-                            if not buy_price:
-                                for pb in bot_data.get('pending_buys', []):
-                                    if pb['order_id'] == order_id:
-                                        buy_price = pb.get('price')
-                                        break
-                            if not buy_price:
-                                return
+                        elif event.get('event_type') == 'order_filled':
+                            if event.get('side') == 'BUY':
+                                order_id = event['order_id']
+                                symbol_ = event['symbol']
+                                price_str = event.get('price') or '0'
+                                qty_str = event.get('quantity') or '0'
+                                
+                                # 🔒 去重检查：确保同一个买单只处理一次
+                                # 如果订单ID不在 pending_buys 中，说明已经处理过了，跳过
+                                is_pending = any(pb['order_id'] == order_id for pb in bot_data.get('pending_buys', []))
+                                if not is_pending:
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ [去重] 买单 {order_id} 已处理过，跳过重复事件")
+                                    return
+                                
+                                # 买单成交 -> 自动挂卖单（按精度对齐）
+                                try:
+                                    buy_price = float(price_str) if float(price_str) > 0 else None
+                                except Exception:
+                                    buy_price = None
+                                # 如果订单里没有价格（市价单情况），回退 pending 记录
+                                if not buy_price:
+                                    for pb in bot_data.get('pending_buys', []):
+                                        if pb['order_id'] == order_id:
+                                            buy_price = pb.get('price')
+                                            break
+                                if not buy_price:
+                                    return
 
-                            # 计算卖出价格（带手续费保护）
-                            sell_offset_percent = config.get('sell_offset_percent', 0.5)
-                            aligned_sell_price = calculate_sell_price(
-                                buy_price=buy_price,
-                                sell_offset_percent=sell_offset_percent,
-                                tick_size=tick_size,
-                                price_decimals=price_decimals,
-                                log_prefix=log_prefix
-                            )
-
-                            # 获取实际成交数量（考虑手续费扣除）
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [卖单数量计算] 开始计算卖单数量...")
-                            
-                            # 优先使用订单事件中的实际成交数量
-                            executed_qty = None
-                            try:
-                                # 尝试从事件中获取 executedQty（实际成交数量，已扣除手续费）
-                                if 'executedQty' in event:
-                                    executed_qty = float(event['executedQty'])
-                                    print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [卖单数量计算] 从事件中获取 executedQty: {executed_qty}")
-                                elif qty_str and float(qty_str) > 0:
-                                    executed_qty = float(qty_str)
-                                    print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [卖单数量计算] 从事件中获取 quantity: {executed_qty}")
-                            except Exception as e:
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [卖单数量计算] 解析事件数量失败: {e}")
-                            
-                            # 如果事件中没有数量，从 pending_buys 中获取
-                            if executed_qty is None:
-                                for pb in bot_data.get('pending_buys', []):
-                                    if pb['order_id'] == order_id:
-                                        executed_qty = float(pb.get('quantity'))
-                                        print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [卖单数量计算] 从 pending_buys 获取数量: {executed_qty}")
-                                        break
-                            
-                            if executed_qty is None:
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [卖单数量计算] 无法获取成交数量，跳过挂卖单")
-                                return
-                            
-                            # 考虑手续费扣除（假设手续费为 0.1%，实际到账 99.9%）
-                            # 大多数交易所买入时手续费从成交金额中扣除，实际到账数量会少一些
-                            fee_rate = config.get('fee_rate', 0.002)  # 默认 0.1% 手续费（买卖手续费）
-                            actual_qty = executed_qty * (1 - fee_rate)
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [卖单数量计算] 成交数量: {executed_qty}, 手续费率: {fee_rate*100}%, 扣除手续费后: {actual_qty}")
-                            
-                            # 按精度对齐（向下取整，确保不超过实际持仓）
-                            if step_size and step_size > 0:
-                                aligned_sell_qty = math.floor(actual_qty / step_size) * step_size
-                                aligned_sell_qty = round(aligned_sell_qty, qty_decimals)
-                            else:
-                                aligned_sell_qty = round(actual_qty, qty_decimals)
-                            
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [卖单数量计算] 精度对齐后: {aligned_sell_qty} (step_size={step_size})")
-                            
-                            # 检查卖单数量是否有效
-                            if aligned_sell_qty <= 0:
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [卖单数量计算] 对齐后数量为 0，无法挂卖单")
-                                return
-
-                            sell_success = False
-                            try:
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ➡️ [挂卖单] 价格={aligned_sell_price}, 数量={aligned_sell_qty}")
-                                sell_order = exchange.order_limit_sell(
-                                    symbol=symbol_,
-                                    quantity=aligned_sell_qty,
-                                    price=f"{aligned_sell_price}",
-                                    timeInForce='GTC'
+                                # 计算卖出价格（带手续费保护）
+                                sell_offset_percent = config.get('sell_offset_percent', 0.5)
+                                aligned_sell_price = calculate_sell_price(
+                                    buy_price=buy_price,
+                                    sell_offset_percent=sell_offset_percent,
+                                    tick_size=tick_size,
+                                    price_decimals=price_decimals,
+                                    log_prefix=log_prefix
                                 )
-                                # 兼容不同交易所：Binance用'orderId'，Backpack用'id'
-                                sell_order_id = str(sell_order.get('orderId') or sell_order.get('id'))
-                                insert_order(user_id, symbol_, str(aligned_sell_price), str(aligned_sell_qty),
-                                             'SELL', 'PLACED', sell_order_id, buy_price=str(buy_price))
-                                update_order_status(order_id, 'FILLED')
-                                sell_success = True
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单 {order_id} 成交 @ {buy_price}，自动挂卖单 {sell_order_id} @ {aligned_sell_price}，数量 {aligned_sell_qty}")
-                            except Exception as e:
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [卖单错误] 卖单下单错误: {e}，将保留 pending_buy 以便重试")
 
-                            # 只有卖单成功才从 pending_buys 移除
-                            if sell_success:
-                                bot_data['pending_buys'] = [pb for pb in bot_data.get('pending_buys', []) if pb['order_id'] != order_id]
-                            else:
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 买单 {order_id} 已成交但卖单下单失败，保留在 pending_buys 中等待重试")
+                                # 获取实际成交数量（考虑手续费扣除）
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [卖单数量计算] 开始计算卖单数量...")
+                                
+                                # 优先使用订单事件中的实际成交数量
+                                executed_qty = None
+                                try:
+                                    # 尝试从事件中获取 executedQty（实际成交数量，已扣除手续费）
+                                    if 'executedQty' in event:
+                                        executed_qty = float(event['executedQty'])
+                                        print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [卖单数量计算] 从事件中获取 executedQty: {executed_qty}")
+                                    elif qty_str and float(qty_str) > 0:
+                                        executed_qty = float(qty_str)
+                                        print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [卖单数量计算] 从事件中获取 quantity: {executed_qty}")
+                                except Exception as e:
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [卖单数量计算] 解析事件数量失败: {e}")
+                                
+                                # 如果事件中没有数量，从 pending_buys 中获取
+                                if executed_qty is None:
+                                    for pb in bot_data.get('pending_buys', []):
+                                        if pb['order_id'] == order_id:
+                                            executed_qty = float(pb.get('quantity'))
+                                            print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [卖单数量计算] 从 pending_buys 获取数量: {executed_qty}")
+                                            break
+                                
+                                if executed_qty is None:
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [卖单数量计算] 无法获取成交数量，跳过挂卖单")
+                                    return
+                                
+                                # 考虑手续费扣除（假设手续费为 0.1%，实际到账 99.9%）
+                                # 大多数交易所买入时手续费从成交金额中扣除，实际到账数量会少一些
+                                fee_rate = config.get('fee_rate', 0.002)  # 默认 0.1% 手续费（买卖手续费）
+                                actual_qty = executed_qty * (1 - fee_rate)
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [卖单数量计算] 成交数量: {executed_qty}, 手续费率: {fee_rate*100}%, 扣除手续费后: {actual_qty}")
+                                
+                                # 按精度对齐（向下取整，确保不超过实际持仓）
+                                if step_size and step_size > 0:
+                                    aligned_sell_qty = math.floor(actual_qty / step_size) * step_size
+                                    aligned_sell_qty = round(aligned_sell_qty, qty_decimals)
+                                else:
+                                    aligned_sell_qty = round(actual_qty, qty_decimals)
+                                
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [卖单数量计算] 精度对齐后: {aligned_sell_qty} (step_size={step_size})")
+                                
+                                # 检查卖单数量是否有效
+                                if aligned_sell_qty <= 0:
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [卖单数量计算] 对齐后数量为 0，无法挂卖单")
+                                    return
 
+                                sell_success = False
+                                try:
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ➡️ [挂卖单] 价格={aligned_sell_price}, 数量={aligned_sell_qty}")
+                                    sell_order = exchange.order_limit_sell(
+                                        symbol=symbol_,
+                                        quantity=aligned_sell_qty,
+                                        price=f"{aligned_sell_price}",
+                                        timeInForce='GTC'
+                                    )
+                                    # 兼容不同交易所：Binance用'orderId'，Backpack用'id'
+                                    sell_order_id = str(sell_order.get('orderId') or sell_order.get('id'))
+                                    insert_order(user_id, symbol_, str(aligned_sell_price), str(aligned_sell_qty),
+                                                'SELL', 'PLACED', sell_order_id, buy_price=str(buy_price))
+                                    update_order_status(order_id, 'FILLED')
+                                    sell_success = True
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单 {order_id} 成交 @ {buy_price}，自动挂卖单 {sell_order_id} @ {aligned_sell_price}，数量 {aligned_sell_qty}")
+                                except Exception as e:
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [卖单错误] 卖单下单错误: {e}，将保留 pending_buy 以便重试")
+
+                                # 只有卖单成功才从 pending_buys 移除
+                                if sell_success:
+                                    bot_data['pending_buys'] = [pb for pb in bot_data.get('pending_buys', []) if pb['order_id'] != order_id]
+                                else:
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 买单 {order_id} 已成交但卖单下单失败，保留在 pending_buys 中等待重试")
+
+                        
+                        else:
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [订单回调错误] 未知事件类型: {event}")
+                    
                     except Exception as e:
                         print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [订单回调错误] {e}")
                         traceback.print_exc()
