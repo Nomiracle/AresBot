@@ -87,6 +87,9 @@ def trading_loop(username, symbol):
     # 初始化警告信息
     bot_data['last_warning'] = None
     bot_data['warning_count'] = 0
+    
+    # 🔒 下单锁：防止并发下单
+    bot_data['is_placing_order'] = False
 
     while bot_data.get('running'):
         try:
@@ -561,8 +564,11 @@ def trading_loop(username, symbol):
                 time.sleep(config.get('interval', 1))
                 continue
 
-            # 只有在没有未完成买/卖单，且没有待跟踪买单时，才允许挂新买单
-            can_place_buy = (not open_buy_orders) and (not open_sell_orders) and (not has_pending_buys)
+            # 🔒 检查下单锁：防止并发下单
+            is_placing = bot_data.get('is_placing_order', False)
+            
+            # 只有在没有未完成买/卖单，且没有待跟踪买单，且没有正在下单时，才允许挂新买单
+            can_place_buy = (not open_buy_orders) and (not open_sell_orders) and (not has_pending_buys) and (not is_placing)
 
             if not can_place_buy:
                 skip_reasons = []
@@ -572,10 +578,15 @@ def trading_loop(username, symbol):
                     skip_reasons.append(f"{len(open_sell_orders)}笔未完成卖单")
                 if has_pending_buys:
                     skip_reasons.append(f"{len(bot_data.get('pending_buys', []))}笔待跟踪买单")
+                if is_placing:
+                    skip_reasons.append("正在下单中")
                 reason_text = "、".join(skip_reasons)
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ [SKIP] 存在{reason_text}，跳过本次买单挂单。")
             else:
                 try:
+                    # 🔒 设置下单锁
+                    bot_data['is_placing_order'] = True
+                    
                     buy_price_str = f"{target_price}"
                     print(f"[{datetime.now().isoformat()}] {log_prefix} ➡️ [EXECUTE] 尝试下新限价买单: 方向=BUY, 价格={buy_price_str}, 数量={config['quantity']}")
 
@@ -607,6 +618,9 @@ def trading_loop(username, symbol):
 
                 except Exception as e:
                     print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [FAILURE] 下单错误: {e}")
+                finally:
+                    # 🔒 释放下单锁
+                    bot_data['is_placing_order'] = False
 
             time.sleep(config.get('interval', 1))
 
