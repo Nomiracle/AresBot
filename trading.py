@@ -90,6 +90,10 @@ def trading_loop(username, symbol):
     
     # 🔒 下单锁：防止并发下单
     bot_data['is_placing_order'] = False
+    
+    # 🔒 已处理订单集合：用于去重检查（解决提前收到 filled 事件的问题）
+    # 使用独立集合而不是依赖 pending_buys，避免竞态条件
+    bot_data.setdefault('processed_filled_orders', set())
 
     while bot_data.get('running'):
         try:
@@ -154,12 +158,15 @@ def trading_loop(username, symbol):
                                 price_str = event.get('price') or '0'
                                 qty_str = event.get('quantity') or '0'
                                 
-                                # 🔒 去重检查：确保同一个买单只处理一次
-                                # 如果订单ID不在 pending_buys 中，说明已经处理过了，跳过
-                                is_pending = any(pb['order_id'] == order_id for pb in bot_data.get('pending_buys', []))
-                                if not is_pending:
+                                # 🔒 去重检查：使用独立的已处理订单集合
+                                # 不依赖 pending_buys 状态，避免提前到达事件被误判
+                                if order_id in bot_data.get('processed_filled_orders', set()):
                                     print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ [去重] 买单 {order_id} 已处理过，跳过重复事件")
                                     return
+                                
+                                # 立即标记为已处理（提前标记，防止并发重复处理）
+                                bot_data.setdefault('processed_filled_orders', set()).add(order_id)
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} 🔖 [标记] 买单 {order_id} 标记为已处理")
                                 
                                 # 买单成交 -> 自动挂卖单（按精度对齐）
                                 try:
@@ -172,7 +179,12 @@ def trading_loop(username, symbol):
                                         if pb['order_id'] == order_id:
                                             buy_price = pb.get('price')
                                             break
+                                
+                                # 如果仍然无法获取价格，可能是提前收到事件
                                 if not buy_price:
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [价格缺失] 买单 {order_id} 无法获取价格（可能提前收到事件），从已处理集合移除以便重试")
+                                    # 从已处理集合中移除，允许后续重试
+                                    bot_data.get('processed_filled_orders', set()).discard(order_id)
                                     return
 
                                 # 计算卖出价格（带手续费保护）
@@ -209,8 +221,11 @@ def trading_loop(username, symbol):
                                             print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [卖单数量计算] 从 pending_buys 获取数量: {executed_qty}")
                                             break
                                 
+                                # 如果仍然无法获取数量，可能是提前收到事件
                                 if executed_qty is None:
-                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [卖单数量计算] 无法获取成交数量，跳过挂卖单")
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [数量缺失] 买单 {order_id} 无法获取成交数量（可能提前收到事件），从已处理集合移除以便重试")
+                                    # 从已处理集合中移除，允许后续重试
+                                    bot_data.get('processed_filled_orders', set()).discard(order_id)
                                     return
                                 
                                 # 考虑手续费扣除（假设手续费为 0.1%，实际到账 99.9%）
@@ -231,6 +246,8 @@ def trading_loop(username, symbol):
                                 # 检查卖单数量是否有效
                                 if aligned_sell_qty <= 0:
                                     print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [卖单数量计算] 对齐后数量为 0，无法挂卖单")
+                                    # 数量无效，从已处理集合中移除，允许后续重试
+                                    bot_data.get('processed_filled_orders', set()).discard(order_id)
                                     return
 
                                 sell_success = False
@@ -255,8 +272,12 @@ def trading_loop(username, symbol):
                                 # 只有卖单成功才从 pending_buys 移除
                                 if sell_success:
                                     bot_data['pending_buys'] = [pb for pb in bot_data.get('pending_buys', []) if pb['order_id'] != order_id]
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🗑️ [清理] 买单 {order_id} 已从 pending_buys 移除，处理完成")
                                 else:
                                     print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 买单 {order_id} 已成交但卖单下单失败，保留在 pending_buys 中等待重试")
+                                    # 卖单失败时，从已处理集合中移除，允许重试
+                                    bot_data.get('processed_filled_orders', set()).discard(order_id)
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 [重试] 买单 {order_id} 已从已处理集合移除，允许下次重试")
 
                         
                         else:
