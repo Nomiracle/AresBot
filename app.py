@@ -6,6 +6,10 @@ from config import get_flask_secret_key,PORT
 from database import init_db
 from migrate_db import migrate_database
 from routes import register_routes
+from simple_logger import setup_logging
+
+# 设置日志重定向（所有 print 输出会同时写入文件和控制台）
+setup_logging(log_dir='logs', prefix='aresbot')
 
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
 logging.getLogger('urllib3').setLevel(logging.WARNING)
