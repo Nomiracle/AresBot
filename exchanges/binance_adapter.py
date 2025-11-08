@@ -28,6 +28,8 @@ class BinanceAdapter(BaseExchange):
         self._ws_manager = None
         self._on_price_callback = None
         self._on_order_callback = None
+        self._current_symbol = None  # 记录当前监听的交易对
+        self._reconnect_count = 0  # 重连次数
     
     def ping(self) -> bool:
         """测试连接"""
@@ -275,14 +277,20 @@ class BinanceAdapter(BaseExchange):
                     self._ws_manager = ThreadedWebsocketManager()
                 self._ws_manager.start()
             
-            # 定义内部回调函数
+            # 保存当前交易对
+            self._current_symbol = symbol
+            
+            # 定义内部回调函数（带错误处理和重连）
             def _on_ticker_msg(msg):
                 try:
                     price = self.parse_ticker_message(msg)
                     if price is not None and self._on_price_callback:
                         self._on_price_callback(price)
+                        self._reconnect_count = 0  # 重置重连计数
                 except Exception as e:
+                    error_str = str(e)
                     print(f"[{datetime.now().isoformat()}] ❌ [Binance] 价格回调错误: {e}")
+                    self._reconnect_price_monitor()
             
             # 启动行情流
             self._ws_manager.start_symbol_ticker_socket(callback=_on_ticker_msg, symbol=symbol)
@@ -318,11 +326,14 @@ class BinanceAdapter(BaseExchange):
                 self._ws_manager = ThreadedWebsocketManager(api_key=self.api_key, api_secret=self.api_secret)
                 self._ws_manager.start()
             
-            # 定义内部回调函数（带交易对过滤）
+            # 保存当前交易对
+            self._current_symbol = symbol
+            
+            # 定义内部回调函数（带交易对过滤和错误处理）
             def _on_user_msg(msg):
                 try:
                     # 🔒 关键修复：过滤交易对
-                    msg_symbol = msg.get('s')  # 币安用户数据流中交易对字段为 's'
+                    msg_symbol = msg.get('s') if isinstance(msg, dict) else None
                     if msg_symbol and msg_symbol != symbol:
                         # 交易对不匹配，丢弃此消息
                         print(f"[{datetime.now().isoformat()}] 🔇 [Binance] 丢弃不匹配交易对的订单消息: {msg_symbol} (期望: {symbol})")
@@ -331,8 +342,11 @@ class BinanceAdapter(BaseExchange):
                     event = self.parse_user_message(msg)
                     if event and self._on_order_callback:
                         self._on_order_callback(event)
+                        self._reconnect_count = 0  # 重置重连计数
                 except Exception as e:
-                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 订单回调错误: {e}")
+                    error_str = str(e)
+                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 订单回调错误: {e}")   
+                    self._reconnect_order_monitor()
             
             # 启动用户数据流
             try:
@@ -367,4 +381,80 @@ class BinanceAdapter(BaseExchange):
     def check_pending_orders(self, pending_orders: List[Dict]):
         """检查待处理订单（Binance 使用 WebSocket，此方法返回空列表）"""
         # Binance 通过 WebSocket 实时推送订单更新，不需要轮询
+        return []
+    
+    def _reconnect_price_monitor(self):
+        """重连价格监听"""
+        import time
+        
+        # 限制重连次数
+        if self._reconnect_count >= 5:
+            print(f"[{datetime.now().isoformat()}] ❌ [Binance] 价格监听重连次数过多，停止重连")
+            self._price_monitor_active = False
+            return
+        
+        self._reconnect_count += 1
+        print(f"[{datetime.now().isoformat()}] 🔄 [Binance] 开始重连价格监听 (第 {self._reconnect_count} 次)...")
+        
+        try:
+            # 关闭旧的 WebSocket 管理器
+            if self._ws_manager:
+                try:
+                    self._ws_manager.stop()
+                except:
+                    pass
+                self._ws_manager = None
+            
+            # 等待一段时间后重连
+            time.sleep(2)
+            
+            # 重新启动价格监听
+            self._price_monitor_active = False  # 重置状态
+            if self._current_symbol and self._on_price_callback:
+                success = self.start_price_monitor(self._current_symbol, self._on_price_callback)
+                if success:
+                    print(f"[{datetime.now().isoformat()}] ✅ [Binance] 价格监听重连成功")
+                else:
+                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 价格监听重连失败")
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ [Binance] 价格监听重连错误: {e}")
+    
+    def _reconnect_order_monitor(self):
+        """重连订单监听"""
+        import time
+        
+        # 限制重连次数
+        if self._reconnect_count >= 5:
+            print(f"[{datetime.now().isoformat()}] ❌ [Binance] 订单监听重连次数过多，停止重连")
+            self._order_monitor_active = False
+            return
+        
+        self._reconnect_count += 1
+        print(f"[{datetime.now().isoformat()}] 🔄 [Binance] 开始重连订单监听 (第 {self._reconnect_count} 次)...")
+        
+        try:
+            # 关闭旧的 WebSocket 管理器
+            if self._ws_manager:
+                try:
+                    self._ws_manager.stop()
+                except:
+                    pass
+                self._ws_manager = None
+            
+            # 等待一段时间后重连
+            time.sleep(2)
+            
+            # 重新启动订单监听
+            self._order_monitor_active = False  # 重置状态
+            if self._current_symbol and self._on_order_callback:
+                success = self.start_order_monitor(self._current_symbol, self._on_order_callback)
+                if success:
+                    print(f"[{datetime.now().isoformat()}] ✅ [Binance] 订单监听重连成功")
+                    # 同时重启价格监听（如果之前启动过）
+                    if self._on_price_callback:
+                        self.start_price_monitor(self._current_symbol, self._on_price_callback)
+                else:
+                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 订单监听重连失败")
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ [Binance] 订单监听重连错误: {e}")
 
