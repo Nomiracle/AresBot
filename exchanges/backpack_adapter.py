@@ -54,11 +54,12 @@ class BackpackAdapter(BaseExchange):
         try:
             # 初始化账户客户端（私有 API）
             # secret_key 必须是 base64 编码的字符串
+            # window: 请求有效时间窗口（毫秒），增加到 30 秒以避免时间同步问题
             self.account = Account(
                 public_key=api_key,
                 secret_key=api_secret,
                 debug=False,
-                window=5000
+                window=30000  # 30 秒时间窗口（原 5 秒可能因时间不同步导致过期）
             )
             
             # 初始化公共客户端（公共 API）
