@@ -288,7 +288,6 @@ class BinanceAdapter(BaseExchange):
                         self._on_price_callback(price)
                         self._reconnect_count = 0  # 重置重连计数
                 except Exception as e:
-                    error_str = str(e)
                     print(f"[{datetime.now().isoformat()}] ❌ [Binance] 价格回调错误: {e}")
                     self._reconnect_price_monitor()
             
@@ -297,7 +296,6 @@ class BinanceAdapter(BaseExchange):
             self._price_monitor_active = True
             print(f"[{datetime.now().isoformat()}] ✅ [Binance] 价格监听已启动 ({symbol})")
             return True
-            
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ [Binance] 启动价格监听失败: {e}")
             return False
@@ -343,9 +341,8 @@ class BinanceAdapter(BaseExchange):
                     if event and self._on_order_callback:
                         self._on_order_callback(event)
                         self._reconnect_count = 0  # 重置重连计数
-                except Exception as e:
-                    error_str = str(e)
-                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 订单回调错误: {e}")   
+                except Exception as e:  
+                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 订单回调错误: {e}") 
                     self._reconnect_order_monitor()
             
             # 启动用户数据流
