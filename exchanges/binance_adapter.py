@@ -212,8 +212,13 @@ class BinanceAdapter(BaseExchange):
                 # 🔍 调试日志：记录所有订单事件
                 print(f"[{datetime.now().isoformat()}] 📨 [Binance] 收到订单事件: ID={order_id}, 状态={order_status}, 方向={msg.get('S')}")
                 
-                # 只有完全成交的订单才触发 order_filled 事件
-                event_type = 'order_filled' if order_status == 'FILLED' else 'order_update'
+                # 根据订单状态确定事件类型
+                if order_status == 'FILLED':
+                    event_type = 'order_filled'
+                elif order_status == 'CANCELED':
+                    event_type = 'order_cancelled'
+                else:
+                    event_type = 'order_update'
                 
                 return {
                     'event_type': event_type,
