@@ -36,7 +36,7 @@ class BaseExchange(ABC):
     
     @abstractmethod
     def get_order(self, symbol: str, order_id: str) -> Dict:
-        """查询订单状态（内部使用）"""
+        """查询订单状态"""
         pass
     
     @abstractmethod

@@ -329,21 +329,34 @@ class BinanceAdapter(BaseExchange):
             
             # 定义内部回调函数（带交易对过滤和错误处理）
             def _on_user_msg(msg):
+                
                 try:
                     # 🔒 关键修复：过滤交易对
                     msg_symbol = msg.get('s') if isinstance(msg, dict) else None
                     if msg_symbol and msg_symbol != symbol:
                         # 交易对不匹配，丢弃此消息
-                        print(f"[{datetime.now().isoformat()}] 🔇 [Binance] 丢弃不匹配交易对的订单消息: {msg_symbol} (期望: {symbol})")
+                        # print(f"[{datetime.now().isoformat()}] 🔇 [Binance] 丢弃不匹配交易对的订单消息: {msg_symbol} (期望: {symbol})")
                         return
-                    
+                    print(f"[{datetime.now().isoformat()}] [Binance] WebSocket _on_user_msg: {msg}")
                     event = self.parse_user_message(msg)
-                    if event and self._on_order_callback:
-                        self._on_order_callback(event)
-                        self._reconnect_count = 0  # 重置重连计数
-                except Exception as e:  
-                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 订单回调错误: {e}") 
-                    self._reconnect_order_monitor()
+                    if event:
+                        # 处理错误事件
+                        if event.get('event_type') == 'error':
+                            print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] WebSocket 错误: {event}，准备重连...")
+                            self._reconnect_order_monitor()
+                            return
+                        
+                        # 处理正常订单事件
+                        if self._on_order_callback:
+                            self._on_order_callback(event)
+                            self._reconnect_count = 0  # 重置重连计数
+                except Exception as e:
+                    error_str = str(e)
+                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 订单回调错误: {e}")
+                    # 只有 WebSocket 连接错误才重连，业务逻辑错误不重连
+                    if 'websocket' in error_str.lower() or 'closed' in error_str.lower() or 'connection' in error_str.lower():
+                        print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 检测到连接错误，准备重连...")
+                        self._reconnect_order_monitor()
             
             # 启动用户数据流
             try:
@@ -447,6 +460,15 @@ class BinanceAdapter(BaseExchange):
                 success = self.start_order_monitor(self._current_symbol, self._on_order_callback)
                 if success:
                     print(f"[{datetime.now().isoformat()}] ✅ [Binance] 订单监听重连成功")
+                    
+                    # ⚠️ 重要：WebSocket 重连后不会重发历史消息
+                    # 发送一个特殊事件通知上层业务需要同步状态
+                    if self._on_order_callback:
+                        self._on_order_callback({
+                            'event_type': 'reconnected',
+                            'message': 'WebSocket 已重连，建议查询未完成订单以同步状态'
+                        })
+                    
                     # 同时重启价格监听（如果之前启动过）
                     if self._on_price_callback:
                         self.start_price_monitor(self._current_symbol, self._on_price_callback)

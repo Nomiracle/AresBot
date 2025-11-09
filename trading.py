@@ -140,6 +140,51 @@ def trading_loop(username, symbol):
                 # 订单更新回调
                 def _on_order_update(event: dict):
                     try:
+                        # 处理重连事件
+                        if event.get('event_type') == 'reconnected':
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 [重连通知] {event.get('message')}")
+                            # 遍历 pending_buys，检查订单状态，补齐断连期间的成交事件
+                            try:
+                                pending_buys = bot_data.get('pending_buys', [])
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} 📋 [状态同步] 检查 {len(pending_buys)} 个待处理买单...")
+                                
+                                for pending_buy in pending_buys[:]:  # 使用切片复制，避免遍历时修改列表
+                                    order_id = pending_buy.get('order_id')
+                                    try:
+                                        # 查询订单状态
+                                        order_info = exchange.get_order(config['symbol'], order_id)
+                                        order_status = order_info.get('status')
+                                        
+                                        print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 [状态同步] 订单 {order_id} 状态: {order_status}")
+                                        
+                                        # 如果订单已完全成交，构造 order_filled 事件
+                                        if order_status == 'FILLED':
+                                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [状态同步] 发现已成交订单 {order_id}，构造成交事件")
+                                            
+                                            # 构造 order_filled 事件
+                                            filled_event = {
+                                                'event_type': 'order_filled',
+                                                'order_id': str(order_info.get('orderId')),
+                                                'symbol': order_info.get('symbol'),
+                                                'side': order_info.get('side'),
+                                                'status': order_status,
+                                                'price': order_info.get('price'),
+                                                'quantity': order_info.get('origQty'),
+                                                'executedQty': order_info.get('executedQty'),
+                                                'lastExecutedQty': order_info.get('executedQty')
+                                            }
+                                            
+                                            # 递归调用自己处理成交事件
+                                            _on_order_update(filled_event)
+                                            
+                                    except Exception as e:
+                                        print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [状态同步] 查询订单 {order_id} 失败: {e}")
+                                
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [状态同步] 完成")
+                            except Exception as e:
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [状态同步失败] {e}")
+                            return
+                        
                         # 处理错误
                         if event.get('event_type') == 'error':
                             print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [订单监听错误] {event.get('error_message')}")
