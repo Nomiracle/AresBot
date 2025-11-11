@@ -57,6 +57,9 @@ def register_routes(app):
                     c.execute("INSERT OR REPLACE INTO login_attempts(username, attempts, blocked_until) VALUES(?, 0, NULL)", (username,))
                 conn.commit()
                 conn.close()
+                # 防止Session固定攻击：清除旧session并重新生成
+                session.clear()
+                session.modified = True
                 session['user'] = username
                 return redirect(url_for('index'))
 
@@ -140,6 +143,9 @@ def register_routes(app):
                 save_user_config(username, default_config, 'default')
                 print(f"[{datetime.now().isoformat()}] ✅ 新用户 {username} 注册成功，已创建默认配置")
 
+                # 防止Session固定攻击：清除旧session并重新生成
+                session.clear()
+                session.modified = True
                 session['user'] = username
                 return redirect(url_for('index'))
             except Exception as e:
@@ -387,7 +393,8 @@ def register_routes(app):
                     conn.close()
                     message = '✅ 密码修改成功！请使用新密码重新登录。'
                     msg_type = 'success'
-                    session.pop('user', None)
+                    # 防止Session固定攻击：清除所有session数据
+                    session.clear()
                     return render_template('change_password.html', username=username, message=message, type=msg_type)
                 else:
                     conn.close()

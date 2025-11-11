@@ -18,6 +18,12 @@ logging.getLogger('binance').setLevel(logging.WARNING)
 app = Flask(__name__)
 app.secret_key = get_flask_secret_key()
 
+# Session安全配置
+app.config['SESSION_COOKIE_HTTPONLY'] = True  # 防止JavaScript访问cookie
+app.config['SESSION_COOKIE_SECURE'] = False   # 生产环境应设为True(需要HTTPS)
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' # 防止CSRF攻击
+app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # session过期时间(秒)
+
 register_routes(app)
 
 if __name__ == '__main__':
