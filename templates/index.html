@@ -744,7 +744,7 @@
           loadBots();
           // 启动自动刷新
           if (botsRefreshInterval) clearInterval(botsRefreshInterval);
-          botsRefreshInterval = setInterval(loadBots, 2000);
+          botsRefreshInterval = setInterval(loadBots, 1000);
         } else {
           // 切换到其他标签时停止自动刷新
           if (botsRefreshInterval) {
@@ -1302,8 +1302,14 @@
       // 机器人管理
       let botsCache = {};
       let botsRefreshInterval = null;
+      let isEditingBot = false;  // 标记是否正在编辑机器人
 
       function loadBots() {
+        // 如果正在编辑，跳过刷新
+        if (isEditingBot) {
+          return;
+        }
+        
         fetch("/api/bots")
           .then((r) => r.json())
           .then((data) => {
@@ -1426,6 +1432,10 @@
       function editBot(symbol) {
         const bot = botsCache[symbol];
         if (!bot) return;
+        
+        // 进入编辑模式
+        isEditingBot = true;
+        
         const div = document.getElementById(`bot-${symbol}`);
         const cfg = bot.config || {};
         div.innerHTML = `
@@ -1445,7 +1455,7 @@
           </div>
           <div class="pair-actions">
             <button class="btn btn-success btn-sm" onclick="saveBot('${symbol}')">💾 保存</button>
-            <button class="btn btn-secondary btn-sm" onclick="loadBots()">❌ 取消</button>
+            <button class="btn btn-secondary btn-sm" onclick="cancelEditBot()">❌ 取消</button>
           </div>
         `;
       }
@@ -1467,8 +1477,18 @@
           .then(r => r.json())
           .then(data => {
             showResponseToast(data);
-            if (data.success) loadBots();
+            if (data.success) {
+              // 退出编辑模式
+              isEditingBot = false;
+              loadBots();
+            }
           });
+      }
+      
+      function cancelEditBot() {
+        // 退出编辑模式
+        isEditingBot = false;
+        loadBots();
       }
 
       function deleteBotSymbol(symbol) {
