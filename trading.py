@@ -360,8 +360,8 @@ def trading_loop(username, symbol):
             except Exception as e:
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 查询订单失败: {e}")
 
-            # 下新单
-            if not open_buy_orders and not bot_data.get('is_placing_order'):
+            # 下新单（要求没有未完成订单、没有正在下单）
+            if not open_orders and not bot_data.get('is_placing_order'):
                 is_buy_enabled = (config.get('simulate_trading', 1) != 1)
                 if is_buy_enabled:
                     bot_data['is_placing_order'] = True
