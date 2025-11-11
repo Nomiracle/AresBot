@@ -4,6 +4,91 @@ from datetime import datetime
 from werkzeug.security import generate_password_hash
 from config import DB_FILE
 from crypto_utils import encrypt_data, decrypt_data
+from contextlib import contextmanager
+import queue
+import threading
+
+
+class SQLiteConnectionPool:
+    """SQLite 连接池"""
+    def __init__(self, database, max_connections=10, timeout=30):
+        self.database = database
+        self.max_connections = max_connections
+        self.timeout = timeout
+        self._pool = queue.Queue(maxsize=max_connections)
+        self._lock = threading.Lock()
+        self._created_connections = 0
+        
+    def _create_connection(self):
+        """创建新的数据库连接"""
+        conn = sqlite3.connect(self.database, check_same_thread=False)
+        # 启用外键约束
+        conn.execute("PRAGMA foreign_keys = ON")
+        # 设置行工厂，使查询结果可以像字典一样访问
+        conn.row_factory = sqlite3.Row
+        return conn
+    
+    def get_connection(self):
+        """从连接池获取连接"""
+        try:
+            # 尝试从池中获取现有连接
+            conn = self._pool.get(block=False)
+            return conn
+        except queue.Empty:
+            # 池中没有可用连接，检查是否可以创建新连接
+            with self._lock:
+                if self._created_connections < self.max_connections:
+                    self._created_connections += 1
+                    return self._create_connection()
+            
+            # 已达到最大连接数，等待可用连接
+            try:
+                conn = self._pool.get(timeout=self.timeout)
+                return conn
+            except queue.Empty:
+                raise Exception(f"无法在 {self.timeout} 秒内获取数据库连接")
+    
+    def return_connection(self, conn):
+        """将连接归还到连接池"""
+        try:
+            # 回滚任何未提交的事务
+            conn.rollback()
+            self._pool.put(conn, block=False)
+        except queue.Full:
+            # 池已满，关闭连接
+            conn.close()
+            with self._lock:
+                self._created_connections -= 1
+    
+    def close_all(self):
+        """关闭所有连接"""
+        while not self._pool.empty():
+            try:
+                conn = self._pool.get(block=False)
+                conn.close()
+            except queue.Empty:
+                break
+        with self._lock:
+            self._created_connections = 0
+    
+    @contextmanager
+    def get_cursor(self):
+        """上下文管理器：自动获取和归还连接"""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            yield conn, cursor
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            self.return_connection(conn)
+
+
+# 创建全局连接池实例
+db_pool = SQLiteConnectionPool(DB_FILE, max_connections=10)
+
 
 def init_db(recreate=False):
     if recreate and os.path.exists(DB_FILE):
@@ -148,12 +233,10 @@ def init_db(recreate=False):
 
 
 def get_user_id(username):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT id FROM users WHERE username=?", (username,))
-    result = c.fetchone()
-    conn.close()
-    return result[0] if result else None
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("SELECT id FROM users WHERE username=?", (username,))
+        result = c.fetchone()
+        return result[0] if result else None
 
 
 def save_user_config(username, config, config_name='default'):
@@ -161,42 +244,37 @@ def save_user_config(username, config, config_name='default'):
     if not user_id:
         return False
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-
     exchange = config.get('exchange', 'binance')
     credential_id = config.get('credential_id')
     
     if not credential_id:
-        conn.close()
         print(f"[{datetime.now().isoformat()}] ❌ 保存配置失败: 缺少credential_id")
         return False
 
-    c.execute("SELECT id FROM user_configs WHERE user_id=? AND config_name=?", (user_id, config_name))
-    exists = c.fetchone()
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("SELECT id FROM user_configs WHERE user_id=? AND config_name=?", (user_id, config_name))
+        exists = c.fetchone()
 
-    if exists:
-        c.execute("""UPDATE user_configs
-                     SET exchange=?, credential_id=?, symbol=?, offset_percent=?, sell_offset_percent=?,
-                         quantity=?, interval=?, testnet=?, simulate_trading=?, updated_at=?
-                     WHERE user_id=? AND config_name=?""",
-                  (exchange, credential_id, config['symbol'],
-                   config['offset_percent'], config.get('sell_offset_percent', 0.5),
-                   config['quantity'], config['interval'],
-                   config.get('testnet', 1), config.get('simulate_trading', 1),
-                   datetime.now().isoformat(), user_id, config_name))
-    else:
-        c.execute("""INSERT INTO user_configs
-                     (user_id, config_name, exchange, credential_id, symbol, offset_percent, sell_offset_percent, quantity, interval, testnet, simulate_trading, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                  (user_id, config_name, exchange, credential_id, config['symbol'],
-                   config['offset_percent'], config.get('sell_offset_percent', 0.5),
-                   config['quantity'], config['interval'],
-                   config.get('testnet', 1), config.get('simulate_trading', 1),
-                   datetime.now().isoformat()))
+        if exists:
+            c.execute("""UPDATE user_configs
+                         SET exchange=?, credential_id=?, symbol=?, offset_percent=?, sell_offset_percent=?,
+                             quantity=?, interval=?, testnet=?, simulate_trading=?, updated_at=?
+                         WHERE user_id=? AND config_name=?""",
+                      (exchange, credential_id, config['symbol'],
+                       config['offset_percent'], config.get('sell_offset_percent', 0.5),
+                       config['quantity'], config['interval'],
+                       config.get('testnet', 1), config.get('simulate_trading', 1),
+                       datetime.now().isoformat(), user_id, config_name))
+        else:
+            c.execute("""INSERT INTO user_configs
+                         (user_id, config_name, exchange, credential_id, symbol, offset_percent, sell_offset_percent, quantity, interval, testnet, simulate_trading, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                      (user_id, config_name, exchange, credential_id, config['symbol'],
+                       config['offset_percent'], config.get('sell_offset_percent', 0.5),
+                       config['quantity'], config['interval'],
+                       config.get('testnet', 1), config.get('simulate_trading', 1),
+                       datetime.now().isoformat()))
 
-    conn.commit()
-    conn.close()
     print(f"[{datetime.now().isoformat()}] ✅ 配置已保存到 DB (user={username}, config={config_name}, credential_id={credential_id})")
     return True
 
@@ -206,14 +284,12 @@ def load_user_config(username, config_name='default'):
     if not user_id:
         return None
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""SELECT config_name, exchange, credential_id, symbol, 
-                        offset_percent, sell_offset_percent, quantity, interval, 
-                        testnet, simulate_trading
-                 FROM user_configs WHERE user_id=? AND config_name=?""", (user_id, config_name))
-    result = c.fetchone()
-    conn.close()
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("""SELECT config_name, exchange, credential_id, symbol, 
+                            offset_percent, sell_offset_percent, quantity, interval, 
+                            testnet, simulate_trading
+                     FROM user_configs WHERE user_id=? AND config_name=?""", (user_id, config_name))
+        result = c.fetchone()
 
     if not result:
         return None
@@ -251,12 +327,10 @@ def get_user_config_list(username):
     if not user_id:
         return []
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""SELECT config_name, exchange, symbol, updated_at 
-                 FROM user_configs WHERE user_id=? ORDER BY updated_at DESC""", (user_id,))
-    configs = c.fetchall()
-    conn.close()
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("""SELECT config_name, exchange, symbol, updated_at 
+                     FROM user_configs WHERE user_id=? ORDER BY updated_at DESC""", (user_id,))
+        configs = c.fetchall()
 
     config_list = [
         {
@@ -300,12 +374,9 @@ def delete_user_config(username, config_name):
     if not user_id or config_name == 'default':
         return False  # 不允许删除 default 配置
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("DELETE FROM user_configs WHERE user_id=? AND config_name=?", (user_id, config_name))
-    deleted = c.rowcount > 0
-    conn.commit()
-    conn.close()
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("DELETE FROM user_configs WHERE user_id=? AND config_name=?", (user_id, config_name))
+        deleted = c.rowcount > 0
 
     if deleted:
         print(f"[{datetime.now().isoformat()}] ✅ 删除配置: {config_name} (user={username})")
@@ -317,12 +388,10 @@ def get_user_orders(username):
     if not user_id:
         return []
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""SELECT symbol, price, quantity, side, status, order_id, timestamp
-                 FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 100""", (user_id,))
-    orders = c.fetchall()
-    conn.close()
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("""SELECT symbol, price, quantity, side, status, order_id, timestamp
+                     FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 100""", (user_id,))
+        orders = c.fetchall()
 
     return [
         {
@@ -339,31 +408,23 @@ def get_user_orders(username):
 
 
 def insert_order(user_id, symbol, price, quantity, side, status, order_id, buy_price=None):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, buy_price, timestamp)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-              (user_id, symbol, price, quantity, side, status, order_id, buy_price, datetime.now().isoformat()))
-    conn.commit()
-    conn.close()
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, buy_price, timestamp)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (user_id, symbol, price, quantity, side, status, order_id, buy_price, datetime.now().isoformat()))
 
 
 def update_order_status(order_id, status):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""UPDATE orders SET status=? WHERE order_id=?""", (status, order_id))
-    conn.commit()
-    conn.close()
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("""UPDATE orders SET status=? WHERE order_id=?""", (status, order_id))
 
 
 def get_order_buy_price(order_id):
     """根据卖单 order_id 查询对应的买入价格"""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""SELECT buy_price FROM orders WHERE order_id=? AND side='SELL'""", (order_id,))
-    result = c.fetchone()
-    conn.close()
-    return float(result[0]) if result and result[0] else None
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("""SELECT buy_price FROM orders WHERE order_id=? AND side='SELL'""", (order_id,))
+        result = c.fetchone()
+        return float(result[0]) if result and result[0] else None
 
 
 # 新增：交易对管理功能
@@ -373,12 +434,10 @@ def get_user_trading_pairs(username):
     if not user_id:
         return []
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""SELECT id, symbol, display_name, exchanges, created_at
-                 FROM trading_pairs WHERE user_id=? ORDER BY id ASC""", (user_id,))
-    pairs = c.fetchall()
-    conn.close()
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("""SELECT id, symbol, display_name, exchanges, created_at
+                     FROM trading_pairs WHERE user_id=? ORDER BY id ASC""", (user_id,))
+        pairs = c.fetchall()
 
     return [
         {
@@ -398,19 +457,16 @@ def add_trading_pair(username, symbol, display_name):
     if not user_id:
         return False
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    try:
-        c.execute("""INSERT INTO trading_pairs (user_id, symbol, display_name, created_at)
-                     VALUES (?, ?, ?, ?)""",
-                  (user_id, symbol.upper(), display_name, datetime.now().isoformat()))
-        conn.commit()
-        conn.close()
-        print(f"[{datetime.now().isoformat()}] ✅ 添加交易对: {symbol} ({display_name})")
-        return True
-    except sqlite3.IntegrityError:
-        conn.close()
-        return False
+    with db_pool.get_cursor() as (conn, c):
+        try:
+            c.execute("""INSERT INTO trading_pairs (user_id, symbol, display_name, created_at)
+                         VALUES (?, ?, ?, ?)""",
+                      (user_id, symbol.upper(), display_name, datetime.now().isoformat()))
+            pair_id = c.lastrowid
+            print(f"[{datetime.now().isoformat()}] ✅ 添加交易对: {symbol}")
+            return pair_id
+        except sqlite3.IntegrityError:
+            return False
 
 
 def delete_trading_pair(username, pair_id):
@@ -419,12 +475,9 @@ def delete_trading_pair(username, pair_id):
     if not user_id:
         return False
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("DELETE FROM trading_pairs WHERE id=? AND user_id=?", (pair_id, user_id))
-    deleted = c.rowcount > 0
-    conn.commit()
-    conn.close()
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("DELETE FROM trading_pairs WHERE id=? AND user_id=?", (pair_id, user_id))
+        deleted = c.rowcount > 0
 
     if deleted:
         print(f"[{datetime.now().isoformat()}] ✅ 删除交易对 ID: {pair_id}")
@@ -437,27 +490,23 @@ def update_trading_pair(username, pair_id, symbol, display_name, exchanges=None)
     if not user_id:
         return False
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    try:
-        if exchanges is not None:
-            c.execute("""UPDATE trading_pairs SET symbol=?, display_name=?, exchanges=?
+    with db_pool.get_cursor() as (conn, c):
+        try:
+            if exchanges is not None:
+                c.execute("""UPDATE trading_pairs SET symbol=?, display_name=?, exchanges=?
                          WHERE id=? AND user_id=?""",
-                      (symbol.upper(), display_name, exchanges, pair_id, user_id))
-        else:
-            c.execute("""UPDATE trading_pairs SET symbol=?, display_name=?
+                          (symbol.upper(), display_name, exchanges, pair_id, user_id))
+            else:
+                c.execute("""UPDATE trading_pairs SET symbol=?, display_name=?
                          WHERE id=? AND user_id=?""",
-                      (symbol.upper(), display_name, pair_id, user_id))
-        updated = c.rowcount > 0
-        conn.commit()
-        conn.close()
-        
-        if updated:
-            print(f"[{datetime.now().isoformat()}] ✅ 更新交易对 ID {pair_id}: {symbol} ({display_name})")
-        return updated
-    except sqlite3.IntegrityError:
-        conn.close()
-        return False
+                          (symbol.upper(), display_name, pair_id, user_id))
+            updated = c.rowcount > 0
+            
+            if updated:
+                print(f"[{datetime.now().isoformat()}] ✅ 更新交易对 ID {pair_id}: {symbol} ({display_name})")
+            return updated
+        except sqlite3.IntegrityError:
+            return False
 
 
 # API凭证管理功能
@@ -467,12 +516,10 @@ def get_user_credentials(username):
     if not user_id:
         return []
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""SELECT id, alias, exchange, api_key, created_at, updated_at
-                 FROM api_credentials WHERE user_id=? ORDER BY created_at DESC""", (user_id,))
-    creds = c.fetchall()
-    conn.close()
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("""SELECT id, alias, exchange, api_key, created_at, updated_at
+                     FROM api_credentials WHERE user_id=? ORDER BY created_at DESC""", (user_id,))
+        creds = c.fetchall()
 
     return [
         {
@@ -493,24 +540,20 @@ def add_credential(username, alias, exchange, api_key, api_secret):
     if not user_id:
         return False
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    try:
-        encrypted_api_key = encrypt_data(api_key)
-        encrypted_api_secret = encrypt_data(api_secret)
-        now = datetime.now().isoformat()
-        
-        c.execute("""INSERT INTO api_credentials (user_id, alias, exchange, api_key, api_secret, created_at, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                  (user_id, alias, exchange, encrypted_api_key, encrypted_api_secret, now, now))
-        conn.commit()
-        credential_id = c.lastrowid
-        conn.close()
-        print(f"[{datetime.now().isoformat()}] ✅ 添加API凭证: {alias} ({exchange})")
-        return credential_id
-    except sqlite3.IntegrityError:
-        conn.close()
-        return False
+    with db_pool.get_cursor() as (conn, c):
+        try:
+            encrypted_api_key = encrypt_data(api_key)
+            encrypted_api_secret = encrypt_data(api_secret)
+            now = datetime.now().isoformat()
+            
+            c.execute("""INSERT INTO api_credentials (user_id, alias, exchange, api_key, api_secret, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                      (user_id, alias, exchange, encrypted_api_key, encrypted_api_secret, now, now))
+            credential_id = c.lastrowid
+            print(f"[{datetime.now().isoformat()}] ✅ 添加API凭证: {alias} ({exchange})")
+            return credential_id
+        except sqlite3.IntegrityError:
+            return False
 
 
 def delete_credential(username, credential_id):
@@ -519,20 +562,16 @@ def delete_credential(username, credential_id):
     if not user_id:
         return False
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    
-    # 检查是否有配置在使用此凭证
-    c.execute("SELECT COUNT(*) FROM user_configs WHERE user_id=? AND credential_id=?", (user_id, credential_id))
-    count = c.fetchone()[0]
-    if count > 0:
-        conn.close()
-        return {'success': False, 'message': f'该凭证正在被 {count} 个配置使用,无法删除'}
-    
-    c.execute("DELETE FROM api_credentials WHERE id=? AND user_id=?", (credential_id, user_id))
-    deleted = c.rowcount > 0
-    conn.commit()
-    conn.close()
+    with db_pool.get_cursor() as (conn, c):
+        # 检查是否有配置在使用此凭证
+        c.execute("SELECT COUNT(*) FROM user_configs WHERE credential_id=?", (credential_id,))
+        count = c.fetchone()[0]
+        if count > 0:
+            print(f"[{datetime.now().isoformat()}] ❌ 无法删除凭证 ID {credential_id}: 有 {count} 个配置正在使用")
+            return False
+        
+        c.execute("DELETE FROM api_credentials WHERE id=? AND user_id=?", (credential_id, user_id))
+        deleted = c.rowcount > 0
 
     if deleted:
         print(f"[{datetime.now().isoformat()}] ✅ 删除API凭证 ID: {credential_id}")
@@ -546,44 +585,38 @@ def update_credential(username, credential_id, alias, api_key=None, api_secret=N
     if not user_id:
         return False
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    try:
-        now = datetime.now().isoformat()
-        
-        if api_key and api_secret:
-            # 更新完整信息
-            encrypted_api_key = encrypt_data(api_key)
-            encrypted_api_secret = encrypt_data(api_secret)
-            c.execute("""UPDATE api_credentials SET alias=?, api_key=?, api_secret=?, updated_at=?
+    with db_pool.get_cursor() as (conn, c):
+        try:
+            now = datetime.now().isoformat()
+            
+            if api_key and api_secret:
+                # 更新完整信息
+                encrypted_api_key = encrypt_data(api_key)
+                encrypted_api_secret = encrypt_data(api_secret)
+                c.execute("""UPDATE api_credentials SET alias=?, api_key=?, api_secret=?, updated_at=?
                          WHERE id=? AND user_id=?""",
-                      (alias, encrypted_api_key, encrypted_api_secret, now, credential_id, user_id))
-        else:
-            # 只更新别名
-            c.execute("""UPDATE api_credentials SET alias=?, updated_at=?
+                          (alias, encrypted_api_key, encrypted_api_secret, now, credential_id, user_id))
+            else:
+                # 只更新别名
+                c.execute("""UPDATE api_credentials SET alias=?, updated_at=?
                          WHERE id=? AND user_id=?""",
-                      (alias, now, credential_id, user_id))
+                          (alias, now, credential_id, user_id))
         
-        updated = c.rowcount > 0
-        conn.commit()
-        conn.close()
-        
-        if updated:
-            print(f"[{datetime.now().isoformat()}] ✅ 更新API凭证 ID {credential_id}: {alias}")
-        return updated
-    except sqlite3.IntegrityError:
-        conn.close()
-        return False
+            updated = c.rowcount > 0
+            
+            if updated:
+                print(f"[{datetime.now().isoformat()}] ✅ 更新API凭证 ID {credential_id}: {alias}")
+            return updated
+        except sqlite3.IntegrityError:
+            return False
 
 
 def get_credential_by_id(user_id, credential_id):
     """根据ID获取凭证(包含解密后的key和secret)"""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""SELECT alias, exchange, api_key, api_secret
-                 FROM api_credentials WHERE id=? AND user_id=?""", (credential_id, user_id))
-    result = c.fetchone()
-    conn.close()
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("""SELECT alias, exchange, api_key, api_secret
+                     FROM api_credentials WHERE id=? AND user_id=?""", (credential_id, user_id))
+        result = c.fetchone()
 
     if not result:
         return None
