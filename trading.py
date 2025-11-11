@@ -502,25 +502,27 @@ def trading_loop(username, symbol):
                                         # 调试：打印改价后的 pending_buys
                                         print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 [DEBUG] 改价后 pending_buys: {[p['order_id'] for p in bot_data.get('pending_buys', [])]}")
                                         
-                                        # 更新数据库：标记旧订单为已替换，插入新订单
-                                        update_order_status(str(order['orderId']), 'REPLACED')
-                                        insert_order(user_id, config['symbol'], buy_price_str, str(aligned_quantity),
-                                                    'BUY', 'PLACED', new_order_id)
+                                        # 🔧 优化：改价不写数据库，只在成交时记录
+                                        # update_order_status(str(order['orderId']), 'REPLACED')
+                                        print(f"[{datetime.now().isoformat()}] {log_prefix} 💾 [DB优化] 买单改价不记录数据库，仅内存更新")
                                     else:
                                         # 无法获取新订单ID，从pending_buys中移除以避免永久阻塞
                                         print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ [REPRICE] 订单 {order['orderId']} 价格更新为 {buy_price_str}，但未获取到新订单ID，从pending_buys中移除")
                                         bot_data['pending_buys'] = [p for p in bot_data.get('pending_buys', []) if p['order_id'] != str(order['orderId'])]
-                                        update_order_status(str(order['orderId']), 'CANCELLED')
+                                        # 🔧 优化：改价失败不写数据库
+                                        # update_order_status(str(order['orderId']), 'CANCELLED')
                                 except Exception as e:
                                     print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [REPRICE ERR] 订单 {order['orderId']} 替换价格错误: {e}")
                                     # 替换失败，从pending_buys中移除以避免永久阻塞
                                     bot_data['pending_buys'] = [p for p in bot_data.get('pending_buys', []) if p['order_id'] != str(order['orderId'])]
-                                    update_order_status(str(order['orderId']), 'FAILED')
+                                    # 🔧 优化：改价失败不写数据库
+                                    # update_order_status(str(order['orderId']), 'FAILED')
                             except Exception as e:
                                 print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [REPRICE ERR] 订单 {order['orderId']} 外层错误: {e}")
                                 # 外层错误也需要从pending_buys中移除以避免永久阻塞
                                 bot_data['pending_buys'] = [p for p in bot_data.get('pending_buys', []) if p['order_id'] != str(order['orderId'])]
-                                update_order_status(str(order['orderId']), 'FAILED')
+                                # 🔧 优化：改价失败不写数据库
+                                # update_order_status(str(order['orderId']), 'FAILED')
 
                     if open_sell_orders:
                         sell_ids = ', '.join([str(o['orderId']) for o in open_sell_orders])
@@ -591,11 +593,12 @@ def trading_loop(username, symbol):
                                     
                                     print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [SELL REPRICE] 卖单 {sell_order_id} 价格已从 {current_sell_price} 更新为 {target_sell_price}，新订单ID={new_order_id}")
                                     
-                                    # 更新数据库
-                                    if new_order_id != sell_order_id:
-                                        update_order_status(sell_order_id, 'REPLACED')
-                                        insert_order(user_id, config['symbol'], f"{target_sell_price}", str(aligned_sell_qty),
-                                                    'SELL', 'PLACED', new_order_id, buy_price=str(buy_price))
+                                    # 🔧 优化：卖单改价不写数据库，只在成交时记录
+                                    # if new_order_id != sell_order_id:
+                                    #     update_order_status(sell_order_id, 'REPLACED')
+                                    #     insert_order(user_id, config['symbol'], f"{target_sell_price}", str(aligned_sell_qty),
+                                    #                 'SELL', 'PLACED', new_order_id, buy_price=str(buy_price))
+                                    print(f"[{datetime.now().isoformat()}] {log_prefix} 💾 [DB优化] 卖单改价不记录数据库，仅内存更新")
                                 except Exception as e:
                                     print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ [SELL REPRICE ERR] 修改卖单 {sell_order_id} 价格失败: {e}")
                             
@@ -666,10 +669,12 @@ def trading_loop(username, symbol):
                         # 兼容不同交易所：Binance用'orderId'，Backpack用'id'
                         real_order_id = str(order.get('orderId') or order.get('id'))
 
-                        insert_order(user_id, config['symbol'], buy_price_str, str(config['quantity']),
-                                    'BUY', 'PLACED', real_order_id)
+                        # 🔧 优化：新建订单不写数据库，只在成交时记录
+                        # insert_order(user_id, config['symbol'], buy_price_str, str(config['quantity']),
+                        #             'BUY', 'PLACED', real_order_id)
 
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [SUCCESS] 真实买单已下。**新订单ID={real_order_id}**，已写入 DB，等待撮合...")
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ [SUCCESS] 真实买单已下。**新订单ID={real_order_id}**，等待撮合...")
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} 💾 [DB优化] 新建订单不记录数据库，仅内存管理")
 
                         bot_data.setdefault('pending_buys', []).append({
                             'order_id': real_order_id,
