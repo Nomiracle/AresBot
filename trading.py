@@ -101,8 +101,20 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
             pb for pb in bot_data.get('pending_buys', []) 
             if pb['order_id'] != order_id
         ]
+        
+        # 挂卖单成功，清除错误和警告信息
+        bot_data['last_error'] = None
+        bot_data['last_error_time'] = None
+        bot_data['last_warning'] = None
     except Exception as e:
+        error_msg = str(e)
+        error_type = type(e).__name__
         print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 挂卖单失败: {e}")
+        
+        # 保存挂卖单错误信息
+        bot_data['last_error'] = f"挂卖单失败 - {error_type}: {error_msg}"
+        bot_data['error_count'] = bot_data.get('error_count', 0) + 1
+        bot_data['last_error_time'] = datetime.now().isoformat()
 
 
 def handle_reconnected(event, bot_data, exchange, config, tick_size, price_decimals,
@@ -170,6 +182,11 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
                         p['order_id'] = new_order_id
                         p['price'] = float(target_price)
                         break
+                
+                # 改价成功，清除错误和警告信息
+                bot_data['last_error'] = None
+                bot_data['last_error_time'] = None
+                bot_data['last_warning'] = None
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 改价失败 {order['orderId']}: {e}")
 
@@ -224,6 +241,11 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
             )
             
             print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单改价: {sell_order_id}, {current_sell_price} → {target_sell_price}")
+            
+            # 卖单改价成功，清除错误和警告信息
+            bot_data['last_error'] = None
+            bot_data['last_error_time'] = None
+            bot_data['last_warning'] = None
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 卖单改价失败 {sell_order_id}: {e}")
 
@@ -397,6 +419,11 @@ def trading_loop(username, symbol):
                             'symbol': config['symbol'],
                             'user_id': user_id
                         })
+                        
+                        # 下单成功，清除错误和警告信息
+                        bot_data['last_error'] = None
+                        bot_data['last_error_time'] = None
+                        bot_data['last_warning'] = None
                     except Exception as e:
                         error_msg = str(e)
                         error_type = type(e).__name__
