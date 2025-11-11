@@ -1336,6 +1336,24 @@
                   }
                 }
                 
+                // 计算运行时长
+                let uptimeBadge = '';
+                if (bot.running && bot.start_timestamp) {
+                  const uptimeSeconds = Math.floor((Date.now() - bot.start_timestamp) / 1000);
+                  const days = Math.floor(uptimeSeconds / 86400);
+                  const hours = Math.floor((uptimeSeconds % 86400) / 3600);
+                  const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+                  const secs = uptimeSeconds % 60;
+                  
+                  let parts = [];
+                  if (days > 0) parts.push(`${days}天`);
+                  if (hours > 0) parts.push(`${hours}小时`);
+                  if (minutes > 0) parts.push(`${minutes}分钟`);
+                  if (secs > 0 || parts.length === 0) parts.push(`${secs}秒`);
+                  
+                  uptimeBadge = `<span class="bot-status-badge badge-info" style="background: #17a2b8;">⏱ ${parts.join(' ')}</span>`;
+                }
+                
                 // 状态徽章
                 const monitorBadge = bot.monitor_started 
                   ? '<span class="bot-status-badge badge-success">✓ 监听器</span>' 
@@ -1386,7 +1404,7 @@
                         当前价: <strong>${cp}</strong> | 目标价: <strong>${tp}</strong>
                       </div>
                       <div class="bot-status-detail">
-                        ${bot.running ? monitorBadge + orderMonitorBadge + threadBadge + pendingBadge : '<span class="bot-status-badge badge-secondary">已停止</span>'}
+                        ${bot.running ? uptimeBadge + monitorBadge + orderMonitorBadge + threadBadge + pendingBadge : '<span class="bot-status-badge badge-secondary">已停止</span>'}
                       </div>
                       <div style="font-size: 12px; color: #888; margin-top: 5px;">
                         参数: 偏移 ${bot.config.offset_percent}% | 卖加价 ${bot.config.sell_offset_percent || 0.5}% | 数量 ${bot.config.quantity} | 间隔 ${bot.config.interval}s | 模式 ${mode}

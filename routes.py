@@ -176,6 +176,7 @@ def register_routes(app):
         symbol = '-'
         price = None
         target_price = '-'
+        start_timestamp = None
         if isinstance(user_data, dict):
             for sym, b in user_data.get('bots', {}).items():
                 if b.get('running'):
@@ -183,8 +184,12 @@ def register_routes(app):
                     symbol = sym
                     price = b.get('current_price')
                     target_price = b.get('target_price', '-')
+                    # 返回启动时间戳（毫秒）
+                    start_time = b.get('start_time')
+                    if start_time:
+                        start_timestamp = int(start_time.timestamp() * 1000)
                     break
-        return jsonify({'running': running, 'symbol': symbol, 'price': price, 'target_price': target_price})
+        return jsonify({'running': running, 'symbol': symbol, 'price': price, 'target_price': target_price, 'start_timestamp': start_timestamp})
 
     @app.route('/api/start', methods=['POST'])
     def api_start():
@@ -240,7 +245,8 @@ def register_routes(app):
                 'config': config,
                 'current_price': None,
                 'target_price': None,
-                'pending_buys': []
+                'pending_buys': [],
+                'start_time': datetime.now()
             }
 
             thread = threading.Thread(target=trading_loop, args=(username, symbol), daemon=True)
@@ -516,6 +522,12 @@ def register_routes(app):
                 else:
                     status_text = '正常运行'
                 
+                # 获取启动时间戳
+                start_timestamp = None
+                start_time = b.get('start_time')
+                if start_time:
+                    start_timestamp = int(start_time.timestamp() * 1000)
+                
                 bots.append({
                     'symbol': sym,
                     'running': is_running,
@@ -532,7 +544,8 @@ def register_routes(app):
                     'error_count': error_count,
                     'last_error_time': last_error_time,
                     'last_warning': last_warning,
-                    'warning_count': warning_count
+                    'warning_count': warning_count,
+                    'start_timestamp': start_timestamp
                 })
         return jsonify({'success': True, 'bots': bots})
 
