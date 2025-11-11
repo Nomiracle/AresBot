@@ -246,6 +246,13 @@ def trading_loop(username, symbol):
     pending_buys_recovered = False
     bot_data['is_placing_order'] = False
     bot_data.setdefault('processed_filled_orders', set())
+    
+    # 初始化错误和警告信息
+    bot_data['last_error'] = None
+    bot_data['error_count'] = 0
+    bot_data['last_error_time'] = None
+    bot_data['last_warning'] = None
+    bot_data['warning_count'] = 0
 
     while bot_data.get('running'):
         try:
@@ -312,11 +319,20 @@ def trading_loop(username, symbol):
                 exchange.start_order_monitor(config['symbol'], _on_order_update)
                 bot_data['monitor_started'] = True
 
-            # 计算目标价格
+            # 获取当前价格
             current_price = bot_data.get('current_price')
             if not current_price:
+                warning_msg = "监听器未更新价格"
+                bot_data['last_warning'] = warning_msg
+                bot_data['warning_count'] = bot_data.get('warning_count', 0) + 1
                 time.sleep(config.get('interval', 1))
                 continue
+            
+            # 循环正常运行，清除错误和警告信息
+            if bot_data.get('last_error') or bot_data.get('last_warning'):
+                bot_data['last_error'] = None
+                bot_data['last_error_time'] = None
+                bot_data['last_warning'] = None
 
             offset = config.get('offset_percent', -0.1) / 100.0
             target_price = current_price * (1 + offset)
@@ -382,15 +398,30 @@ def trading_loop(username, symbol):
                             'user_id': user_id
                         })
                     except Exception as e:
+                        error_msg = str(e)
+                        error_type = type(e).__name__
                         print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 下单失败: {e}")
+                        
+                        # 保存下单错误信息
+                        bot_data['last_error'] = f"下单失败 - {error_type}: {error_msg}"
+                        bot_data['error_count'] = bot_data.get('error_count', 0) + 1
+                        bot_data['last_error_time'] = datetime.now().isoformat()
                     finally:
                         bot_data['is_placing_order'] = False
 
             time.sleep(config.get('interval', 1))
 
         except Exception as e:
+            error_msg = str(e)
+            error_type = type(e).__name__
             print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 循环错误: {e}")
             traceback.print_exc()
+            
+            # 保存错误信息到 bot_data
+            bot_data['last_error'] = f"{error_type}: {error_msg}"
+            bot_data['error_count'] = bot_data.get('error_count', 0) + 1
+            bot_data['last_error_time'] = datetime.now().isoformat()
+            
             time.sleep(1)
 
     print(f"[{datetime.now().isoformat()}] {log_prefix} ◼️ 交易循环已停止")
