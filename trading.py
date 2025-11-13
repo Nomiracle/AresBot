@@ -367,10 +367,16 @@ def trading_loop(username, symbol):
             aligned_quantity = round(aligned_quantity, qty_decimals)
 
             # 查询未完成订单
+            open_orders = []
+            open_buy_orders = []
+            open_sell_orders = []
+            query_success = False
+            
             try:
                 open_orders = exchange.get_open_orders(symbol=config['symbol'])
                 open_buy_orders = [o for o in open_orders if str(o.get('side')) == 'BUY']
                 open_sell_orders = [o for o in open_orders if str(o.get('side')) == 'SELL']
+                query_success = True
 
                 # 恢复 pending_buys（仅启动时）
                 if not pending_buys_recovered and not bot_data.get('pending_buys', []) and open_buy_orders:
@@ -397,9 +403,11 @@ def trading_loop(username, symbol):
 
             except Exception as e:
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 查询订单失败: {e}")
+                # 查询失败时不下单，避免重复挂单
+                query_success = False
 
-            # 下新单（要求没有未完成订单、没有正在下单）
-            if not open_orders and not bot_data.get('is_placing_order'):
+            # 下新单（要求查询成功、没有未完成订单、没有正在下单）
+            if query_success and not open_orders and not bot_data.get('is_placing_order'):
                 is_buy_enabled = (config.get('simulate_trading', 1) != 1)
                 if is_buy_enabled:
                     bot_data['is_placing_order'] = True
