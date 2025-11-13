@@ -406,8 +406,9 @@ def trading_loop(username, symbol):
                 # 查询失败时不下单，避免重复挂单
                 query_success = False
 
-            # 下新单（要求查询成功、没有未完成订单、没有正在下单）
-            if query_success and not open_orders and not bot_data.get('is_placing_order'):
+            # 下新单（要求查询成功、没有未完成订单、没有待处理买单、没有正在下单）
+            has_pending_buys = bool(bot_data.get('pending_buys', []))
+            if query_success and not open_orders and not has_pending_buys and not bot_data.get('is_placing_order'):
                 is_buy_enabled = (config.get('simulate_trading', 1) != 1)
                 if is_buy_enabled:
                     bot_data['is_placing_order'] = True
