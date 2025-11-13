@@ -300,7 +300,9 @@ def trading_loop(username, symbol):
             # 启动监听（仅一次）
             if not bot_data.get('monitor_started'):
                 def _on_price_update(price: float):
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 💰 价格更新回调被调用: {price}")
                     bot_data['current_price'] = price
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ bot_data['current_price'] 已更新为: {bot_data['current_price']}")
 
                 def _on_order_update(event: dict):
                     try:

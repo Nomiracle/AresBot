@@ -294,10 +294,18 @@ class BinanceAdapter(BaseExchange):
             # 定义内部回调函数（带错误处理和重连）
             def _on_ticker_msg(msg):
                 try:
+                    # 🔍 调试：记录原始行情消息
+                    print(f"[{datetime.now().isoformat()}] 🔍 [Binance] 原始行情消息: {msg}")
                     price = self.parse_ticker_message(msg)
-                    if price is not None and self._on_price_callback:
-                        self._on_price_callback(price)
-                        self._order_reconnect_count = 0  # 重置重连计数
+                    if price is not None:
+                        print(f"[{datetime.now().isoformat()}] 💰 [Binance] 收到价格更新: {price}")
+                        if self._on_price_callback:
+                            self._on_price_callback(price)
+                            self._order_reconnect_count = 0  # 重置重连计数
+                        else:
+                            print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 价格回调函数为空")
+                    else:
+                        print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 解析价格失败: {msg}")
                 except Exception as e:
                     print(f"[{datetime.now().isoformat()}] ❌ [Binance] 价格回调错误: {e}")
                     self._reconnect_websocket()
