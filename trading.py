@@ -305,6 +305,7 @@ def trading_loop(username, symbol):
                 def _on_order_update(event: dict):
                     try:
                         event_type = event.get('event_type')
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} 📥 收到订单事件: {event}")
                         
                         # 重连事件
                         if event_type == 'reconnected':

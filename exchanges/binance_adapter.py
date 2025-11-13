@@ -185,6 +185,10 @@ class BinanceAdapter(BaseExchange):
     def parse_user_message(self, msg: Dict) -> Optional[Dict]:
         """解析币安用户数据消息"""
         try:
+            # 🔍 调试：记录所有收到的消息类型
+            msg_type = msg.get('e', 'unknown')
+            print(f"[{datetime.now().isoformat()}] 🔍 [Binance] 收到用户消息类型: {msg_type}")
+            
             # 错误消息
             if msg.get('e') == 'error':
                 return {
@@ -346,14 +350,20 @@ class BinanceAdapter(BaseExchange):
             # 定义内部回调函数（带交易对过滤和错误处理）
             def _on_user_msg(msg):
                 try:
+                    # 🔍 调试：记录所有收到的原始消息
+                    print(f"[{datetime.now().isoformat()}] 🔍 [Binance] WebSocket 原始消息: {msg}")
+                    
                     # 过滤交易对
                     msg_symbol = msg.get('s') if isinstance(msg, dict) else None
                     if msg_symbol and msg_symbol != symbol:
+                        print(f"[{datetime.now().isoformat()}] ⏭️ [Binance] 过滤掉其他交易对消息: {msg_symbol} != {symbol}")
                         return
                     
                     print(f"[{datetime.now().isoformat()}] [Binance] WebSocket _on_user_msg: {msg}")
                     event = self.parse_user_message(msg)
                     if event:
+                        print(f"[{datetime.now().isoformat()}] ✅ [Binance] 解析后的事件: {event}")
+                        
                         # 处理错误事件
                         if event.get('event_type') == 'error':
                             print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] WebSocket 错误: {event}，准备重连...")
@@ -362,8 +372,13 @@ class BinanceAdapter(BaseExchange):
                         
                         # 处理正常订单事件
                         if self._on_order_callback:
+                            print(f"[{datetime.now().isoformat()}] 📤 [Binance] 准备调用订单回调函数，事件类型: {event.get('event_type')}")
                             self._on_order_callback(event)
                             self._order_reconnect_count = 0  # 重置重连计数
+                        else:
+                            print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 订单回调函数为空，无法传递事件")
+                    else:
+                        print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 解析消息返回 None，消息类型: {msg.get('e', 'unknown')}")
                 except Exception as e:
                     error_str = str(e)
                     print(f"[{datetime.now().isoformat()}] ❌ [Binance] 订单回调错误: {e}")
