@@ -321,16 +321,28 @@ class BinanceAdapter(BaseExchange):
             if self._price_monitor_active:
                 print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 价格监听已在运行")
                 return True
-            
+
             self._on_price_callback = on_price_update
             self._current_symbol = symbol
-            
+
             # 确保 WebSocket 管理器已创建
             self._ensure_ws_manager()
-            
+
             # 定义内部回调函数（带错误处理和重连）
             def _on_ticker_msg(msg):
                 try:
+                    # 先处理 Binance 返回的 error 消息，避免被当成正常行情解析
+                    if isinstance(msg, dict) and msg.get('e') == 'error':
+                        err_type = msg.get('type')
+                        err_msg = msg.get('m')
+                        print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 行情 WebSocket 错误: {err_type} - {err_msg}")
+                        # ReadLoopClosed 说明读循环已关闭，需要重连
+                        if err_type == 'ReadLoopClosed':
+                            print(f"[{datetime.now().isoformat()}] 🔄 [Binance] 检测到 ReadLoopClosed，准备重连...")
+                            self._reconnect_websocket()
+                        # 对 error 消息直接返回，不再继续按行情解析
+                        return
+
                     # 🔍 调试：记录原始行情消息
                     print(f"[{datetime.now().isoformat()}] 🔍 [Binance] 原始行情消息: {msg}")
                     price = self.parse_ticker_message(msg)
