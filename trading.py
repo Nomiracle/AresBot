@@ -7,6 +7,32 @@ import traceback
 user_bots = {}
 
 
+def calculate_buy_target_price(current_price, offset_percent, tick_size, price_decimals):
+    """
+    计算买单目标价格
+    
+    Args:
+        current_price: 当前市场价格
+        offset_percent: 偏移百分比（通常为负数，如 -0.1）
+        tick_size: 价格步长
+        price_decimals: 价格小数位数
+    
+    Returns:
+        float: 对齐后的买单目标价格
+    """
+    offset = offset_percent / 100.0
+    target_price = current_price * (1 + offset)
+    
+    # 按 tick_size 对齐（向下取整）
+    if tick_size and tick_size > 0:
+        target_price = math.floor(target_price / tick_size) * tick_size
+    
+    # 按小数位数对齐
+    target_price = round(target_price, price_decimals)
+    
+    return target_price
+
+
 def calculate_sell_price(buy_price, sell_offset_percent, tick_size, price_decimals, current_price=None):
     """计算卖出价格（带手续费保护）"""
     sell_offset = sell_offset_percent / 100.0
@@ -95,6 +121,9 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
         )
         sell_order_id = str(sell_order.get('orderId') or sell_order.get('id'))
         print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单已挂 {sell_order_id}: 价格={sell_price}")
+        
+        # 更新 target_price 为卖单价格
+        bot_data['target_price'] = sell_price
         
         # 从 pending_buys 移除
         bot_data['pending_buys'] = [
@@ -211,7 +240,6 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
         
         if not buy_price:
             continue
-        
         # 计算目标卖价
         target_sell_price = calculate_sell_price(
             buy_price,
@@ -220,6 +248,7 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
             price_decimals,
             current_price
         )
+        bot_data['target_price'] = target_sell_price   
         
         # 价格差异超过阈值才改价
         price_diff_percent = abs(target_sell_price - current_sell_price) / current_sell_price * 100
@@ -300,11 +329,14 @@ def trading_loop(username, symbol):
             # 启动监听（仅一次）
             if not bot_data.get('monitor_started'):
                 def _on_price_update(price: float):
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 💰 价格更新回调被调用: {price}")
                     bot_data['current_price'] = price
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ bot_data['current_price'] 已更新为: {bot_data['current_price']}")
 
                 def _on_order_update(event: dict):
                     try:
                         event_type = event.get('event_type')
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} 📥 收到订单事件: {event}")
                         
                         # 重连事件
                         if event_type == 'reconnected':
@@ -356,21 +388,21 @@ def trading_loop(username, symbol):
                 bot_data['last_error_time'] = None
                 bot_data['last_warning'] = None
 
-            offset = config.get('offset_percent', -0.1) / 100.0
-            target_price = current_price * (1 + offset)
-            target_price = math.floor(target_price / tick_size) * tick_size if tick_size else target_price
-            target_price = round(target_price, price_decimals)
-            bot_data['target_price'] = target_price
-
             # 对齐下单数量
             aligned_quantity = math.floor(config['quantity'] / step_size) * step_size if step_size else config['quantity']
             aligned_quantity = round(aligned_quantity, qty_decimals)
 
             # 查询未完成订单
+            open_orders = []
+            open_buy_orders = []
+            open_sell_orders = []
+            query_success = False
+            
             try:
                 open_orders = exchange.get_open_orders(symbol=config['symbol'])
                 open_buy_orders = [o for o in open_orders if str(o.get('side')) == 'BUY']
                 open_sell_orders = [o for o in open_orders if str(o.get('side')) == 'SELL']
+                query_success = True
 
                 # 恢复 pending_buys（仅启动时）
                 if not pending_buys_recovered and not bot_data.get('pending_buys', []) and open_buy_orders:
@@ -387,21 +419,42 @@ def trading_loop(username, symbol):
 
                 # 改价买单
                 if open_buy_orders:
+                    # 计算买单目标价
+                    target_price = calculate_buy_target_price(
+                        current_price,
+                        config.get('offset_percent', -0.5),
+                        tick_size,
+                        price_decimals
+                    )
+                    bot_data['target_price'] = target_price
+                    
                     reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, 
                                      bot_data, exchange, config, log_prefix)
 
                 # 动态调整卖单（默认禁用）
-                if open_sell_orders:
+                if open_sell_orders:       
                     reprice_sell_orders(open_sell_orders, bot_data, exchange, config, 
                                       tick_size, price_decimals, step_size, qty_decimals, log_prefix)
 
             except Exception as e:
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 查询订单失败: {e}")
+                # 查询失败时不下单，避免重复挂单
+                query_success = False
 
-            # 下新单（要求没有未完成订单、没有正在下单）
-            if not open_orders and not bot_data.get('is_placing_order'):
+            # 下新单（要求查询成功、没有未完成订单、没有待处理买单、没有正在下单）
+            has_pending_buys = bool(bot_data.get('pending_buys', []))
+            if query_success and not open_orders and not has_pending_buys and not bot_data.get('is_placing_order'):
                 is_buy_enabled = (config.get('simulate_trading', 1) != 1)
                 if is_buy_enabled:
+                    # 计算买单目标价
+                    target_price = calculate_buy_target_price(
+                        current_price,
+                        config.get('offset_percent', -0.1),
+                        tick_size,
+                        price_decimals
+                    )
+                    bot_data['target_price'] = target_price
+                    
                     bot_data['is_placing_order'] = True
                     try:
                         order = exchange.order_limit_buy(

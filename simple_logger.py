@@ -87,8 +87,8 @@ def setup_logging(log_dir='logs', prefix='trading'):
     stdout_logger = Logger(log_dir, f"{prefix}_stdout", sys.stdout)
     sys.stdout = stdout_logger
     
-    # 重定向标准错误
-    stderr_logger = Logger(log_dir, f"{prefix}_stderr", sys.stderr)
+    # 重定向标准错误到同一个日志文件（使用 stdout_logger 的日志文件）
+    stderr_logger = Logger(log_dir, f"{prefix}_stdout", sys.stderr)
     sys.stderr = stderr_logger
     
     print(f"[{datetime.now().isoformat()}] 📝 日志系统已启动，日志目录: {log_dir}")
