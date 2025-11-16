@@ -3,6 +3,8 @@ Binance 交易所适配器
 封装所有币安特定的 API 调用与 WebSocket 逻辑
 """
 import math
+import time
+from collections import deque
 from datetime import datetime
 from typing import Dict, List, Optional, Callable
 from binance.client import Client
@@ -10,6 +12,9 @@ from binance.exceptions import BinanceAPIException
 from binance import ThreadedWebsocketManager
 
 from .base import BaseExchange
+
+_ORDER_WINDOW_10S = {}
+_ORDER_WINDOW_24H = {}
 
 
 class BinanceAdapter(BaseExchange):
@@ -64,6 +69,7 @@ class BinanceAdapter(BaseExchange):
     
     def order_limit_buy(self, symbol: str, quantity: float, price: str, **kwargs) -> Dict:
         """限价买单"""
+        self._check_order_rate_limit()
         return self.client.order_limit_buy(
             symbol=symbol,
             quantity=quantity,
@@ -73,6 +79,7 @@ class BinanceAdapter(BaseExchange):
     
     def order_limit_sell(self, symbol: str, quantity: float, price: str, **kwargs) -> Dict:
         """限价卖单"""
+        self._check_order_rate_limit()
         return self.client.order_limit_sell(
             symbol=symbol,
             quantity=quantity,
@@ -82,11 +89,13 @@ class BinanceAdapter(BaseExchange):
     
     def cancel_order(self, symbol: str, order_id: str) -> Dict:
         """取消订单"""
+        self._check_order_rate_limit()
         return self.client.cancel_order(symbol=symbol, orderId=int(order_id))
     
     def cancel_replace_order(self, symbol: str, side: str, order_type: str, 
                             quantity: float, price: str, cancel_order_id: str, **kwargs) -> Dict:
         """取消并替换订单（改价）"""
+        self._check_order_rate_limit(times=2)
         # 优先使用 python-binance 的 cancelReplace 接口
         replace_fn = getattr(self.client, 'order_cancel_replace', None) or getattr(self.client, 'cancel_replace_order', None)
         
@@ -120,6 +129,34 @@ class BinanceAdapter(BaseExchange):
                 )
             else:
                 raise NotImplementedError("当前 python-binance 版本不支持 cancelReplace")
+
+    def _check_order_rate_limit(self, times: int = 1) -> None:
+        api_key = self.api_key or "__no_key__"
+        now = time.time()
+        ten_seconds_ago = now - 10
+        one_day_ago = now - 24 * 60 * 60
+
+        window_10s = _ORDER_WINDOW_10S.setdefault(api_key, deque())
+        window_24h = _ORDER_WINDOW_24H.setdefault(api_key, deque())
+
+        while window_10s and window_10s[0] <= ten_seconds_ago:
+            window_10s.popleft()
+
+        while window_24h and window_24h[0] <= one_day_ago:
+            window_24h.popleft()
+
+        projected_10s = len(window_10s) + times
+        projected_24h = len(window_24h) + times
+
+        if projected_10s > 100:
+            raise RuntimeError("Binance local order limit exceeded: more than 100 order operations in 10 seconds for this API key")
+
+        if projected_24h > 200000:
+            raise RuntimeError("Binance local order limit exceeded: more than 200000 order operations in 24 hours for this API key")
+
+        for _ in range(times):
+            window_10s.append(now)
+            window_24h.append(now)
     
     def start_websocket(self, symbol: str, on_ticker: Callable, on_user: Optional[Callable] = None) -> Dict:
         """启动 WebSocket 连接"""
