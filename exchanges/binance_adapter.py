@@ -130,6 +130,47 @@ class BinanceAdapter(BaseExchange):
             else:
                 raise NotImplementedError("当前 python-binance 版本不支持 cancelReplace")
 
+    def get_rate_limit_status(self) -> Dict:
+        """
+        获取当前API key的限制使用情况
+        
+        Returns:
+            {
+                'count_10s': 当前10秒内的订单数,
+                'limit_10s': 10秒限制(100),
+                'count_24h': 当前24小时内的订单数,
+                'limit_24h': 24小时限制(200000),
+                'exceeded_10s': 是否超出10秒限制,
+                'exceeded_24h': 是否超出24小时限制
+            }
+        """
+        api_key = self.api_key or "__no_key__"
+        now = time.time()
+        ten_seconds_ago = now - 10
+        one_day_ago = now - 24 * 60 * 60
+
+        window_10s = _ORDER_WINDOW_10S.setdefault(api_key, deque())
+        window_24h = _ORDER_WINDOW_24H.setdefault(api_key, deque())
+
+        # 清理过期记录
+        while window_10s and window_10s[0] <= ten_seconds_ago:
+            window_10s.popleft()
+
+        while window_24h and window_24h[0] <= one_day_ago:
+            window_24h.popleft()
+
+        count_10s = len(window_10s)
+        count_24h = len(window_24h)
+
+        return {
+            'count_10s': count_10s,
+            'limit_10s': 100,
+            'count_24h': count_24h,
+            'limit_24h': 200000,
+            'exceeded_10s': count_10s > 100,
+            'exceeded_24h': count_24h > 200000
+        }
+
     def _check_order_rate_limit(self, times: int = 1) -> None:
         api_key = self.api_key or "__no_key__"
         now = time.time()

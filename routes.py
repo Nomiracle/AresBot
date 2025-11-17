@@ -547,6 +547,15 @@ def register_routes(app):
                 if start_time:
                     start_timestamp = int(start_time.timestamp() * 1000)
                 
+                # 获取币安API限制使用情况
+                rate_limit_status = None
+                exchange = b.get('exchange')
+                if exchange and hasattr(exchange, 'get_rate_limit_status'):
+                    try:
+                        rate_limit_status = exchange.get_rate_limit_status()
+                    except:
+                        pass
+                
                 bots.append({
                     'symbol': sym,
                     'running': is_running,
@@ -564,7 +573,8 @@ def register_routes(app):
                     'last_error_time': last_error_time,
                     'last_warning': last_warning,
                     'warning_count': warning_count,
-                    'start_timestamp': start_timestamp
+                    'start_timestamp': start_timestamp,
+                    'rate_limit_status': rate_limit_status
                 })
         return jsonify({'success': True, 'bots': bots})
 

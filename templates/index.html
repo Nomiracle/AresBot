@@ -1410,6 +1410,38 @@
                   `;
                 }
                 
+                // 币安API限制显示
+                let rateLimitDisplay = '';
+                if (bot.rate_limit_status) {
+                  const rls = bot.rate_limit_status;
+                  const percent10s = (rls.count_10s / rls.limit_10s * 100).toFixed(1);
+                  const percent24h = (rls.count_24h / rls.limit_24h * 100).toFixed(2);
+                  
+                  // 根据使用率设置颜色
+                  const color10s = rls.exceeded_10s ? '#dc3545' : (percent10s > 80 ? '#ffc107' : '#28a745');
+                  const color24h = rls.exceeded_24h ? '#dc3545' : (percent24h > 80 ? '#ffc107' : '#28a745');
+                  
+                  rateLimitDisplay = `
+                    <div style="font-size: 11px; margin-top: 8px; padding: 6px; background: #f8f9fa; border-radius: 4px; border-left: 3px solid #007bff;">
+                      <div style="font-weight: 600; margin-bottom: 4px; color: #495057;">📊 币安API限制使用情况</div>
+                      <div style="display: flex; gap: 15px;">
+                        <div style="flex: 1;">
+                          <span style="color: #6c757d;">10秒:</span>
+                          <span style="color: ${color10s}; font-weight: 600;">${rls.count_10s}/${rls.limit_10s}</span>
+                          <span style="color: #6c757d;">(${percent10s}%)</span>
+                          ${rls.exceeded_10s ? '<span style="color: #dc3545; font-weight: 600;">⚠️超限</span>' : ''}
+                        </div>
+                        <div style="flex: 1;">
+                          <span style="color: #6c757d;">24小时:</span>
+                          <span style="color: ${color24h}; font-weight: 600;">${rls.count_24h}/${rls.limit_24h}</span>
+                          <span style="color: #6c757d;">(${percent24h}%)</span>
+                          ${rls.exceeded_24h ? '<span style="color: #dc3545; font-weight: 600;">⚠️超限</span>' : ''}
+                        </div>
+                      </div>
+                    </div>
+                  `;
+                }
+                
                 return `
                   <div class="pair-item" id="bot-${bot.symbol}">
                     <div class="pair-info">
@@ -1429,6 +1461,7 @@
                       </div>
                       ${errorDisplay}
                       ${warningDisplay}
+                      ${rateLimitDisplay}
                     </div>
                     <div class="pair-actions">
                       <button class="btn btn-primary btn-sm" onclick="editBot('${bot.symbol}')">✏️ 编辑</button>
