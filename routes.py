@@ -12,6 +12,7 @@ from database import (save_user_config, load_user_config, get_user_orders, get_u
                      delete_credential, update_credential)
 
 from trading import trading_loop, user_bots
+from rate_limit_manager import check_and_adjust_rate_limit
 
 
 def register_routes(app):
@@ -239,6 +240,18 @@ def register_routes(app):
             if symbol in user_bots[username]['bots'] and user_bots[username]['bots'][symbol].get('running'):
                 return jsonify({'success': False, 'message': '该交易对机器人已运行'})
 
+            # 只对币安交易所检查并调整API限制
+            limit_msg = ""
+            if exchange_name == 'binance':
+                can_start, limit_msg, adjusted_config = check_and_adjust_rate_limit(user_bots, config, api_key)
+                if not can_start:
+                    return jsonify({'success': False, 'message': f'API限制检查失败:\n{limit_msg}'}), 400
+                
+                # 使用调整后的配置
+                config = adjusted_config
+                if limit_msg:
+                    print(f"[{datetime.now().isoformat()}] {limit_msg}")
+
             user_bots[username]['bots'][symbol] = {
                 'running': True,
                 'exchange': exchange,
@@ -256,7 +269,13 @@ def register_routes(app):
             exchange_name = config.get('exchange', 'binance').upper()
             log_prefix = f"[{username}-{exchange_name}-{symbol}]"
             print(f"[{datetime.now().isoformat()}] {log_prefix} ▶️ 机器人已启动 (mode={'SIM' if config.get('simulate_trading',1)==1 else 'REAL'})")
-            return jsonify({'success': True, 'message': f'{symbol} 机器人已启动 ({"模拟" if config.get("simulate_trading",1)==1 else "实盘"})'})
+            
+            # 构建返回消息
+            success_msg = f'{symbol} 机器人已启动 ({"模拟" if config.get("simulate_trading",1)==1 else "实盘"})'
+            if limit_msg and '调整' in limit_msg:
+                success_msg += '\n' + limit_msg
+            
+            return jsonify({'success': True, 'message': success_msg})
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ 启动失败: {e}")
             return jsonify({'success': False, 'message': f'启动失败: {str(e)}'}), 500
@@ -593,6 +612,19 @@ def register_routes(app):
                 user_bots[username] = {'bots': {}}
             if symbol in user_bots[username]['bots'] and user_bots[username]['bots'][symbol].get('running'):
                 return jsonify({'success': False, 'message': '该交易对机器人已运行'})
+            
+            # 只对币安交易所检查并调整API限制
+            limit_msg = ""
+            if exchange_name == 'binance':
+                can_start, limit_msg, adjusted_config = check_and_adjust_rate_limit(user_bots, config, api_key)
+                if not can_start:
+                    return jsonify({'success': False, 'message': f'API限制检查失败:\n{limit_msg}'}), 400
+                
+                # 使用调整后的配置
+                config = adjusted_config
+                if limit_msg:
+                    print(f"[{datetime.now().isoformat()}] {limit_msg}")
+            
             user_bots[username]['bots'][symbol] = {
                 'running': True,
                 'exchange': exchange,
@@ -604,7 +636,13 @@ def register_routes(app):
             thread = threading.Thread(target=trading_loop, args=(username, symbol), daemon=True)
             thread.start()
             user_bots[username]['bots'][symbol]['thread'] = thread
-            return jsonify({'success': True, 'message': f'{symbol} 机器人已启动'})
+            
+            # 构建返回消息
+            success_msg = f'{symbol} 机器人已启动'
+            if limit_msg and '调整' in limit_msg:
+                success_msg += '\n' + limit_msg
+            
+            return jsonify({'success': True, 'message': success_msg})
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] 启动失败: {e}")
             return jsonify({'success': False, 'message': f'启动失败: {str(e)}'}), 500
