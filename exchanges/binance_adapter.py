@@ -44,15 +44,20 @@ class BinanceAdapter(BaseExchange):
         except Exception:
             return False
     
+    def _get_log_prefix(self) -> str:
+        """生成日志前缀：[交易对-API_KEY前6位]"""
+        api_key_short = self.api_key[:6] if self.api_key else "NOKEY"
+        return f"[{datetime.now().isoformat()}] [binance-{api_key_short}-{self._current_symbol}]"
+    
     def get_symbol_info(self, symbol: str) -> Dict:
         """获取交易对信息"""
         try:
             result = self.client.get_symbol_info(symbol=symbol)
             if not result:
-                print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 交易对 {symbol} 不存在或无效")
+                print(f"[{self._get_log_prefix()}] ⚠️ [Binance] 交易对 {symbol} 不存在或无效")
             return result
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Binance] 获取交易对信息失败 ({symbol}): {e}")
+            print(f"[{self._get_log_prefix()}] ❌ [Binance] 获取交易对信息失败 ({symbol}): {e}")
             return None
     
     def get_symbol_ticker(self, symbol: str) -> Dict:
@@ -220,7 +225,7 @@ class BinanceAdapter(BaseExchange):
             # 启动行情流（公开流）
             twm.start_symbol_ticker_socket(callback=on_ticker, symbol=symbol)
             result['ticker_enabled'] = True
-            print(f"[{datetime.now().isoformat()}] ✅ [Binance] 行情流已启动 ({symbol})")
+            print(f"[{self._get_log_prefix()}] ✅ [Binance] 行情流已启动 ({symbol})")
             
             # 启动用户数据流（需要认证）
             if on_user and self.api_key and self.api_secret:
@@ -229,16 +234,16 @@ class BinanceAdapter(BaseExchange):
                     filtered_on_user = self._create_symbol_filter(symbol, on_user)
                     twm.start_user_socket(callback=filtered_on_user)
                     result['user_enabled'] = True
-                    print(f"[{datetime.now().isoformat()}] ✅ [Binance] 用户数据流已启动")
+                    print(f"[{self._get_log_prefix()}] ✅ [Binance] 用户数据流已启动")
                 except BinanceAPIException as e:
-                    print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 用户数据流启动失败 (API错误: {e.status_code if hasattr(e, 'status_code') else 'unknown'} - {e.message if hasattr(e, 'message') else str(e)})")
+                    print(f"[{self._get_log_prefix()}] ⚠️ [Binance] 用户数据流启动失败 (API错误: {e.status_code if hasattr(e, 'status_code') else 'unknown'} - {e.message if hasattr(e, 'message') else str(e)})")
                 except Exception as e:
-                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 用户数据流启动失败 ({type(e).__name__}: {e})")
+                    print(f"[{self._get_log_prefix()}] ❌ [Binance] 用户数据流启动失败 ({type(e).__name__}: {e})")
             
             return result
             
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Binance] WebSocket 启动失败: {e}")
+            print(f"[{self._get_log_prefix()}] ❌ [Binance] WebSocket 启动失败: {e}")
             return result
     
     def stop_websocket(self, ws_manager) -> None:
@@ -247,7 +252,7 @@ class BinanceAdapter(BaseExchange):
             try:
                 ws_manager.stop()
             except Exception as e:
-                print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] WebSocket 停止失败: {e}")
+                print(f"[{self._get_log_prefix()}] ⚠️ [Binance] WebSocket 停止失败: {e}")
     
     def parse_ticker_message(self, msg: Dict) -> Optional[float]:
         """解析币安行情消息"""
@@ -257,7 +262,7 @@ class BinanceAdapter(BaseExchange):
             if last_price is not None:
                 return float(last_price)
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Binance] 解析行情消息失败: {e}")
+            print(f"[{self._get_log_prefix()}] ❌ [Binance] 解析行情消息失败: {e}")
         return None
     
     def parse_user_message(self, msg: Dict) -> Optional[Dict]:
@@ -265,7 +270,7 @@ class BinanceAdapter(BaseExchange):
         try:
             # 🔍 调试：记录所有收到的消息类型
             msg_type = msg.get('e', 'unknown')
-            print(f"[{datetime.now().isoformat()}] 🔍 [Binance] 收到用户消息类型: {msg_type}")
+            print(f"[{self._get_log_prefix()}] 🔍 [Binance] 收到用户消息类型: {msg_type}")
             
             # 错误消息
             if msg.get('e') == 'error':
@@ -280,7 +285,7 @@ class BinanceAdapter(BaseExchange):
                 order_id = str(msg.get('i'))
                 
                 # 🔍 调试日志：记录所有订单事件
-                print(f"[{datetime.now().isoformat()}] 📨 [Binance] 收到订单事件: ID={order_id}, 状态={order_status}, 方向={msg.get('S')}")
+                print(f"[{self._get_log_prefix()}] 📨 [Binance] 收到订单事件: ID={order_id}, 状态={order_status}, 方向={msg.get('S')}")
                 
                 # 根据订单状态确定事件类型
                 if order_status == 'FILLED':
@@ -302,13 +307,13 @@ class BinanceAdapter(BaseExchange):
                     'lastExecutedQty': msg.get('l')  # 本次成交数量
                 }
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Binance] 解析用户消息失败: {e}")
+            print(f"[{self._get_log_prefix()}] ❌ [Binance] 解析用户消息失败: {e}")
         return None
     
     def get_price_precision(self, symbol_info: Dict) -> tuple:
         """提取价格精度"""
         if not symbol_info or 'filters' not in symbol_info:
-            print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] symbol_info 无效，使用默认价格精度")
+            print(f"[{self._get_log_prefix()}] ⚠️ [Binance] symbol_info 无效，使用默认价格精度")
             return 0.01, 2  # 默认值
             
         price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
@@ -321,7 +326,7 @@ class BinanceAdapter(BaseExchange):
     def get_quantity_precision(self, symbol_info: Dict) -> tuple:
         """提取数量精度"""
         if not symbol_info or 'filters' not in symbol_info:
-            print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] symbol_info 无效，使用默认数量精度")
+            print(f"[{self._get_log_prefix()}] ⚠️ [Binance] symbol_info 无效，使用默认数量精度")
             return 0.000001, 6  # 默认值
             
         lot_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
@@ -353,14 +358,14 @@ class BinanceAdapter(BaseExchange):
                     return
                 callback(msg)
             except Exception as e:
-                print(f"[{datetime.now().isoformat()}] ❌ [Binance] 回调过滤错误: {e}")
+                print(f"[{self._get_log_prefix()}] ❌ [Binance] 回调过滤错误: {e}")
         return filtered_callback
     
     def start_price_monitor(self, symbol: str, on_price_update: Callable[[float], None]) -> bool:
         """启动价格监听（使用 WebSocket）"""
         try:
             if self._price_monitor_active:
-                print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 价格监听已在运行")
+                print(f"[{self._get_log_prefix()}] ⚠️ [Binance] 价格监听已在运行")
                 return True
 
             self._on_price_callback = on_price_update
@@ -376,44 +381,44 @@ class BinanceAdapter(BaseExchange):
                     if isinstance(msg, dict) and msg.get('e') == 'error':
                         err_type = msg.get('type')
                         err_msg = msg.get('m')
-                        print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 行情 WebSocket 错误: {err_type} - {err_msg}")
+                        print(f"[{self._get_log_prefix()}] ⚠️ [Binance] 行情 WebSocket 错误: {err_type} - {err_msg}")
                         # ReadLoopClosed 说明读循环已关闭，需要重连
                         if err_type == 'ReadLoopClosed':
-                            print(f"[{datetime.now().isoformat()}] 🔄 [Binance] 检测到 ReadLoopClosed，准备重连...")
+                            print(f"[{self._get_log_prefix()}] 🔄 [Binance] 检测到 ReadLoopClosed，准备重连...")
                             self._reconnect_websocket()
                         # 对 error 消息直接返回，不再继续按行情解析
                         return
 
                     # 🔍 调试：记录原始行情消息
-                    print(f"[{datetime.now().isoformat()}] 🔍 [Binance] 原始行情消息: {msg}")
+                    print(f"[{self._get_log_prefix()}] 🔍 [Binance] 原始行情消息: {msg}")
                     price = self.parse_ticker_message(msg)
                     if price is not None:
-                        print(f"[{datetime.now().isoformat()}] 💰 [Binance] 收到价格更新: {price}")
+                        print(f"[{self._get_log_prefix()}] 💰 [Binance] 收到价格更新: {price}")
                         if self._on_price_callback:
                             self._on_price_callback(price)
                             self._order_reconnect_count = 0  # 重置重连计数
                         else:
-                            print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 价格回调函数为空")
+                            print(f"[{self._get_log_prefix()}] ⚠️ [Binance] 价格回调函数为空")
                     else:
-                        print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 解析价格失败: {msg}")
+                        print(f"[{self._get_log_prefix()}] ⚠️ [Binance] 解析价格失败: {msg}")
                 except Exception as e:
-                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 价格回调错误: {e}")
+                    print(f"[{self._get_log_prefix()}] ❌ [Binance] 价格回调错误: {e}")
                     self._reconnect_websocket()
             
             # 启动行情流
             self._ws_manager.start_symbol_ticker_socket(callback=_on_ticker_msg, symbol=symbol)
             self._price_monitor_active = True
-            print(f"[{datetime.now().isoformat()}] ✅ [Binance] 价格监听已启动 ({symbol})")
+            print(f"[{self._get_log_prefix()}] ✅ [Binance] 价格监听已启动 ({symbol})")
             return True
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Binance] 启动价格监听失败: {e}")
+            print(f"[{self._get_log_prefix()}] ❌ [Binance] 启动价格监听失败: {e}")
             return False
     
     def stop_price_monitor(self) -> None:
         """停止价格监听"""
         self._price_monitor_active = False
         self._on_price_callback = None
-        print(f"[{datetime.now().isoformat()}] ⏹️ [Binance] 价格监听已停止")
+        print(f"[{self._get_log_prefix()}] ⏹️ [Binance] 价格监听已停止")
         
         # 只有两个监听器都停止时才关闭 WebSocket 管理器
         self._cleanup_ws_manager()
@@ -424,19 +429,19 @@ class BinanceAdapter(BaseExchange):
             try:
                 self._ws_manager.stop()
                 self._ws_manager = None
-                print(f"[{datetime.now().isoformat()}] ⏹️ [Binance] WebSocket 管理器已关闭")
+                print(f"[{self._get_log_prefix()}] ⏹️ [Binance] WebSocket 管理器已关闭")
             except Exception as e:
-                print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 关闭 WebSocket 失败: {e}")
+                print(f"[{self._get_log_prefix()}] ⚠️ [Binance] 关闭 WebSocket 失败: {e}")
     
     def start_order_monitor(self, symbol: str, on_order_update: Callable[[Dict], None]) -> bool:
         """启动订单监听（使用 WebSocket）"""
         try:
             if self._order_monitor_active:
-                print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 订单监听已在运行")
+                print(f"[{self._get_log_prefix()}] ⚠️ [Binance] 订单监听已在运行")
                 return True
             
             if not self.api_key or not self.api_secret:
-                print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 缺少 API 密钥，无法启动订单监听")
+                print(f"[{self._get_log_prefix()}] ⚠️ [Binance] 缺少 API 密钥，无法启动订单监听")
                 return False
             
             self._on_order_callback = on_order_update
@@ -449,61 +454,61 @@ class BinanceAdapter(BaseExchange):
             def _on_user_msg(msg):
                 try:
                     # 🔍 调试：记录所有收到的原始消息
-                    print(f"[{datetime.now().isoformat()}] 🔍 [Binance] WebSocket 原始消息: {msg}")
+                    print(f"[{self._get_log_prefix()}] 🔍 [Binance] WebSocket 原始消息: {msg}")
                     
                     # 过滤交易对
                     msg_symbol = msg.get('s') if isinstance(msg, dict) else None
                     if msg_symbol and msg_symbol != symbol:
-                        print(f"[{datetime.now().isoformat()}] ⏭️ [Binance] 过滤掉其他交易对消息: {msg_symbol} != {symbol}")
+                        print(f"[{self._get_log_prefix()}] ⏭️ [Binance] 过滤掉其他交易对消息: {msg_symbol} != {symbol}")
                         return
                     
-                    print(f"[{datetime.now().isoformat()}] [Binance] WebSocket _on_user_msg: {msg}")
+                    print(f"[{self._get_log_prefix()}] [Binance] WebSocket _on_user_msg: {msg}")
                     event = self.parse_user_message(msg)
                     if event:
-                        print(f"[{datetime.now().isoformat()}] ✅ [Binance] 解析后的事件: {event}")
+                        print(f"[{self._get_log_prefix()}] ✅ [Binance] 解析后的事件: {event}")
                         
                         # 处理错误事件
                         if event.get('event_type') == 'error':
-                            print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] WebSocket 错误: {event}，准备重连...")
+                            print(f"[{self._get_log_prefix()}] ⚠️ [Binance] WebSocket 错误: {event}，准备重连...")
                             self._reconnect_websocket()
                             return
                         
                         # 处理正常订单事件
                         if self._on_order_callback:
-                            print(f"[{datetime.now().isoformat()}] 📤 [Binance] 准备调用订单回调函数，事件类型: {event.get('event_type')}")
+                            print(f"[{self._get_log_prefix()}] 📤 [Binance] 准备调用订单回调函数，事件类型: {event.get('event_type')}")
                             self._on_order_callback(event)
                             self._order_reconnect_count = 0  # 重置重连计数
                         else:
-                            print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 订单回调函数为空，无法传递事件")
+                            print(f"[{self._get_log_prefix()}] ⚠️ [Binance] 订单回调函数为空，无法传递事件")
                     else:
-                        print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 解析消息返回 None，消息类型: {msg.get('e', 'unknown')}")
+                        print(f"[{self._get_log_prefix()}] ⚠️ [Binance] 解析消息返回 None，消息类型: {msg.get('e', 'unknown')}")
                 except Exception as e:
                     error_str = str(e)
-                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 订单回调错误: {e}")
+                    print(f"[{self._get_log_prefix()}] ❌ [Binance] 订单回调错误: {e}")
                     # 只有 WebSocket 连接错误才重连，业务逻辑错误不重连
                     if 'websocket' in error_str.lower() or 'closed' in error_str.lower() or 'connection' in error_str.lower():
-                        print(f"[{datetime.now().isoformat()}] ⚠️ [Binance] 检测到连接错误，准备重连...")
+                        print(f"[{self._get_log_prefix()}] ⚠️ [Binance] 检测到连接错误，准备重连...")
                         self._reconnect_websocket()
             
             # 启动用户数据流
             try:
                 self._ws_manager.start_user_socket(callback=_on_user_msg)
                 self._order_monitor_active = True
-                print(f"[{datetime.now().isoformat()}] ✅ [Binance] 订单监听已启动")
+                print(f"[{self._get_log_prefix()}] ✅ [Binance] 订单监听已启动")
                 return True
             except BinanceAPIException as e:
-                print(f"[{datetime.now().isoformat()}] ❌ [Binance] 订单监听启动失败 (API错误): {e}")
+                print(f"[{self._get_log_prefix()}] ❌ [Binance] 订单监听启动失败 (API错误): {e}")
                 return False
                 
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Binance] 启动订单监听失败: {e}")
+            print(f"[{self._get_log_prefix()}] ❌ [Binance] 启动订单监听失败: {e}")
             return False
     
     def stop_order_monitor(self) -> None:
         """停止订单监听"""
         self._order_monitor_active = False
         self._on_order_callback = None
-        print(f"[{datetime.now().isoformat()}] ⏹️ [Binance] 订单监听已停止")
+        print(f"[{self._get_log_prefix()}] ⏹️ [Binance] 订单监听已停止")
         
         # 只有两个监听器都停止时才关闭 WebSocket 管理器
         self._cleanup_ws_manager()
@@ -519,13 +524,13 @@ class BinanceAdapter(BaseExchange):
         
         # 使用订单监听的重连计数（因为订单监听更重要）
         if self._order_reconnect_count >= 5:
-            print(f"[{datetime.now().isoformat()}] ❌ [Binance] WebSocket 重连次数过多，停止重连")
+            print(f"[{self._get_log_prefix()}] ❌ [Binance] WebSocket 重连次数过多，停止重连")
             self._price_monitor_active = False
             self._order_monitor_active = False
             return
         
         self._order_reconnect_count += 1
-        print(f"[{datetime.now().isoformat()}] 🔄 [Binance] 开始重连 WebSocket (第 {self._order_reconnect_count} 次)...")
+        print(f"[{self._get_log_prefix()}] 🔄 [Binance] 开始重连 WebSocket (第 {self._order_reconnect_count} 次)...")
         
         try:
             # 关闭旧的 WebSocket 管理器
@@ -553,17 +558,17 @@ class BinanceAdapter(BaseExchange):
             # 先启动价格监听
             if need_price and self._current_symbol:
                 if not self.start_price_monitor(self._current_symbol, self._on_price_callback):
-                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 价格监听重连失败")
+                    print(f"[{self._get_log_prefix()}] ❌ [Binance] 价格监听重连失败")
                     success = False
             
             # 再启动订单监听
             if need_order and self._current_symbol:
                 if not self.start_order_monitor(self._current_symbol, self._on_order_callback):
-                    print(f"[{datetime.now().isoformat()}] ❌ [Binance] 订单监听重连失败")
+                    print(f"[{self._get_log_prefix()}] ❌ [Binance] 订单监听重连失败")
                     success = False
             
             if success:
-                print(f"[{datetime.now().isoformat()}] ✅ [Binance] WebSocket 重连成功")
+                print(f"[{self._get_log_prefix()}] ✅ [Binance] WebSocket 重连成功")
                 self._order_reconnect_count = 0  # 重置计数器
                 
                 # ⚠️ 重要：WebSocket 重连后不会重发历史消息
@@ -574,5 +579,5 @@ class BinanceAdapter(BaseExchange):
                         'message': 'WebSocket 已重连，建议查询未完成订单以同步状态'
                     })
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Binance] WebSocket 重连错误: {e}")
+            print(f"[{self._get_log_prefix()}] ❌ [Binance] WebSocket 重连错误: {e}")
 
