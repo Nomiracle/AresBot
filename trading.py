@@ -335,6 +335,11 @@ def trading_loop(username, symbol):
 
                 def _on_order_update(event: dict):
                     try:
+                        # 过滤其他交易对的订单事件
+                        if event.get('symbol') != config['symbol']:
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} 🔇 忽略其他交易对事件: {event.get('symbol')}")
+                            return
+
                         event_type = event.get('event_type')
                         print(f"[{datetime.now().isoformat()}] {log_prefix} 📥 收到订单事件: {event}")
                         

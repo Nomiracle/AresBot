@@ -59,12 +59,12 @@ app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # session过期时间(秒)
 
 register_routes(app)
 
-# 请求日志中间件
-@app.before_request
-def log_request():
-    """记录所有请求路径"""
-    from flask import request
-    print(f"[{datetime.now().isoformat()}] 📥 {request.method} {request.path}")
+# 请求日志中间件（已禁用）
+# @app.before_request
+# def log_request():
+#     """记录所有请求路径"""
+#     from flask import request
+#     print(f"[{datetime.now().isoformat()}] 📥 {request.method} {request.path}")
 
 # 3. Flask 路由全局异常处理器
 @app.errorhandler(Exception)
