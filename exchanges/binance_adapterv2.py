@@ -80,6 +80,10 @@ class BinanceAdapter(BaseExchange):
 
     def cancel_replace_order(self, symbol: str, side: str, order_type: str,
                              quantity: float, price: str, cancel_order_id: str, **kwargs) -> Dict:
+        # 提取并移除已处理的参数，避免重复传入
+        time_in_force = kwargs.pop('timeInForce', 'GTC')
+        cancel_replace_mode = kwargs.pop('cancelReplaceMode', 'STOP_ON_FAILURE')
+        
         return self.client.cancel_replace_order(
             symbol=symbol.upper(),
             side=side,
@@ -87,7 +91,8 @@ class BinanceAdapter(BaseExchange):
             quantity=quantity,
             price=price,
             cancelOrderId=cancel_order_id,
-            **kwargs
+            timeInForce=time_in_force,
+            cancelReplaceMode=cancel_replace_mode
         )
 
     def get_price_precision(self, symbol_info: Dict) -> tuple:
