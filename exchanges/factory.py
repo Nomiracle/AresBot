@@ -4,7 +4,7 @@
 """
 from typing import Optional
 from .base import BaseExchange
-from .binance_adapter import BinanceAdapter
+from .binance_adapterv2 import BinanceAdapter
 from .backpack_adapter import BackpackAdapter
 
 class ExchangeFactory:
@@ -21,22 +21,21 @@ class ExchangeFactory:
     
     @classmethod
     def create(cls, exchange_name: str, api_key: str, api_secret: str, 
-               testnet: bool = True, **kwargs) -> Optional[BaseExchange]:
+               testnet: bool = True) -> Optional[BaseExchange]:
         """创建交易所适配器实例
         
         Args:
-            exchange_name: 交易所名称 ('binance', 'okx', etc.)
+            exchange_name: 交易所名称 ('binance', 'backpack', etc.)
             api_key: API密钥
             api_secret: API密钥
             testnet: 是否使用测试网
-            **kwargs: 其他交易所特定参数
             
         Returns:
             BaseExchange 实例，如果不支持则返回 None
         """
         adapter_class = cls.SUPPORTED_EXCHANGES.get(exchange_name.lower())
         if adapter_class:
-            return adapter_class(api_key, api_secret, testnet, **kwargs)
+            return adapter_class(api_key, api_secret, testnet)
         return None
     
     @classmethod
