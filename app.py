@@ -59,10 +59,25 @@ app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # session过期时间(秒)
 
 register_routes(app)
 
+# 请求日志中间件
+@app.before_request
+def log_request():
+    """记录所有请求路径"""
+    from flask import request
+    print(f"[{datetime.now().isoformat()}] 📥 {request.method} {request.path}")
+
 # 3. Flask 路由全局异常处理器
 @app.errorhandler(Exception)
 def handle_exception(e):
-    """捕获所有路由内的未处理异常"""
+    """捕获所有路由内的未处理异常（排除HTTP异常）"""
+    from werkzeug.exceptions import HTTPException
+    
+    # 如果是HTTP异常（如404、405等），直接返回，不记录日志
+    if isinstance(e, HTTPException):
+        print(f"[{datetime.now().isoformat()}] ⚠️ HTTP {e.code}: {e.name}")
+        return e
+    
+    # 只记录真正的服务器错误
     error_msg = f"[{datetime.now().isoformat()}] ❌ Flask 路由异常:\n"
     error_msg += traceback.format_exc()
     print(error_msg)
