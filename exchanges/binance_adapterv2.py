@@ -145,7 +145,7 @@ class BinanceAdapter(BaseExchange):
         def callback(msg):
             """解析币安行情消息"""
             if msg.get('e') == 'error':
-                print(f"Binance ticker WS error: {msg}")
+                print(f"{self._get_log_prefix()} ❌ 价格 WebSocket 错误: {msg}")
                 return
             price = float(msg['c'])  # 最新成交价
             on_price_update(price)
@@ -159,7 +159,7 @@ class BinanceAdapter(BaseExchange):
             self.active_sockets.add(socket_id)
             return True
         except Exception as e:
-            print(f"Failed to start price monitor for {symbol}: {e}")
+            print(f"{self._get_log_prefix()} ❌ 启动价格监控失败: {e}")
             return False
 
     def stop_price_monitor(self) -> None:
@@ -184,11 +184,11 @@ class BinanceAdapter(BaseExchange):
                 try:
                     # 🔍 调试：记录所有收到的消息类型
                     msg_type = msg.get('e', 'unknown')
-                    print(f"[{self._get_log_prefix()}] 🔍 [Binance] 收到用户消息类型: {msg_type}")
+                    print(f"{self._get_log_prefix()} 🔍 收到用户消息类型: {msg_type}")
 
                     # 错误消息
                     if msg.get('e') == 'error':
-                        print(f"[{self._get_log_prefix()}] ❌ [Binance] WebSocket错误: {msg.get('type')}: {msg.get('m')}")
+                        print(f"{self._get_log_prefix()} ❌ WebSocket错误: {msg.get('type')}: {msg.get('m')}")
                         return
 
                     # 订单更新（executionReport）
@@ -197,7 +197,7 @@ class BinanceAdapter(BaseExchange):
                         order_id = str(msg.get('i'))
 
                         # 🔍 调试日志：记录所有订单事件
-                        print(f"[{self._get_log_prefix()}] 📨 [Binance] 收到订单事件: ID={order_id}, 状态={order_status}, 方向={msg.get('S')}")
+                        print(f"{self._get_log_prefix()} 📨 收到订单事件: ID={order_id}, 状态={order_status}, 方向={msg.get('S')}")
 
                         # 根据订单状态确定事件类型
                         if order_status == 'FILLED':
@@ -221,7 +221,7 @@ class BinanceAdapter(BaseExchange):
                         on_order_update(event)
 
                 except Exception as e:
-                    print(f"[{self._get_log_prefix()}] ❌ [Binance] 解析用户消息失败: {e}")
+                    print(f"{self._get_log_prefix()} ❌ 解析用户消息失败: {e}")
 
             socket_id = self.manager.start_user_socket(callback=user_data_callback)
             self.order_socket_id = socket_id
@@ -241,10 +241,10 @@ class BinanceAdapter(BaseExchange):
             return True
 
         except BinanceAPIException as e:
-            print(f"Binance API Exception when starting order monitor: {e}")
+            print(f"{self._get_log_prefix()} ❌ 启动订单监控失败 [API错误]: {e}")
             return False
         except Exception as e:
-            print(f"Failed to start order monitor: {e}")
+            print(f"{self._get_log_prefix()} ❌ 启动订单监控失败: {e}")
             return False
 
     def stop_order_monitor(self) -> None:
