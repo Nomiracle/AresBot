@@ -1,7 +1,7 @@
 # binance_adapterv2.py
 import hashlib
 from typing import Dict, List, Optional, Callable, Any
-from binance.websockets import ThreadedWebsocketManager
+from binance import ThreadedWebsocketManager
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 import time
