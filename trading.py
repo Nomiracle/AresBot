@@ -184,6 +184,12 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
         if current_price == target_price:
             continue
         
+        # 计算价格差异百分比
+        price_diff_percent = abs(target_price - current_price) / current_price * 100
+        if price_diff_percent < 0.01:
+            print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 买单价格差异 {price_diff_percent:.4f}% < 0.01%，跳过改价")
+            continue
+        
         try:
             resp = exchange.cancel_replace_order(
                 symbol=config['symbol'],
@@ -252,7 +258,9 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
         
         # 价格差异超过阈值才改价
         price_diff_percent = abs(target_sell_price - current_sell_price) / current_sell_price * 100
-        if price_diff_percent < config.get('reprice_threshold_percent', 0.1):
+        # 首先检查是否小于 0.01%
+        if price_diff_percent < 0.01:
+            print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 卖单价格差异 {price_diff_percent:.4f}% < 0.01%，跳过改价")
             continue
         
         try:
