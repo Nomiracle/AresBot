@@ -32,6 +32,15 @@ class BinanceAdapter(BaseExchange):
         
         # 初始化锁
         self._init_lock = threading.Lock()
+        
+        # 重启重试计数
+        self._price_retry_count = 0
+        self._order_retry_count = 0
+        self._max_retries = 3
+        
+        # 保存启动监控的线程
+        self._price_monitor_thread: Optional[threading.Thread] = None
+        self._order_monitor_thread: Optional[threading.Thread] = None
 
     def _init_manager(self):
         """初始化 WebSocket 管理器"""
@@ -48,7 +57,8 @@ class BinanceAdapter(BaseExchange):
         try:
             self.client.ping()
             return True
-        except:
+        except BinanceAPIException as e:
+            print(f"Error: {e}")
             return False
 
     def _get_log_prefix(self) -> str:
@@ -65,6 +75,28 @@ class BinanceAdapter(BaseExchange):
             self._error_log_cache[error_key] = current_time
             return True
         return False
+
+    def _restart_price_monitor_async(self, symbol: str, on_price_update: Callable) -> None:
+        """在后台线程中重启价格监控（避免线程安全问题）"""
+        if self._price_retry_count < self._max_retries:
+            self._price_retry_count += 1
+            time.sleep(1)
+            print(f"{self._get_log_prefix()} 🔄 价格监控重启 (第 {self._price_retry_count}/{self._max_retries} 次)")
+            self.stop_price_monitor()
+            self.start_price_monitor(symbol, on_price_update)
+        else:
+            print(f"{self._get_log_prefix()} ❌ 价格监控重试次数已达上限 ({self._max_retries})")
+
+    def _restart_order_monitor_async(self, symbol: str, on_order_update: Callable) -> None:
+        """在后台线程中重启订单监控（避免线程安全问题）"""
+        if self._order_retry_count < self._max_retries:
+            self._order_retry_count += 1
+            time.sleep(1)
+            print(f"{self._get_log_prefix()} 🔄 订单监控重启 (第 {self._order_retry_count}/{self._max_retries} 次)")
+            self.stop_order_monitor()
+            self.start_order_monitor(symbol, on_order_update)
+        else:
+            print(f"{self._get_log_prefix()} ❌ 订单监控重试次数已达上限 ({self._max_retries})")
 
     def get_symbol_info(self, symbol: str) -> Dict:
         info = self.client.get_symbol_info(symbol.upper())
@@ -140,6 +172,7 @@ class BinanceAdapter(BaseExchange):
         self._current_symbol = symbol.upper()
         self._init_manager()
         self._price_callback = on_price_update
+        self._price_monitor_thread = threading.current_thread()
 
         def callback(msg):
             """解析币安行情消息"""
@@ -149,6 +182,32 @@ class BinanceAdapter(BaseExchange):
                 error_key = f"price_error_{msg.get('type', 'unknown')}"
                 if self._should_log_error(error_key):
                     print(f"{self._get_log_prefix()} ❌ 价格 WebSocket 错误: {msg}")
+                if msg.get('type') == 'ReadLoopClosed':
+                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 检测到 ReadLoopClosed 错误，准备重启价格监控")
+                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程: {self._price_monitor_thread}")
+                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 线程存活状态: {self._price_monitor_thread.is_alive() if self._price_monitor_thread else 'None'}")
+                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 当前重试次数: {self._price_retry_count}/{self._max_retries}")
+                    
+                    if self._price_monitor_thread and self._price_monitor_thread.is_alive():
+                        # 使用保存的线程执行重启
+                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 使用保存的线程引用创建新重启线程")
+                        self._price_monitor_thread = threading.Thread(
+                            target=self._restart_price_monitor_async,
+                            args=(symbol, on_price_update),
+                            daemon=True
+                        )
+                        self._price_monitor_thread.start()
+                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {self._price_monitor_thread}")
+                    else:
+                        # 如果保存的线程不存在或已结束，创建新线程
+                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程不存在或已结束，创建新线程")
+                        new_thread = threading.Thread(
+                            target=self._restart_price_monitor_async,
+                            args=(symbol, on_price_update),
+                            daemon=True
+                        )
+                        new_thread.start()
+                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {new_thread}")
                 return
             
             print(f"{self._get_log_prefix()} 🔍 价格回调收到消息: {msg}")
@@ -181,18 +240,19 @@ class BinanceAdapter(BaseExchange):
             return False
 
     def stop_price_monitor(self) -> None:
-        if self.price_socket_id and self.manager:
+        if self.manager:
             try:
-                self.manager.stop_socket(self.price_socket_id)
-            except:
-                pass
-            self.price_socket_id = None
+                self.manager.stop_socket('symbol_ticker_socket')
+                print(f"{self._get_log_prefix()} ✅ 已关闭 symbol_ticker_socket 数据流")
+            except Exception as e:
+                print(f"{self._get_log_prefix()} ⚠️ 关闭 symbol_ticker_socket 流失败: {e}")
         self._price_callback = None
 
     # ====================== WebSocket 用户订单流 ======================
     def start_order_monitor(self, symbol: str, on_order_update: Callable[[Dict], None]) -> bool:
         self._current_symbol = symbol.upper()
         self._init_manager()
+        self._order_monitor_thread = threading.current_thread()
         
         try:
             self._order_callback = on_order_update
@@ -209,6 +269,33 @@ class BinanceAdapter(BaseExchange):
                         error_key = f"user_error_{msg.get('type', 'unknown')}"
                         if self._should_log_error(error_key):
                             print(f"{self._get_log_prefix()} ❌ WebSocket错误: {msg}")
+
+                        if msg.get('type') == 'ReadLoopClosed':
+                            print(f"{self._get_log_prefix()} 🔧 [DEBUG] 检测到 ReadLoopClosed 错误，准备重启订单监控")
+                            print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程: {self._order_monitor_thread}")
+                            print(f"{self._get_log_prefix()} 🔧 [DEBUG] 线程存活状态: {self._order_monitor_thread.is_alive() if self._order_monitor_thread else 'None'}")
+                            print(f"{self._get_log_prefix()} 🔧 [DEBUG] 当前重试次数: {self._order_retry_count}/{self._max_retries}")
+                            
+                            if self._order_monitor_thread and self._order_monitor_thread.is_alive():
+                                # 使用保存的线程执行重启
+                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 使用保存的线程引用创建新重启线程")
+                                self._order_monitor_thread = threading.Thread(
+                                    target=self._restart_order_monitor_async,
+                                    args=(symbol, on_order_update),
+                                    daemon=True
+                                )
+                                self._order_monitor_thread.start()
+                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {self._order_monitor_thread}")
+                            else:
+                                # 如果保存的线程不存在或已结束，创建新线程
+                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程不存在或已结束，创建新线程")
+                                new_thread = threading.Thread(
+                                    target=self._restart_order_monitor_async,
+                                    args=(symbol, on_order_update),
+                                    daemon=True
+                                )
+                                new_thread.start()
+                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {new_thread}")
                         return
 
                     if msg_type == 'executionReport':
@@ -258,15 +345,12 @@ class BinanceAdapter(BaseExchange):
             return False
 
     def stop_order_monitor(self) -> None:
-        if self._user_socket_id and self.manager:
-            try:
-                if self._user_socket_id != 'user_stream':
-                    self.manager.stop_socket(self._user_socket_id)
-                self._user_socket_id = None
-                print(f"{self._get_log_prefix()} ✅ 已关闭用户数据流")
-            except Exception as e:
-                print(f"{self._get_log_prefix()} ⚠️ 关闭用户数据流失败: {e}")
-        
+        try:
+            if self.manager:
+                self.manager.stop_socket('user_socket')
+            print(f"{self._get_log_prefix()} ✅ 已关闭用户数据流")
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ⚠️ 关闭用户数据流失败: {e}")
         self._order_callback = None
 
 
