@@ -41,6 +41,10 @@ class BinanceAdapter(BaseExchange):
         # 保存启动监控的线程
         self._price_monitor_thread: Optional[threading.Thread] = None
         self._order_monitor_thread: Optional[threading.Thread] = None
+        
+        # ReadLoopClosed 错误处理锁
+        self._price_restart_lock = threading.Lock()
+        self._order_restart_lock = threading.Lock()
 
     def _init_manager(self):
         """初始化 WebSocket 管理器"""
@@ -183,31 +187,39 @@ class BinanceAdapter(BaseExchange):
                 if self._should_log_error(error_key):
                     print(f"{self._get_log_prefix()} ❌ 价格 WebSocket 错误: {msg}")
                 if msg.get('type') == 'ReadLoopClosed':
-                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 检测到 ReadLoopClosed 错误，准备重启价格监控")
-                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程: {self._price_monitor_thread}")
-                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 线程存活状态: {self._price_monitor_thread.is_alive() if self._price_monitor_thread else 'None'}")
-                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 当前重试次数: {self._price_retry_count}/{self._max_retries}")
-                    
-                    if self._price_monitor_thread and self._price_monitor_thread.is_alive():
-                        # 使用保存的线程执行重启
-                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 使用保存的线程引用创建新重启线程")
-                        self._price_monitor_thread = threading.Thread(
-                            target=self._restart_price_monitor_async,
-                            args=(symbol, on_price_update),
-                            daemon=True
-                        )
-                        self._price_monitor_thread.start()
-                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {self._price_monitor_thread}")
+                    # 使用锁防止毫秒级别的多次回调同时触发重启
+                    if self._price_restart_lock.acquire(blocking=False):
+                        try:
+                            print(f"{self._get_log_prefix()} 🔧 [DEBUG] 检测到 ReadLoopClosed 错误，准备重启价格监控")
+                            print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程: {self._price_monitor_thread}")
+                            print(f"{self._get_log_prefix()} 🔧 [DEBUG] 线程存活状态: {self._price_monitor_thread.is_alive() if self._price_monitor_thread else 'None'}")
+                            print(f"{self._get_log_prefix()} 🔧 [DEBUG] 当前重试次数: {self._price_retry_count}/{self._max_retries}")
+                            
+                            if self._price_monitor_thread and self._price_monitor_thread.is_alive():
+                                # 使用保存的线程执行重启
+                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 使用保存的线程引用创建新重启线程")
+                                self._price_monitor_thread = threading.Thread(
+                                    target=self._restart_price_monitor_async,
+                                    args=(symbol, on_price_update),
+                                    daemon=True
+                                )
+                                self._price_monitor_thread.start()
+                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {self._price_monitor_thread}")
+                            else:
+                                # 如果保存的线程不存在或已结束，创建新线程
+                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程不存在或已结束，创建新线程")
+                                new_thread = threading.Thread(
+                                    target=self._restart_price_monitor_async,
+                                    args=(symbol, on_price_update),
+                                    daemon=True
+                                )
+                                new_thread.start()
+                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {new_thread}")
+                        finally:
+                            # 延迟释放锁，防止毫秒级的重复触发
+                            threading.Timer(0.5, self._price_restart_lock.release).start()
                     else:
-                        # 如果保存的线程不存在或已结束，创建新线程
-                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程不存在或已结束，创建新线程")
-                        new_thread = threading.Thread(
-                            target=self._restart_price_monitor_async,
-                            args=(symbol, on_price_update),
-                            daemon=True
-                        )
-                        new_thread.start()
-                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {new_thread}")
+                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] ReadLoopClosed 错误处理正在进行中，跳过本次触发")
                 return
             
             print(f"{self._get_log_prefix()} 🔍 价格回调收到消息: {msg}")
@@ -271,31 +283,39 @@ class BinanceAdapter(BaseExchange):
                             print(f"{self._get_log_prefix()} ❌ WebSocket错误: {msg}")
 
                         if msg.get('type') == 'ReadLoopClosed':
-                            print(f"{self._get_log_prefix()} 🔧 [DEBUG] 检测到 ReadLoopClosed 错误，准备重启订单监控")
-                            print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程: {self._order_monitor_thread}")
-                            print(f"{self._get_log_prefix()} 🔧 [DEBUG] 线程存活状态: {self._order_monitor_thread.is_alive() if self._order_monitor_thread else 'None'}")
-                            print(f"{self._get_log_prefix()} 🔧 [DEBUG] 当前重试次数: {self._order_retry_count}/{self._max_retries}")
-                            
-                            if self._order_monitor_thread and self._order_monitor_thread.is_alive():
-                                # 使用保存的线程执行重启
-                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 使用保存的线程引用创建新重启线程")
-                                self._order_monitor_thread = threading.Thread(
-                                    target=self._restart_order_monitor_async,
-                                    args=(symbol, on_order_update),
-                                    daemon=True
-                                )
-                                self._order_monitor_thread.start()
-                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {self._order_monitor_thread}")
+                            # 使用锁防止毫秒级别的多次回调同时触发重启
+                            if self._order_restart_lock.acquire(blocking=False):
+                                try:
+                                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 检测到 ReadLoopClosed 错误，准备重启订单监控")
+                                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程: {self._order_monitor_thread}")
+                                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 线程存活状态: {self._order_monitor_thread.is_alive() if self._order_monitor_thread else 'None'}")
+                                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 当前重试次数: {self._order_retry_count}/{self._max_retries}")
+                                    
+                                    if self._order_monitor_thread and self._order_monitor_thread.is_alive():
+                                        # 使用保存的线程执行重启
+                                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 使用保存的线程引用创建新重启线程")
+                                        self._order_monitor_thread = threading.Thread(
+                                            target=self._restart_order_monitor_async,
+                                            args=(symbol, on_order_update),
+                                            daemon=True
+                                        )
+                                        self._order_monitor_thread.start()
+                                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {self._order_monitor_thread}")
+                                    else:
+                                        # 如果保存的线程不存在或已结束，创建新线程
+                                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程不存在或已结束，创建新线程")
+                                        new_thread = threading.Thread(
+                                            target=self._restart_order_monitor_async,
+                                            args=(symbol, on_order_update),
+                                            daemon=True
+                                        )
+                                        new_thread.start()
+                                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {new_thread}")
+                                finally:
+                                    # 延迟释放锁，防止毫秒级的重复触发
+                                    threading.Timer(0.5, self._order_restart_lock.release).start()
                             else:
-                                # 如果保存的线程不存在或已结束，创建新线程
-                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程不存在或已结束，创建新线程")
-                                new_thread = threading.Thread(
-                                    target=self._restart_order_monitor_async,
-                                    args=(symbol, on_order_update),
-                                    daemon=True
-                                )
-                                new_thread.start()
-                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {new_thread}")
+                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] ReadLoopClosed 错误处理正在进行中，跳过本次触发")
                         return
 
                     if msg_type == 'executionReport':
