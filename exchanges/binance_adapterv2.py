@@ -4,6 +4,7 @@ from binance import ThreadedWebsocketManager
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from datetime import datetime
+import time
 
 from .base import BaseExchange
 
@@ -23,6 +24,10 @@ class BinanceAdapter(BaseExchange):
         self._order_callback: Optional[Callable] = None
         self._order_callbacks: List[Callable] = []
         self._user_socket_id: Optional[str] = None
+        
+        # 错误日志频率控制（2秒内同一错误只打印一次）
+        self._error_log_cache: Dict[str, float] = {}
+        self._error_log_interval = 2.0
 
     def _init_manager(self):
         """初始化 WebSocket 管理器"""
@@ -45,6 +50,16 @@ class BinanceAdapter(BaseExchange):
         """生成日志前缀"""
         api_key_short = self.api_key[:6] if self.api_key else "NOKEY"
         return f"[{datetime.now().isoformat()}] [binance-{api_key_short}-{self._current_symbol}]"
+    
+    def _should_log_error(self, error_key: str) -> bool:
+        """检查是否应该打印错误日志（频率控制）"""
+        current_time = time.time()
+        last_log_time = self._error_log_cache.get(error_key, 0)
+        
+        if current_time - last_log_time >= self._error_log_interval:
+            self._error_log_cache[error_key] = current_time
+            return True
+        return False
 
     def get_symbol_info(self, symbol: str) -> Dict:
         info = self.client.get_symbol_info(symbol.upper())
@@ -122,11 +137,15 @@ class BinanceAdapter(BaseExchange):
 
         def callback(msg):
             """解析币安行情消息"""
-            print(f"{self._get_log_prefix()} 🔍 价格回调收到消息: {msg}")
+
             
             if msg.get('e') == 'error':
-                print(f"{self._get_log_prefix()} ❌ 价格 WebSocket 错误: {msg}")
+                error_key = f"price_error_{msg.get('type', 'unknown')}"
+                if self._should_log_error(error_key):
+                    print(f"{self._get_log_prefix()} ❌ 价格 WebSocket 错误: {msg}")
                 return
+            
+            print(f"{self._get_log_prefix()} 🔍 价格回调收到消息: {msg}")
             
             try:
                 price = msg.get('c')
@@ -185,7 +204,9 @@ class BinanceAdapter(BaseExchange):
                     print(f"{self._get_log_prefix()} 🔍 收到用户消息类型: {msg_type}")
 
                     if msg_type == 'error':
-                        print(f"{self._get_log_prefix()} ❌ WebSocket错误: {msg}")
+                        error_key = f"user_error_{msg.get('type', 'unknown')}"
+                        if self._should_log_error(error_key):
+                            print(f"{self._get_log_prefix()} ❌ WebSocket错误: {msg}")
                         return
 
                     if msg_type == 'executionReport':
