@@ -254,7 +254,7 @@ class BinanceAdapter(BaseExchange):
     def stop_price_monitor(self) -> None:
         if self.manager:
             try:
-                self.manager.stop_socket('symbol_ticker_socket')
+                self.manager.stop_socket(self.price_socket_id)
                 print(f"{self._get_log_prefix()} ✅ 已关闭 symbol_ticker_socket 数据流")
             except Exception as e:
                 print(f"{self._get_log_prefix()} ⚠️ 关闭 symbol_ticker_socket 流失败: {e}")
@@ -372,6 +372,48 @@ class BinanceAdapter(BaseExchange):
         except Exception as e:
             print(f"{self._get_log_prefix()} ⚠️ 关闭用户数据流失败: {e}")
         self._order_callback = None
+    
+    def cleanup(self) -> None:
+        """完全关闭 WebSocket 管理器和所有连接"""
+        try:
+            print(f"{self._get_log_prefix()} 🔌 开始清理 WebSocket 连接...")
+            
+            # 清除回调函数
+            self._price_callback = None
+            self._order_callback = None
+            
+            # 停止所有 socket
+            if self.manager:
+                try:
+                    # 停止价格 socket
+                    if self.price_socket_id:
+                        self.manager.stop_socket(self.price_socket_id)
+                        print(f"{self._get_log_prefix()} ✅ 已停止价格 socket: {self.price_socket_id}")
+                        self.price_socket_id = None
+                except Exception as e:
+                    print(f"{self._get_log_prefix()} ⚠️ 停止价格 socket 失败: {e}")
+                
+                try:
+                    # 停止用户数据 socket
+                    self.manager.stop_socket('user_socket')
+                    print(f"{self._get_log_prefix()} ✅ 已停止用户数据 socket")
+                except Exception as e:
+                    print(f"{self._get_log_prefix()} ⚠️ 停止用户数据 socket 失败: {e}")
+                
+                try:
+                    # 完全关闭 WebSocket 管理器
+                    print(f"{self._get_log_prefix()} 🛑 正在关闭 WebSocket 管理器...")
+                    self.manager.stop()
+                    self.manager = None
+                    print(f"{self._get_log_prefix()} ✅ WebSocket 管理器已完全关闭")
+                except Exception as e:
+                    print(f"{self._get_log_prefix()} ⚠️ 关闭 WebSocket 管理器失败: {e}")
+            
+            print(f"{self._get_log_prefix()} ✅ 清理完成")
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ❌ 清理过程出错: {e}")
+            import traceback
+            traceback.print_exc()
 
     def check_pending_orders(self, pending_orders: List[Dict]):
         """检查待处理订单的状态（用于 HTTP 轮询模式）

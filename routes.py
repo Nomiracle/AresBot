@@ -296,12 +296,15 @@ def register_routes(app):
                     exchange_name = b.get('config', {}).get('exchange', 'binance').upper()
                     b['running'] = False
                     
-                    # 停止监听器
+                    # 停止监听器并清理连接
                     exchange = b.get('exchange')
                     if exchange:
                         try:
-                            exchange.stop_price_monitor()
-                            exchange.stop_order_monitor()
+                            if hasattr(exchange, 'cleanup'):
+                                exchange.cleanup()
+                            else:
+                                exchange.stop_price_monitor()
+                                exchange.stop_order_monitor()
                         except Exception as e:
                             print(f"[{datetime.now().isoformat()}] [{username}-{exchange_name}-{symbol}] ⚠️ 停止监听器时出错: {e}")
                     
@@ -702,10 +705,13 @@ def register_routes(app):
                 else:
                     print(f"[{datetime.now().isoformat()}] {log_prefix} ℹ️ 无未完成订单")
                 
-                # 停止监听器
-                exchange.stop_price_monitor()
-                exchange.stop_order_monitor()
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 已停止监听器")
+                # 停止监听器并清理连接
+                if hasattr(exchange, 'cleanup'):
+                    exchange.cleanup()
+                else:
+                    exchange.stop_price_monitor()
+                    exchange.stop_order_monitor()
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 已停止监听器并清理连接")
             except Exception as e:
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 清理订单时出错: {e}")
         
