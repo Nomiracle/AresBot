@@ -52,8 +52,8 @@ class Logger(object):
         try:
             today = datetime.now().strftime('%Y-%m-%d')
             
-            # 如果日期变了，关闭旧文件，打开新文件
-            if today != self.current_date:
+            # 如果日期变了或文件未打开，打开/切换日志文件
+            if today != self.current_date or self.log_file is None:
                 if self.log_file:
                     try:
                         self.log_file.close()
@@ -156,7 +156,7 @@ def setup_logging(log_dir='logs', prefix='trading'):
     stderr_logger = Logger(log_dir, f"{prefix}_stdout", sys.stderr)
     sys.stderr = stderr_logger
     
-    print(f"[{datetime.now().isoformat()}] 📝 日志系统已启动，日志目录: {log_dir}")
+    print(f"[{datetime.now().isoformat()}] 日志系统已启动，日志目录: {log_dir}")
     
     return stdout_logger, stderr_logger
 
@@ -177,7 +177,7 @@ def restore_logging(stdout_logger, stderr_logger):
     stdout_logger.close()
     stderr_logger.close()
     
-    print(f"[{datetime.now().isoformat()}] 📝 日志系统已关闭")
+    print(f"[{datetime.now().isoformat()}] 日志系统已关闭")
 
 
 # 使用示例
