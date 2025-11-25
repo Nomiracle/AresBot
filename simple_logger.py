@@ -23,118 +23,53 @@ class Logger(object):
         self.terminal = stream
         self.log_dir = log_dir
         self.prefix = prefix
-        self.file_error = False  # 标记文件操作是否失败
         
         # 创建日志目录
-        try:
-            if not os.path.exists(log_dir):
-                os.makedirs(log_dir)
-        except Exception as e:
-            # 目录创建失败,只输出到终端
-            self.file_error = True
-            try:
-                self.terminal.write(f"[Logger] 警告: 无法创建日志目录 {log_dir}: {e}\n")
-                self.terminal.flush()
-            except:
-                pass  # 终端输出也失败,静默处理
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
         
         # 初始化日志文件
         self.current_date = None
         self.log_file = None
-        if not self.file_error:
-            self._open_log_file()
+        self._open_log_file()
     
     def _open_log_file(self):
         """打开或切换日志文件（按日期）"""
-        if self.file_error:
-            return  # 已经标记为文件错误,不再尝试
+        today = datetime.now().strftime('%Y-%m-%d')
         
-        try:
-            today = datetime.now().strftime('%Y-%m-%d')
+        # 如果日期变了，关闭旧文件，打开新文件
+        if today != self.current_date:
+            if self.log_file:
+                self.log_file.close()
             
-            # 如果日期变了或文件未打开，打开/切换日志文件
-            if today != self.current_date or self.log_file is None:
-                if self.log_file:
-                    try:
-                        self.log_file.close()
-                    except Exception as e:
-                        # 关闭失败,记录但继续
-                        try:
-                            self.terminal.write(f"[Logger] 警告: 关闭日志文件失败: {e}\n")
-                        except:
-                            pass
-                
-                log_filename = os.path.join(self.log_dir, f"{self.prefix}_{today}.log")
-                self.log_file = open(log_filename, 'a', encoding='utf-8', buffering=1)
-                self.current_date = today
-        except Exception as e:
-            # 文件操作失败,标记错误状态并降级到只输出终端
-            self.file_error = True
-            self.log_file = None
-            try:
-                self.terminal.write(f"[Logger] 错误: 无法打开日志文件: {e}\n")
-                self.terminal.flush()
-            except:
-                pass  # 终端输出也失败,静默处理
+            log_filename = os.path.join(self.log_dir, f"{self.prefix}_{today}.log")
+            self.log_file = open(log_filename, 'a', encoding='utf-8')
+            self.current_date = today
     
     def write(self, message):
         """写入消息到控制台和文件"""
-        # 优先写入控制台(最重要)
-        try:
-            self.terminal.write(message)
-        except Exception as e:
-            # 终端写入失败,尝试写入文件(如果可用)
-            pass
+        # 写入控制台
+        self.terminal.write(message)
         
         # 检查是否需要切换日志文件
-        if not self.file_error:
-            self._open_log_file()
+        self._open_log_file()
         
         # 写入文件
-        if self.log_file and not self.file_error:
-            try:
-                self.log_file.write(message)
-                self.log_file.flush()  # 立即刷新到磁盘
-            except Exception as e:
-                # 文件写入失败,标记错误并降级
-                self.file_error = True
-                try:
-                    self.terminal.write(f"[Logger] 错误: 写入日志文件失败: {e}\n")
-                    self.terminal.flush()
-                except:
-                    pass
+        if self.log_file:
+            self.log_file.write(message)
+            self.log_file.flush()  # 立即刷新到磁盘
     
     def flush(self):
         """刷新缓冲区"""
-        try:
-            self.terminal.flush()
-        except Exception:
-            pass  # 终端刷新失败,静默处理
-        
-        if self.log_file and not self.file_error:
-            try:
-                self.log_file.flush()
-            except Exception as e:
-                # 刷新失败,标记错误
-                self.file_error = True
-                try:
-                    self.terminal.write(f"[Logger] 错误: 刷新日志文件失败: {e}\n")
-                except:
-                    pass
+        self.terminal.flush()
+        if self.log_file:
+            self.log_file.flush()
     
     def close(self):
         """关闭日志文件"""
         if self.log_file:
-            try:
-                self.log_file.close()
-            except Exception as e:
-                # 关闭失败,记录但不抛出异常
-                try:
-                    self.terminal.write(f"[Logger] 警告: 关闭日志文件失败: {e}\n")
-                except:
-                    pass
-            finally:
-                self.log_file = None
+            self.log_file.close()
+            self.log_file = None
 
 
 def setup_logging(log_dir='logs', prefix='trading'):
@@ -156,7 +91,7 @@ def setup_logging(log_dir='logs', prefix='trading'):
     stderr_logger = Logger(log_dir, f"{prefix}_stdout", sys.stderr)
     sys.stderr = stderr_logger
     
-    print(f"[{datetime.now().isoformat()}] 日志系统已启动，日志目录: {log_dir}")
+    print(f"[{datetime.now().isoformat()}] 📝 日志系统已启动，日志目录: {log_dir}")
     
     return stdout_logger, stderr_logger
 
@@ -177,7 +112,7 @@ def restore_logging(stdout_logger, stderr_logger):
     stdout_logger.close()
     stderr_logger.close()
     
-    print(f"[{datetime.now().isoformat()}] 日志系统已关闭")
+    print(f"[{datetime.now().isoformat()}] 📝 日志系统已关闭")
 
 
 # 使用示例
