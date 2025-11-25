@@ -5,6 +5,7 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from datetime import datetime
 import time
+import threading
 
 from .base import BaseExchange
 
@@ -21,23 +22,27 @@ class BinanceAdapter(BaseExchange):
         # WebSocket 管理器（实例变量）
         self.manager: Optional[ThreadedWebsocketManager] = None
         self.price_socket_id: Optional[str] = None
+        self._price_callback: Optional[Callable] = None
         self._order_callback: Optional[Callable] = None
-        self._order_callbacks: List[Callable] = []
         self._user_socket_id: Optional[str] = None
         
         # 错误日志频率控制（2秒内同一错误只打印一次）
         self._error_log_cache: Dict[str, float] = {}
         self._error_log_interval = 2.0
+        
+        # 初始化锁
+        self._init_lock = threading.Lock()
 
     def _init_manager(self):
         """初始化 WebSocket 管理器"""
-        if self.manager is None:
-            self.manager = ThreadedWebsocketManager(
-                api_key=self.api_key,
-                api_secret=self.api_secret,
-                testnet=self.testnet
-            )
-            self.manager.start()
+        with self._init_lock:
+            if self.manager is None:
+                self.manager = ThreadedWebsocketManager(
+                    api_key=self.api_key,
+                    api_secret=self.api_secret,
+                    testnet=self.testnet
+                )
+                self.manager.start()
 
     def ping(self) -> bool:
         try:
@@ -134,6 +139,7 @@ class BinanceAdapter(BaseExchange):
     def start_price_monitor(self, symbol: str, on_price_update: Callable[[float], None]) -> bool:
         self._current_symbol = symbol.upper()
         self._init_manager()
+        self._price_callback = on_price_update
 
         def callback(msg):
             """解析币安行情消息"""
@@ -152,7 +158,8 @@ class BinanceAdapter(BaseExchange):
                 if price:
                     price = float(price)
                     print(f"{self._get_log_prefix()} 💰 价格更新: {price}")
-                    on_price_update(price)
+                    if self._price_callback:
+                        self._price_callback(price)
                 else:
                     print(f"{self._get_log_prefix()} ⚠️ 消息中未找到价格字段: {list(msg.keys())}")
             except Exception as e:
@@ -180,6 +187,7 @@ class BinanceAdapter(BaseExchange):
             except:
                 pass
             self.price_socket_id = None
+        self._price_callback = None
 
     # ====================== WebSocket 用户订单流 ======================
     def start_order_monitor(self, symbol: str, on_order_update: Callable[[Dict], None]) -> bool:
@@ -188,12 +196,6 @@ class BinanceAdapter(BaseExchange):
         
         try:
             self._order_callback = on_order_update
-            
-            # 如果已有用户数据流，直接添加回调
-            if self._user_socket_id is not None:
-                print(f"{self._get_log_prefix()} ♻️ 复用现有用户数据流订阅")
-                self._order_callbacks.append(on_order_update)
-                return True
             
             print(f"{self._get_log_prefix()} 🆕 创建新的用户数据流订阅")
             
@@ -233,10 +235,10 @@ class BinanceAdapter(BaseExchange):
                             'lastExecutedQty': msg.get('l')
                         }
                         
-                        # 分发给所有回调
-                        for callback in self._order_callbacks:
+                        # 执行回调
+                        if self._order_callback:
                             try:
-                                callback(event)
+                                self._order_callback(event)
                             except Exception as cb_e:
                                 print(f"{self._get_log_prefix()} ⚠️ 回调执行失败: {cb_e}")
 
@@ -245,7 +247,6 @@ class BinanceAdapter(BaseExchange):
 
             socket_id = self.manager.start_user_socket(callback=user_data_callback)
             self._user_socket_id = socket_id if socket_id else 'user_stream'
-            self._order_callbacks.append(on_order_update)
             print(f"{self._get_log_prefix()} ✅ 用户数据流订阅成功 (socket_id: {socket_id})")
             return True
 
@@ -257,11 +258,7 @@ class BinanceAdapter(BaseExchange):
             return False
 
     def stop_order_monitor(self) -> None:
-        if self._order_callback and self._order_callback in self._order_callbacks:
-            self._order_callbacks.remove(self._order_callback)
-            print(f"{self._get_log_prefix()} ✅ 已移除订单回调")
-        
-        if not self._order_callbacks and self._user_socket_id and self.manager:
+        if self._user_socket_id and self.manager:
             try:
                 if self._user_socket_id != 'user_stream':
                     self.manager.stop_socket(self._user_socket_id)
@@ -272,17 +269,4 @@ class BinanceAdapter(BaseExchange):
         
         self._order_callback = None
 
-    def check_pending_orders(self, pending_orders: List[Dict]):
-        """HTTP 轮询 fallback"""
-        for order in pending_orders:
-            symbol = order['symbol']
-            order_id = order['order_id']
-            try:
-                info = self.get_order(symbol, order_id)
-            except:
-                pass
 
-    @staticmethod
-    def shutdown_all():
-        """清理所有 manager"""
-        pass
