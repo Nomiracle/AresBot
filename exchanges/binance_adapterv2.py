@@ -373,4 +373,16 @@ class BinanceAdapter(BaseExchange):
             print(f"{self._get_log_prefix()} ⚠️ 关闭用户数据流失败: {e}")
         self._order_callback = None
 
-
+    def check_pending_orders(self, pending_orders: List[Dict]):
+        """检查待处理订单的状态（用于 HTTP 轮询模式）
+        
+        Args:
+            pending_orders: 待检查的订单列表，每个订单包含 order_id, symbol 等信息
+        
+        Note:
+            BinanceAdapter 使用 WebSocket 实时监控订单，不需要轮询
+            此方法为满足基类接口要求而实现，实际不使用
+        """
+        # WebSocket 模式下不需要轮询检查订单
+        # 订单更新会通过 start_order_monitor 的回调实时推送
+        pass
