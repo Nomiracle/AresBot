@@ -80,27 +80,18 @@ class BinanceAdapter(BaseExchange):
             return True
         return False
 
-    def _restart_price_monitor_async(self, symbol: str, on_price_update: Callable) -> None:
-        """在后台线程中重启价格监控（避免线程安全问题）"""
+    def _restart_ws_async(self, symbol: str, on_price_update: Callable, on_order_update: Callable) -> None:
+        """在后台线程中重启 WebSocket 监控（避免线程安全问题）"""
+        # 使用价格重试计数器作为主计数器
         if self._price_retry_count < self._max_retries:
             self._price_retry_count += 1
+            self._order_retry_count = self._price_retry_count  # 同步计数器
             time.sleep(1)
-            print(f"{self._get_log_prefix()} 🔄 价格监控重启 (第 {self._price_retry_count}/{self._max_retries} 次)")
-            self.stop_price_monitor()
-            self.start_price_monitor(symbol, on_price_update)
+            print(f"{self._get_log_prefix()} 🔄 WebSocket 监控重启 (第 {self._price_retry_count}/{self._max_retries} 次)")
+            self.stop_ws()
+            self.start_ws(symbol, on_price_update, on_order_update)
         else:
-            print(f"{self._get_log_prefix()} ❌ 价格监控重试次数已达上限 ({self._max_retries})")
-
-    def _restart_order_monitor_async(self, symbol: str, on_order_update: Callable) -> None:
-        """在后台线程中重启订单监控（避免线程安全问题）"""
-        if self._order_retry_count < self._max_retries:
-            self._order_retry_count += 1
-            time.sleep(1)
-            print(f"{self._get_log_prefix()} 🔄 订单监控重启 (第 {self._order_retry_count}/{self._max_retries} 次)")
-            self.stop_order_monitor()
-            self.start_order_monitor(symbol, on_order_update)
-        else:
-            print(f"{self._get_log_prefix()} ❌ 订单监控重试次数已达上限 ({self._max_retries})")
+            print(f"{self._get_log_prefix()} ❌ WebSocket 监控重试次数已达上限 ({self._max_retries})")
 
     def get_symbol_info(self, symbol: str) -> Dict:
         info = self.client.get_symbol_info(symbol.upper())
@@ -171,14 +162,19 @@ class BinanceAdapter(BaseExchange):
                 return step, decimals
         return 0.0, 0
 
-    # ====================== WebSocket 价格监控 ======================
-    def start_price_monitor(self, symbol: str, on_price_update: Callable[[float], None]) -> bool:
+    # ====================== WebSocket 监控 ======================
+    def start_ws(self, symbol: str, on_price_update: Callable[[float], None], 
+                 on_order_update: Callable[[Dict], None]) -> bool:
+        """启动 WebSocket 监听（价格和订单）"""
         self._current_symbol = symbol.upper()
         self._init_manager()
         self._price_callback = on_price_update
+        self._order_callback = on_order_update
         self._price_monitor_thread = threading.current_thread()
+        self._order_monitor_thread = threading.current_thread()
 
-        def callback(msg):
+        # 启动价格监控
+        def price_callback(msg):
             """解析币安行情消息"""
 
             
@@ -190,7 +186,7 @@ class BinanceAdapter(BaseExchange):
                     # 使用锁防止毫秒级别的多次回调同时触发重启
                     if self._price_restart_lock.acquire(blocking=False):
                         try:
-                            print(f"{self._get_log_prefix()} 🔧 [DEBUG] 检测到 ReadLoopClosed 错误，准备重启价格监控")
+                            print(f"{self._get_log_prefix()} 🔧 [DEBUG] 检测到 ReadLoopClosed 错误，准备重启 WebSocket 监控")
                             print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程: {self._price_monitor_thread}")
                             print(f"{self._get_log_prefix()} 🔧 [DEBUG] 线程存活状态: {self._price_monitor_thread.is_alive() if self._price_monitor_thread else 'None'}")
                             print(f"{self._get_log_prefix()} 🔧 [DEBUG] 当前重试次数: {self._price_retry_count}/{self._max_retries}")
@@ -199,8 +195,8 @@ class BinanceAdapter(BaseExchange):
                                 # 使用保存的线程执行重启
                                 print(f"{self._get_log_prefix()} 🔧 [DEBUG] 使用保存的线程引用创建新重启线程")
                                 self._price_monitor_thread = threading.Thread(
-                                    target=self._restart_price_monitor_async,
-                                    args=(symbol, on_price_update),
+                                    target=self._restart_ws_async,
+                                    args=(symbol, on_price_update, self._order_callback),
                                     daemon=True
                                 )
                                 self._price_monitor_thread.start()
@@ -209,8 +205,8 @@ class BinanceAdapter(BaseExchange):
                                 # 如果保存的线程不存在或已结束，创建新线程
                                 print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程不存在或已结束，创建新线程")
                                 new_thread = threading.Thread(
-                                    target=self._restart_price_monitor_async,
-                                    args=(symbol, on_price_update),
+                                    target=self._restart_ws_async,
+                                    args=(symbol, on_price_update, self._order_callback),
                                     daemon=True
                                 )
                                 new_thread.start()
@@ -236,141 +232,134 @@ class BinanceAdapter(BaseExchange):
             except Exception as e:
                 print(f"{self._get_log_prefix()} ❌ 解析价格失败: {e}")
 
+        # 启动订单监控
+        def user_data_callback(msg):
+            """解析币安用户数据消息"""
+            try:
+                msg_type = msg.get('e', 'unknown')
+                print(f"{self._get_log_prefix()} 🔍 收到用户消息类型: {msg_type}")
+
+                if msg_type == 'error':
+                    error_key = f"user_error_{msg.get('type', 'unknown')}"
+                    if self._should_log_error(error_key):
+                        print(f"{self._get_log_prefix()} ❌ WebSocket错误: {msg}")
+
+                    if msg.get('type') == 'ReadLoopClosed':
+                        # 使用锁防止毫秒级别的多次回调同时触发重启
+                        if self._order_restart_lock.acquire(blocking=False):
+                            try:
+                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 检测到 ReadLoopClosed 错误，准备重启 WebSocket 监控")
+                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程: {self._order_monitor_thread}")
+                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 线程存活状态: {self._order_monitor_thread.is_alive() if self._order_monitor_thread else 'None'}")
+                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] 当前重试次数: {self._order_retry_count}/{self._max_retries}")
+                                
+                                if self._order_monitor_thread and self._order_monitor_thread.is_alive():
+                                    # 使用保存的线程执行重启
+                                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 使用保存的线程引用创建新重启线程")
+                                    self._order_monitor_thread = threading.Thread(
+                                        target=self._restart_ws_async,
+                                        args=(symbol, self._price_callback, on_order_update),
+                                        daemon=True
+                                    )
+                                    self._order_monitor_thread.start()
+                                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {self._order_monitor_thread}")
+                                else:
+                                    # 如果保存的线程不存在或已结束，创建新线程
+                                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程不存在或已结束，创建新线程")
+                                    new_thread = threading.Thread(
+                                        target=self._restart_ws_async,
+                                        args=(symbol, self._price_callback, on_order_update),
+                                        daemon=True
+                                    )
+                                    new_thread.start()
+                                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {new_thread}")
+                            finally:
+                                # 延迟释放锁，防止毫秒级的重复触发
+                                threading.Timer(0.5, self._order_restart_lock.release).start()
+                        else:
+                            print(f"{self._get_log_prefix()} 🔧 [DEBUG] ReadLoopClosed 错误处理正在进行中，跳过本次触发")
+                    return
+
+                if msg_type == 'executionReport':
+                    order_status = msg.get('X')
+                    order_id = str(msg.get('i'))
+                    print(f"{self._get_log_prefix()} 📨 收到订单事件: ID={order_id}, 状态={order_status}")
+
+                    if order_status == 'FILLED':
+                        event_type = 'order_filled'
+                    elif order_status == 'CANCELED':
+                        event_type = 'order_cancelled'
+                    else:
+                        event_type = 'order_update'
+
+                    event = {
+                        'event_type': event_type,
+                        'order_id': order_id,
+                        'symbol': msg.get('s'),
+                        'side': msg.get('S'),
+                        'status': order_status,
+                        'price': msg.get('p'),
+                        'quantity': msg.get('q'),
+                        'executedQty': msg.get('z'),
+                        'lastExecutedQty': msg.get('l')
+                    }
+                    
+                    # 执行回调
+                    if self._order_callback:
+                        try:
+                            self._order_callback(event)
+                        except Exception as cb_e:
+                            print(f"{self._get_log_prefix()} ⚠️ 回调执行失败: {cb_e}")
+
+            except Exception as e:
+                print(f"{self._get_log_prefix()} ❌ 解析用户消息失败: {e}")
+
+        # 启动价格和订单监控
         try:
-            print(f"{self._get_log_prefix()} 🆕 启动价格监控 (symbol: {symbol})")
-            socket_id = self.manager.start_symbol_ticker_socket(
-                callback=callback,
+            print(f"{self._get_log_prefix()} 🆕 启动 WebSocket 监控 (symbol: {symbol})")
+            
+            # 启动价格监控
+            price_socket_id = self.manager.start_symbol_ticker_socket(
+                callback=price_callback,
                 symbol=symbol
             )
-            self.price_socket_id = socket_id
-            print(f"{self._get_log_prefix()} ✅ 价格监控已启动 (socket_id: {socket_id})")
+            self.price_socket_id = price_socket_id
+            print(f"{self._get_log_prefix()} ✅ 价格监控已启动 (socket_id: {price_socket_id})")
+            
+            # 启动订单监控
+            order_socket_id = self.manager.start_user_socket(callback=user_data_callback)
+            self._user_socket_id = order_socket_id if order_socket_id else 'user_stream'
+            print(f"{self._get_log_prefix()} ✅ 订单监控已启动 (socket_id: {order_socket_id})")
+            
             return True
+
+        except BinanceAPIException as e:
+            print(f"{self._get_log_prefix()} ❌ 启动 WebSocket 监控失败 [API错误]: {e}")
+            return False
         except Exception as e:
-            print(f"{self._get_log_prefix()} ❌ 启动价格监控失败: {e}")
+            print(f"{self._get_log_prefix()} ❌ 启动 WebSocket 监控失败: {e}")
             import traceback
             traceback.print_exc()
             return False
 
-    def stop_price_monitor(self) -> None:
-        if self.manager:
+    def stop_ws(self) -> None:
+        """停止 WebSocket 监听（价格和订单）"""
+        # 停止价格监控
+        if self.manager and self.price_socket_id:
             try:
                 self.manager.stop_socket(self.price_socket_id)
-                print(f"{self._get_log_prefix()} ✅ 已关闭 symbol_ticker_socket 数据流")
+                print(f"{self._get_log_prefix()} ✅ 已关闭价格监控数据流")
             except Exception as e:
-                print(f"{self._get_log_prefix()} ⚠️ 关闭 symbol_ticker_socket 流失败: {e}")
+                print(f"{self._get_log_prefix()} ⚠️ 关闭价格监控流失败: {e}")
         self._price_callback = None
-
-    # ====================== WebSocket 用户订单流 ======================
-    def start_order_monitor(self, symbol: str, on_order_update: Callable[[Dict], None]) -> bool:
-        self._current_symbol = symbol.upper()
-        self._init_manager()
-        self._order_monitor_thread = threading.current_thread()
         
-        try:
-            self._order_callback = on_order_update
-            
-            print(f"{self._get_log_prefix()} 🆕 创建新的用户数据流订阅")
-            
-            def user_data_callback(msg):
-                """解析币安用户数据消息"""
-                try:
-                    msg_type = msg.get('e', 'unknown')
-                    print(f"{self._get_log_prefix()} 🔍 收到用户消息类型: {msg_type}")
-
-                    if msg_type == 'error':
-                        error_key = f"user_error_{msg.get('type', 'unknown')}"
-                        if self._should_log_error(error_key):
-                            print(f"{self._get_log_prefix()} ❌ WebSocket错误: {msg}")
-
-                        if msg.get('type') == 'ReadLoopClosed':
-                            # 使用锁防止毫秒级别的多次回调同时触发重启
-                            if self._order_restart_lock.acquire(blocking=False):
-                                try:
-                                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 检测到 ReadLoopClosed 错误，准备重启订单监控")
-                                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程: {self._order_monitor_thread}")
-                                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 线程存活状态: {self._order_monitor_thread.is_alive() if self._order_monitor_thread else 'None'}")
-                                    print(f"{self._get_log_prefix()} 🔧 [DEBUG] 当前重试次数: {self._order_retry_count}/{self._max_retries}")
-                                    
-                                    if self._order_monitor_thread and self._order_monitor_thread.is_alive():
-                                        # 使用保存的线程执行重启
-                                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 使用保存的线程引用创建新重启线程")
-                                        self._order_monitor_thread = threading.Thread(
-                                            target=self._restart_order_monitor_async,
-                                            args=(symbol, on_order_update),
-                                            daemon=True
-                                        )
-                                        self._order_monitor_thread.start()
-                                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {self._order_monitor_thread}")
-                                    else:
-                                        # 如果保存的线程不存在或已结束，创建新线程
-                                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 保存的线程不存在或已结束，创建新线程")
-                                        new_thread = threading.Thread(
-                                            target=self._restart_order_monitor_async,
-                                            args=(symbol, on_order_update),
-                                            daemon=True
-                                        )
-                                        new_thread.start()
-                                        print(f"{self._get_log_prefix()} 🔧 [DEBUG] 新线程已启动: {new_thread}")
-                                finally:
-                                    # 延迟释放锁，防止毫秒级的重复触发
-                                    threading.Timer(0.5, self._order_restart_lock.release).start()
-                            else:
-                                print(f"{self._get_log_prefix()} 🔧 [DEBUG] ReadLoopClosed 错误处理正在进行中，跳过本次触发")
-                        return
-
-                    if msg_type == 'executionReport':
-                        order_status = msg.get('X')
-                        order_id = str(msg.get('i'))
-                        print(f"{self._get_log_prefix()} 📨 收到订单事件: ID={order_id}, 状态={order_status}")
-
-                        if order_status == 'FILLED':
-                            event_type = 'order_filled'
-                        elif order_status == 'CANCELED':
-                            event_type = 'order_cancelled'
-                        else:
-                            event_type = 'order_update'
-
-                        event = {
-                            'event_type': event_type,
-                            'order_id': order_id,
-                            'symbol': msg.get('s'),
-                            'side': msg.get('S'),
-                            'status': order_status,
-                            'price': msg.get('p'),
-                            'quantity': msg.get('q'),
-                            'executedQty': msg.get('z'),
-                            'lastExecutedQty': msg.get('l')
-                        }
-                        
-                        # 执行回调
-                        if self._order_callback:
-                            try:
-                                self._order_callback(event)
-                            except Exception as cb_e:
-                                print(f"{self._get_log_prefix()} ⚠️ 回调执行失败: {cb_e}")
-
-                except Exception as e:
-                    print(f"{self._get_log_prefix()} ❌ 解析用户消息失败: {e}")
-
-            socket_id = self.manager.start_user_socket(callback=user_data_callback)
-            self._user_socket_id = socket_id if socket_id else 'user_stream'
-            print(f"{self._get_log_prefix()} ✅ 用户数据流订阅成功 (socket_id: {socket_id})")
-            return True
-
-        except BinanceAPIException as e:
-            print(f"{self._get_log_prefix()} ❌ 启动订单监控失败 [API错误]: {e}")
-            return False
-        except Exception as e:
-            print(f"{self._get_log_prefix()} ❌ 启动订单监控失败: {e}")
-            return False
-
-    def stop_order_monitor(self) -> None:
+        # 停止订单监控
         try:
             if self.manager:
                 self.manager.stop_socket('user_socket')
-            print(f"{self._get_log_prefix()} ✅ 已关闭用户数据流")
+            print(f"{self._get_log_prefix()} ✅ 已关闭订单监控数据流")
         except Exception as e:
-            print(f"{self._get_log_prefix()} ⚠️ 关闭用户数据流失败: {e}")
+            print(f"{self._get_log_prefix()} ⚠️ 关闭订单监控流失败: {e}")
         self._order_callback = None
     
     def cleanup(self) -> None:

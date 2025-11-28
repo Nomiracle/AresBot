@@ -79,29 +79,13 @@ class BaseExchange(ABC):
         pass
     
     @abstractmethod
-    def start_price_monitor(self, symbol: str, on_price_update: Callable[[float], None]) -> bool:
-        """启动价格监听（WebSocket 或 HTTP 轮询）
+    def start_ws(self, symbol: str, on_price_update: Callable[[float], None], 
+                 on_order_update: Callable[[Dict], None]) -> bool:
+        """启动 WebSocket 监听（价格和订单）
         
         Args:
             symbol: 交易对
             on_price_update: 价格更新回调函数，参数为最新价格
-            
-        Returns:
-            bool: 是否成功启动
-        """
-        pass
-    
-    @abstractmethod
-    def stop_price_monitor(self) -> None:
-        """停止价格监听"""
-        pass
-    
-    @abstractmethod
-    def start_order_monitor(self, symbol: str, on_order_update: Callable[[Dict], None]) -> bool:
-        """启动订单监听（WebSocket 或 HTTP 轮询）
-        
-        Args:
-            symbol: 交易对
             on_order_update: 订单更新回调函数，参数为订单事件字典
                 {
                     'event_type': 'order_filled' | 'order_update',
@@ -119,8 +103,8 @@ class BaseExchange(ABC):
         pass
     
     @abstractmethod
-    def stop_order_monitor(self) -> None:
-        """停止订单监听"""
+    def stop_ws(self) -> None:
+        """停止 WebSocket 监听（价格和订单）"""
         pass
     
     @abstractmethod

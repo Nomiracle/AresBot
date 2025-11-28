@@ -382,8 +382,7 @@ def trading_loop(username, symbol):
                         print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 订单回调错误: {e}")
                         traceback.print_exc()
 
-                exchange.start_price_monitor(config['symbol'], _on_price_update)
-                exchange.start_order_monitor(config['symbol'], _on_order_update)
+                exchange.start_ws(config['symbol'], _on_price_update, _on_order_update)
                 bot_data['monitor_started'] = True
 
             # 获取当前价格

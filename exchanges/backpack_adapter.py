@@ -721,113 +721,31 @@ class BackpackAdapter(BaseExchange):
         """获取原始公共客户端（用于扩展功能）"""
         return self.public
     
-    def start_price_monitor(self, symbol: str, on_price_update: Callable[[float], None]) -> bool:
-        """启动价格监听（使用 WebSocket）"""
-        print(f"[{datetime.now().isoformat()}] 🔄 [Backpack] 正在启动价格监听...")
+    def start_ws(self, symbol: str, on_price_update: Callable[[float], None], 
+                 on_order_update: Callable[[Dict], None]) -> bool:
+        """启动 WebSocket 监听（价格和订单）"""
+        print(f"[{datetime.now().isoformat()}] 🔄 [Backpack] 正在启动 WebSocket 监听...")
         
-        # 定义消息回调函数
-        def on_message(data):
-            # print(f"[{datetime.now().isoformat()}] 📡 [Backpack] 收到消息: {data}")
+        # 保存回调函数
+        self._on_price_callback = on_price_update
+        self._on_order_callback = on_order_update
+        self._monitor_symbol = self._convert_symbol(symbol)
+        
+        # 定义价格消息回调函数
+        def on_price_message(data):
+            # print(f"[{datetime.now().isoformat()}] 📡 [Backpack] 收到价格消息: {data}")
             # 解析价格数据
             msg_data = data.get('data', data)
             if 'a' in msg_data:  # ask price (卖一价)
                 price = float(msg_data['a'])
-                if on_price_update:
-                    on_price_update(price)
+                if self._on_price_callback:
+                    self._on_price_callback(price)
         
-        # 定义异步启动函数
-        async def _start_ws():
-            try:
-                # 创建 WebSocket 客户端
-                self._backpackWsPublic = BackpackWsAccount(
-                    symbol=self._convert_symbol(symbol),
-                    on_error=self._on_error,
-                    on_close=self._on_close,
-                    on_open=self._on_open
-                )
-                
-                # 连接 WebSocket
-                print(f"[{datetime.now().isoformat()}] 🔌 [Backpack] 正在连接 WebSocket...")
-                await self._backpackWsPublic.connect()
-                
-                # 订阅价格更新
-                print(f"[{datetime.now().isoformat()}] 📡 [Backpack] 正在订阅 {symbol} 价格...")
-                await self._backpackWsPublic.subscribe_markPrice(on_message=on_message)
-                
-                print(f"[{datetime.now().isoformat()}] ✅ [Backpack] 价格监听已启动")
-                
-            except Exception as e:
-                print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 启动价格监听失败: {e}")
-                import traceback
-                traceback.print_exc()
-        
-        try:
-            # 尝试获取当前事件循环
-            try:
-                loop = asyncio.get_running_loop()
-                # 如果已有运行中的循环,创建任务
-                asyncio.create_task(_start_ws())
-            except RuntimeError:
-                # 没有运行中的循环,创建新线程运行
-                import threading
-                def run_async():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(_start_ws())
-                    loop.run_forever()
-                
-                ws_thread = threading.Thread(target=run_async, daemon=True)
-                ws_thread.start()
-            
-            self._price_monitor_active = True
-            return True
-            
-        except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 启动价格监听失败: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
-    
-    def stop_price_monitor(self) -> None:
-        """停止价格监听"""
-        self._price_monitor_active = False
-        self._on_price_callback = None
-        
-        # 清理 WebSocket 连接
-        if self._backpackWsPublic:
-            try:
-                self._backpackWsPublic.clean_up()
-            except Exception as e:
-                print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 清理价格 WebSocket 失败: {e}")
-            self._backpackWsPublic = None
-        
-        if self._price_poll_thread:
-            self._price_poll_thread.join(timeout=2)
-            self._price_poll_thread = None
-        
-        print(f"[{datetime.now().isoformat()}] ⏹️ [Backpack] 价格监听已停止")
-    
-    def start_order_monitor(self, symbol: str, on_order_update: Callable[[Dict], None]) -> bool:
-        """启动订单监听（使用 HTTP 轮询）"""
-        # Backpack 不支持 WebSocket 订单推送，订单监听通过 check_pending_orders 实现
-        # 返回 False 表示不支持实时监听，需要调用 check_pending_orders 轮询
-        self._order_monitor_active = True
-        self._on_order_callback = on_order_update
-        self._monitor_symbol = self._convert_symbol(symbol)
-        
-        print(f"[{datetime.now().isoformat()}] ℹ️ [Backpack] 订单监听已启用 (需要通过 check_pending_orders 轮询)")
-
-        # 定义消息回调函数
-        def on_message(data):
+        # 定义订单消息回调函数
+        def on_order_message(data):
             print(f"[{datetime.now().isoformat()}] 📡 [Backpack] 收到订单消息: {data}")
             # 解析订单数据并调用回调
             msg_data = data.get('data', data)
-            """
-                {'data': {'E': 1762356307766843, 'O': 'USER', 'Q': '2.90430', 'S': 'Ask', 'T': 1762356307762632, 
-                'V': 'RejectTaker', 'X': 'Cancelled', 'Z': '0', 'e': 'orderCancelled', 'f': 'GTC', 'i': '17565247891', 
-                'o': 'LIMIT', 'p': '2.9043', 'q': '1.0', 'r': False, 's': 'APT_USDC', 't': None, 'y': False, 'z': '0'}, 'stream': 'account.orderUpdate'}
-
-            """
             event = {
                 'event_type': self._convert_order_status(msg_data.get('X')),
                 'order_id': msg_data.get('i'),  # order id
@@ -838,13 +756,37 @@ class BackpackAdapter(BaseExchange):
                 'executedQty': msg_data.get('z'),  # executed quantity
                 'quantity': msg_data.get('q')  # original quantity
             }
-            if on_order_update:
-                on_order_update(event)
-
-
-
-        # 定义异步启动函数
-        async def _start_ws():
+            if self._on_order_callback:
+                self._on_order_callback(event)
+        
+        # 定义异步启动函数（价格监控）
+        async def _start_price_ws():
+            try:
+                # 创建 WebSocket 客户端
+                self._backpackWsPublic = BackpackWsAccount(
+                    symbol=self._convert_symbol(symbol),
+                    on_error=self._on_error,
+                    on_close=self._on_close,
+                    on_open=self._on_open
+                )
+                
+                # 连接 WebSocket
+                print(f"[{datetime.now().isoformat()}] 🔌 [Backpack] 正在连接价格 WebSocket...")
+                await self._backpackWsPublic.connect()
+                
+                # 订阅价格更新
+                print(f"[{datetime.now().isoformat()}] 📡 [Backpack] 正在订阅 {symbol} 价格...")
+                await self._backpackWsPublic.subscribe_markPrice(on_message=on_price_message)
+                
+                print(f"[{datetime.now().isoformat()}] ✅ [Backpack] 价格监听已启动")
+                
+            except Exception as e:
+                print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 启动价格监听失败: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # 定义异步启动函数（订单监控）
+        async def _start_order_ws():
             try:
                 # 创建 WebSocket 客户端
                 self._backpackWsAccount = BackpackWsAccount(
@@ -857,12 +799,12 @@ class BackpackAdapter(BaseExchange):
                 )
                 
                 # 连接 WebSocket
-                print(f"[{datetime.now().isoformat()}] 🔌 [Backpack] 正在连接 WebSocket...")
+                print(f"[{datetime.now().isoformat()}] 🔌 [Backpack] 正在连接订单 WebSocket...")
                 await self._backpackWsAccount.connect()
                 
-                # 订阅价格更新
+                # 订阅订单更新
                 print(f"[{datetime.now().isoformat()}] 📡 [Backpack] 正在订阅 {self._convert_symbol(symbol)} 订单...")
-                await self._backpackWsAccount.subscribe_account_order_update(on_message=on_message)
+                await self._backpackWsAccount.subscribe_account_order_update(on_message=on_order_message)
                 
                 print(f"[{datetime.now().isoformat()}] ✅ [Backpack] 订单监听已启动")
                 
@@ -876,34 +818,50 @@ class BackpackAdapter(BaseExchange):
             try:
                 loop = asyncio.get_running_loop()
                 # 如果已有运行中的循环,创建任务
-                asyncio.create_task(_start_ws())
+                asyncio.create_task(_start_price_ws())
+                asyncio.create_task(_start_order_ws())
             except RuntimeError:
                 # 没有运行中的循环,创建新线程运行
                 import threading
                 def run_async():
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
-                    loop.run_until_complete(_start_ws())
+                    # 并发启动价格和订单监控
+                    loop.run_until_complete(asyncio.gather(
+                        _start_price_ws(),
+                        _start_order_ws()
+                    ))
                     loop.run_forever()
                 
                 ws_thread = threading.Thread(target=run_async, daemon=True)
                 ws_thread.start()
             
             self._price_monitor_active = True
+            self._order_monitor_active = True
             return True
             
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 启动订单监听失败: {e}")
+            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 启动 WebSocket 监控失败: {e}")
             import traceback
             traceback.print_exc()
             return False
     
-    def stop_order_monitor(self) -> None:
-        """停止订单监听"""
+    def stop_ws(self) -> None:
+        """停止 WebSocket 监听（价格和订单）"""
+        self._price_monitor_active = False
         self._order_monitor_active = False
+        self._on_price_callback = None
         self._on_order_callback = None
         
-        # 清理 WebSocket 连接
+        # 清理价格 WebSocket 连接
+        if self._backpackWsPublic:
+            try:
+                self._backpackWsPublic.clean_up()
+            except Exception as e:
+                print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 清理价格 WebSocket 失败: {e}")
+            self._backpackWsPublic = None
+        
+        # 清理订单 WebSocket 连接
         if self._backpackWsAccount:
             try:
                 self._backpackWsAccount.clean_up()
@@ -911,7 +869,11 @@ class BackpackAdapter(BaseExchange):
                 print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 清理订单 WebSocket 失败: {e}")
             self._backpackWsAccount = None
         
-        print(f"[{datetime.now().isoformat()}] ⏹️ [Backpack] 订单监听已停止")
+        if self._price_poll_thread:
+            self._price_poll_thread.join(timeout=2)
+            self._price_poll_thread = None
+        
+        print(f"[{datetime.now().isoformat()}] ⏹️ [Backpack] WebSocket 监听已停止")
     
     def check_pending_orders(self, pending_orders: List[Dict]):
         """检查待处理订单的状态（HTTP 轮询）

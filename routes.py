@@ -303,8 +303,7 @@ def register_routes(app):
                             if hasattr(exchange, 'cleanup'):
                                 exchange.cleanup()
                             else:
-                                exchange.stop_price_monitor()
-                                exchange.stop_order_monitor()
+                                exchange.stop_ws()
                         except Exception as e:
                             print(f"[{datetime.now().isoformat()}] [{username}-{exchange_name}-{symbol}] ⚠️ 停止监听器时出错: {e}")
                     
@@ -709,8 +708,7 @@ def register_routes(app):
                 if hasattr(exchange, 'cleanup'):
                     exchange.cleanup()
                 else:
-                    exchange.stop_price_monitor()
-                    exchange.stop_order_monitor()
+                    exchange.stop_ws()
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 已停止监听器并清理连接")
             except Exception as e:
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 清理订单时出错: {e}")
