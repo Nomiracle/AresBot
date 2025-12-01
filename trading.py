@@ -131,6 +131,15 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
             if pb['order_id'] != order_id
         ]
         
+        # 添加到 pending_sells 跟踪列表
+        bot_data.setdefault('pending_sells', []).append({
+            'order_id': sell_order_id,
+            'price': sell_price,
+            'quantity': aligned_qty,
+            'buy_order_id': order_id,
+            'buy_price': buy_price
+        })
+        
         # 挂卖单成功，清除错误和警告信息
         bot_data['last_error'] = None
         bot_data['last_error_time'] = None
@@ -305,6 +314,7 @@ def trading_loop(username, symbol):
     pending_buys_recovered = False
     bot_data['is_placing_order'] = False
     bot_data.setdefault('processed_filled_orders', set())
+    bot_data.setdefault('pending_sells', [])
     
     # 初始化错误和警告信息
     bot_data['last_error'] = None
@@ -364,13 +374,20 @@ def trading_loop(username, symbol):
                             return
                         
                         # 订单取消
-                        if event_type == 'order_cancelled' and event.get('side') == 'BUY':
+                        if event_type == 'order_cancelled':
                             order_id = event.get('order_id')
-                            bot_data['pending_buys'] = [
-                                pb for pb in bot_data.get('pending_buys', []) 
-                                if pb['order_id'] != order_id
-                            ]
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 订单取消 {order_id}")
+                            if event.get('side') == 'BUY':
+                                bot_data['pending_buys'] = [
+                                    pb for pb in bot_data.get('pending_buys', []) 
+                                    if pb['order_id'] != order_id
+                                ]
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 买单取消 {order_id}")
+                            elif event.get('side') == 'SELL':
+                                bot_data['pending_sells'] = [
+                                    ps for ps in bot_data.get('pending_sells', []) 
+                                    if ps['order_id'] != order_id
+                                ]
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 卖单取消 {order_id}")
                             return
                         
                         # 买单成交
@@ -378,6 +395,16 @@ def trading_loop(username, symbol):
                             handle_buy_order_filled(event, bot_data, exchange, config, 
                                                    tick_size, price_decimals, step_size, 
                                                    qty_decimals, log_prefix)
+                        
+                        # 卖单成交
+                        if event_type == 'order_filled' and event.get('side') == 'SELL':
+                            order_id = event.get('order_id')
+                            # 从 pending_sells 移除
+                            bot_data['pending_sells'] = [
+                                ps for ps in bot_data.get('pending_sells', []) 
+                                if ps['order_id'] != order_id
+                            ]
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单成交 {order_id}")
                     except Exception as e:
                         print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 订单回调错误: {e}")
                         traceback.print_exc()
@@ -416,17 +443,28 @@ def trading_loop(username, symbol):
                 open_sell_orders = [o for o in open_orders if str(o.get('side')) == 'SELL']
                 query_success = True
 
-                # 恢复 pending_buys（仅启动时）
-                if not pending_buys_recovered and not bot_data.get('pending_buys', []) and open_buy_orders:
-                    for order in open_buy_orders:
-                        bot_data.setdefault('pending_buys', []).append({
-                            'order_id': str(order['orderId']),
-                            'price': float(order['price']),
-                            'quantity': float(order['origQty']),
-                            'symbol': config['symbol'],
-                            'user_id': user_id
-                        })
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复 {len(open_buy_orders)} 笔买单")
+                # 恢复 pending_buys 和 pending_sells（仅启动时）
+                if not pending_buys_recovered:
+                    if not bot_data.get('pending_buys', []) and open_buy_orders:
+                        for order in open_buy_orders:
+                            bot_data.setdefault('pending_buys', []).append({
+                                'order_id': str(order['orderId']),
+                                'price': float(order['price']),
+                                'quantity': float(order['origQty']),
+                                'symbol': config['symbol'],
+                                'user_id': user_id
+                            })
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复 {len(open_buy_orders)} 笔买单")
+                    
+                    if not bot_data.get('pending_sells', []) and open_sell_orders:
+                        for order in open_sell_orders:
+                            bot_data.setdefault('pending_sells', []).append({
+                                'order_id': str(order['orderId']),
+                                'price': float(order['price']),
+                                'quantity': float(order['origQty'])
+                            })
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复 {len(open_sell_orders)} 笔卖单")
+                    
                     pending_buys_recovered = True
 
                 # 改价买单
@@ -443,6 +481,19 @@ def trading_loop(username, symbol):
                     reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, 
                                      bot_data, exchange, config, log_prefix)
 
+                # 同步 pending_sells 状态（清理已成交或取消的卖单）
+                # 注意: 只有当查询到卖单时才清理,避免API延迟导致误清理
+                if bot_data.get('pending_sells') and open_sell_orders:
+                    open_sell_order_ids = {str(o['orderId']) for o in open_sell_orders}
+                    pending_sell_ids = {ps['order_id'] for ps in bot_data['pending_sells']}
+                    removed_ids = pending_sell_ids - open_sell_order_ids
+                    if removed_ids:
+                        bot_data['pending_sells'] = [
+                            ps for ps in bot_data['pending_sells'] 
+                            if ps['order_id'] not in removed_ids
+                        ]
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 清理已完成卖单: {removed_ids}")
+                
                 # 动态调整卖单（默认禁用）
                 if open_sell_orders:       
                     reprice_sell_orders(open_sell_orders, bot_data, exchange, config, 
@@ -453,9 +504,10 @@ def trading_loop(username, symbol):
                 # 查询失败时不下单，避免重复挂单
                 query_success = False
 
-            # 下新单（要求查询成功、没有未完成订单、没有待处理买单、没有正在下单）
+            # 下新单（要求查询成功、没有未完成订单、没有待处理买单、没有待处理卖单、没有正在下单）
             has_pending_buys = bool(bot_data.get('pending_buys', []))
-            if query_success and not open_orders and not has_pending_buys and not bot_data.get('is_placing_order'):
+            has_pending_sells = bool(bot_data.get('pending_sells', []))
+            if query_success and not open_orders and not has_pending_buys and not has_pending_sells and not bot_data.get('is_placing_order'):
                 is_buy_enabled = (config.get('simulate_trading', 1) != 1)
                 if is_buy_enabled:
                     # 计算买单目标价
