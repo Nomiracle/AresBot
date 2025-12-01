@@ -162,7 +162,7 @@ class BinanceAdapter(BaseExchange):
                 price = msg.get('c')
                 if price:
                     price = float(price)
-                    print(f"{self._get_log_prefix()} 💰 价格更新: {price}")
+                    # print(f"{self._get_log_prefix()} 💰 价格更新: {price}")
                     if on_price_update:
                         on_price_update(price)
                 else:

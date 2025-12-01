@@ -248,9 +248,9 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
         
         # 获取对应的买入价
         buy_price = None
-        for pb in bot_data.get('pending_buys', []):
-            if pb.get('sell_order_id') == sell_order_id:
-                buy_price = pb.get('buy_price')
+        for ps in bot_data.get('pending_sells', []):
+            if ps.get('order_id') == sell_order_id:
+                buy_price = ps.get('buy_price')
                 break
         
         if not buy_price:
@@ -347,9 +347,9 @@ def trading_loop(username, symbol):
             # 启动监听（仅一次）
             if not bot_data.get('monitor_started'):
                 def _on_price_update(price: float):
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} 💰 价格更新回调被调用: {price}")
+                    # print(f"[{datetime.now().isoformat()}] {log_prefix} 💰 价格更新回调被调用: {price}")
                     bot_data['current_price'] = price
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ bot_data['current_price'] 已更新为: {bot_data['current_price']}")
+                    # print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ bot_data['current_price'] 已更新为: {bot_data['current_price']}")
 
                 def _on_order_update(event: dict):
                     try:
@@ -458,12 +458,43 @@ def trading_loop(username, symbol):
                     
                     if not bot_data.get('pending_sells', []) and open_sell_orders:
                         for order in open_sell_orders:
+                            sell_price = float(order['price'])
+                            sell_offset_percent = config.get('sell_offset_percent', 0.5)
+                            
+                            # 基于 calculate_sell_price 逻辑反推买入价
+                            # 正向逻辑:
+                            #   raw_sell_price = buy_price * (1 + sell_offset/100)
+                            #   min_price = buy_price * 1.002 (向上对齐)
+                            #   sell_price = max(raw_sell_price, min_price) (向下对齐)
+                            
+                            # 反推策略: 尝试两种可能,取较小值(更保守)
+                            
+                            # 方案1: 假设卖价来自 raw_sell_price
+                            # sell_price ≈ buy_price * (1 + sell_offset/100)
+                            # buy_price ≈ sell_price / (1 + sell_offset/100)
+                            buy_price_from_raw = sell_price / (1 + sell_offset_percent / 100.0)
+                            
+                            # 方案2: 假设卖价来自 min_price (最低保护价)
+                            # min_price ≈ buy_price * 1.002
+                            # buy_price ≈ sell_price / 1.002
+                            buy_price_from_min = sell_price / 1.002
+                            
+                            # 取较小值作为估算买入价 (更保守,确保不会低估)
+                            estimated_buy_price = min(buy_price_from_raw, buy_price_from_min)
+                            
+                            # 按 tick_size 向下对齐
+                            if tick_size and tick_size > 0:
+                                estimated_buy_price = math.floor(estimated_buy_price / tick_size) * tick_size
+                            
+                            estimated_buy_price = round(estimated_buy_price, price_decimals)
+                            
                             bot_data.setdefault('pending_sells', []).append({
                                 'order_id': str(order['orderId']),
-                                'price': float(order['price']),
-                                'quantity': float(order['origQty'])
+                                'price': sell_price,
+                                'quantity': float(order['origQty']),
+                                'buy_price': estimated_buy_price  # 反推的买入价
                             })
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复 {len(open_sell_orders)} 笔卖单")
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复 {len(open_sell_orders)} 笔卖单，buy_price={estimated_buy_price}")
                     
                     pending_buys_recovered = True
 
