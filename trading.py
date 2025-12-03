@@ -457,10 +457,9 @@ def trading_loop(username, symbol):
                         print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复 {len(open_buy_orders)} 笔买单")
                     
                     if not bot_data.get('pending_sells', []) and open_sell_orders:
+                        sell_offset_percent = config.get('sell_offset_percent', 0.5)
                         for order in open_sell_orders:
                             sell_price = float(order['price'])
-                            sell_offset_percent = config.get('sell_offset_percent', 0.5)
-                            
                             # 基于 calculate_sell_price 逻辑反推买入价
                             # 正向逻辑:
                             #   raw_sell_price = buy_price * (1 + sell_offset/100)
@@ -494,7 +493,8 @@ def trading_loop(username, symbol):
                                 'quantity': float(order['origQty']),
                                 'buy_price': estimated_buy_price  # 反推的买入价
                             })
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复 {len(open_sell_orders)} 笔卖单，buy_price={estimated_buy_price}")
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复 {order['orderId']}，buy_price={estimated_buy_price}")
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复 {len(open_sell_orders)} 笔卖单")
                     
                     pending_buys_recovered = True
 
