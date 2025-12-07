@@ -218,14 +218,13 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
                     new_order_id = str(new_order_data.get('orderId') or new_order_data.get('id'))
             
             if new_order_id and new_order_id != str(order['orderId']):
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 改价成功: {order['orderId']} → {new_order_id}, 价格={target_price}")
-                
                 # 更新 pending_buys
                 for p in bot_data.get('pending_buys', []):
                     if p['order_id'] == str(order['orderId']):
                         p['order_id'] = new_order_id
                         p['price'] = float(target_price)
                         break
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 改价成功: {order['orderId']} → {new_order_id}, 目标价格={target_price:.6f}/当前价格={bot_data['current_price']:.6f}，本地缓存买单：{bot_data.get('pending_buys', [])}")
                 
                 # 改价成功，清除错误和警告信息
                 bot_data['last_error'] = None
