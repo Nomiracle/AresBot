@@ -921,9 +921,9 @@
               document.getElementById("currentSymbol").textContent =
                 data.symbol;
               document.getElementById("currentPrice").textContent =
-                "$" + parseFloat(data.price).toFixed(2);
+                "$" + parseFloat(data.price);
               document.getElementById("targetPrice").textContent =
-                "$" + data.target_price;
+                "$" + parseFloat(data.target_price);
             }
           });
       }
