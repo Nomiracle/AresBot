@@ -514,7 +514,7 @@ def register_routes(app):
                 order_monitor_enabled = b.get('order_monitor_enabled', False)
                 
                 # 获取pending_buys数量
-                pending_buys_count = len(b.get('pending_buys', []))
+                pending_buys_count = len(b.get('pending_buys', [])) + len(b.get('pending_sells', []))
                 
                 # 获取错误信息
                 last_error = b.get('last_error')
