@@ -153,22 +153,21 @@ class BinanceAdapter(BaseExchange):
         # 启动价格监控
         def price_callback(msg):
             """解析币安行情消息"""
-            if msg.get('e') == 'error':
-                error_key = f"price_error_{msg.get('type', 'unknown')}"
-                if self._should_log_error(error_key):
-                    print(f"{self._get_log_prefix()} ❌ 价格 WebSocket 错误: {msg}")
-                
-                if msg.get('type') == 'ReadLoopClosed':
-                        # 使用锁防止毫秒级别的多次回调同时触发重启
-                    if self._price_restart_lock.acquire(blocking=False):
-                        try: 
-                            self._restart_ws_async(symbol, on_price_update, on_order_update)
-                        finally:
-                            # 延迟释放锁，防止毫秒级的重复触发
-                            threading.Timer(0.5, self._price_restart_lock.release).start()
-                return
-            
             try:
+                print(f"{self._get_log_prefix()} 🔍 收到行情消息: {msg}")
+                if msg.get('e') == 'error':
+                    error_key = f"price_error_{msg.get('type', 'unknown')}"
+                    if self._should_log_error(error_key):
+                        print(f"{self._get_log_prefix()} ❌ 价格 WebSocket 错误: {msg}")
+                            # 使用锁防止毫秒级别的多次回调同时触发重启
+                        if self._price_restart_lock.acquire(blocking=False):
+                            try: 
+                                self._restart_ws_async(symbol, on_price_update, on_order_update)
+                            finally:
+                                # 延迟释放锁，防止毫秒级的重复触发
+                                threading.Timer(0.5, self._price_restart_lock.release).start()
+                    return
+
                 price = msg.get('c')
                 if price:
                     price = float(price)
@@ -185,14 +184,12 @@ class BinanceAdapter(BaseExchange):
             """解析币安用户数据消息"""
             try:
                 msg_type = msg.get('e', 'unknown')
-                print(f"{self._get_log_prefix()} 🔍 收到用户消息类型: {msg_type}")
+                print(f"{self._get_log_prefix()} 🔍 收到用户消息: {msg}")
 
                 if msg_type == 'error':
                     error_key = f"user_error_{msg.get('type', 'unknown')}"
                     if self._should_log_error(error_key):
-                        print(f"{self._get_log_prefix()} ❌ 币安用户数据 WebSocket 错误: {msg}")
-
-                    if msg.get('type') == 'ReadLoopClosed':
+                        print(f"{self._get_log_prefix()} ❌ 币安用户数据 WebSocket 错误: {msg}")                    
                         # 使用锁防止毫秒级别的多次回调同时触发重启
                         if self._order_restart_lock.acquire(blocking=False):
                             try: 
