@@ -228,10 +228,10 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
                 })
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 改价成功: {order['orderId']} → {new_order_id}, 目标价格={target_price:.6f}/当前价格={bot_data['current_price']:.6f}，本地缓存买单：{bot_data.get('pending_buys', [])}")
                 
-                # 改价成功，清除错误和警告信息
-                bot_data['last_error'] = None
-                bot_data['last_error_time'] = None
-                bot_data['last_warning'] = None
+            # 改价成功，清除错误和警告信息
+            bot_data['last_error'] = None
+            bot_data['last_error_time'] = None
+            bot_data['last_warning'] = None
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 改价失败 {order['orderId']}: {e}")
 
@@ -287,9 +287,26 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
                 timeInForce='GTC'
             )
             
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单改价: {sell_order_id}, {current_sell_price} → {target_sell_price}")
+            # 提取新订单ID
+            new_order_id = None
+            if isinstance(resp, dict):
+                new_order_data = resp.get('newOrderResponse', {})
+                if isinstance(new_order_data, dict):
+                    new_order_id = str(new_order_data.get('orderId') or new_order_data.get('id'))
             
-            # 卖单改价成功，清除错误和警告信息
+            existing_ids = {p['order_id'] for p in bot_data.get('pending_sells', [])}
+            if new_order_id not in existing_ids:
+                bot_data.setdefault('pending_sells', []).append({
+                    'order_id': new_order_id,
+                    'price': target_sell_price,
+                    'quantity': aligned_qty,
+                    'symbol': config['symbol'],
+                    'user_id': bot_data['user_id'],
+                    'buy_price': buy_price  # 保留原买入价，用于后续改价计算
+                })
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单改价成功: {sell_order_id} → {new_order_id}, 目标价格={target_sell_price:.6f}/当前价格={bot_data['current_price']:.6f}，本地缓存卖单：{bot_data.get('pending_sells', [])}")
+                
+            # 改价成功，清除错误和警告信息
             bot_data['last_error'] = None
             bot_data['last_error_time'] = None
             bot_data['last_warning'] = None
