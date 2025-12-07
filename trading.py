@@ -217,13 +217,14 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
                 if isinstance(new_order_data, dict):
                     new_order_id = str(new_order_data.get('orderId') or new_order_data.get('id'))
             
-            if new_order_id and new_order_id != str(order['orderId']):
+            existing_ids = {p['order_id'] for p in bot_data.get('pending_buys', [])}
+            if new_order_id not in existing_ids:
                 bot_data.setdefault('pending_buys', []).append({
                     'order_id': new_order_id,
-                    'price': float(target_price),
-                    'quantity': order['quantity'],
-                    'symbol': order['symbol'],
-                    'user_id': order['user_id']
+                    'price': target_price,
+                    'quantity': aligned_quantity,
+                    'symbol': config['symbol'],
+                    'user_id': bot_data['user_id']
                 })
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 改价成功: {order['orderId']} → {new_order_id}, 目标价格={target_price:.6f}/当前价格={bot_data['current_price']:.6f}，本地缓存买单：{bot_data.get('pending_buys', [])}")
                 
@@ -322,12 +323,14 @@ def trading_loop(username, symbol):
     bot_data['last_error_time'] = None
     bot_data['last_warning'] = None
     bot_data['warning_count'] = 0
+    user_id = get_user_id(username)
+    bot_data['user_id'] = user_id
 
     while bot_data.get('running'):
         try:
             exchange = bot_data.get('exchange')
             config = bot_data.get('config', {})
-            user_id = get_user_id(username)
+
 
             if not exchange or not config:
                 time.sleep(1)
