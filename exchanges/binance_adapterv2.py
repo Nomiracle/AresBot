@@ -6,6 +6,7 @@ from binance.exceptions import BinanceAPIException
 from datetime import datetime
 import time
 import threading
+import math
 
 from .base import BaseExchange
 
@@ -43,6 +44,10 @@ class BinanceAdapter(BaseExchange):
         # ReadLoopClosed 错误处理锁
         self._order_restart_lock = threading.Lock()
         self._price_restart_lock = threading.Lock()
+        
+        # 账户费率缓存 (symbol -> {maker_fee, taker_fee})
+        self._fee_cache: Dict[str, Dict[str, float]] = {}
+        self._fee_cache_lock = threading.Lock()
 
     def ping(self) -> bool:
         try:
@@ -367,3 +372,71 @@ class BinanceAdapter(BaseExchange):
         # WebSocket 模式下不需要轮询检查订单
         # 订单更新会通过 start_order_monitor 的回调实时推送
         pass
+
+    def _get_trade_fee(self, symbol: str) -> Dict[str, float]:
+        """获取交易对的手续费率（带缓存）
+        
+        Args:
+            symbol: 交易对，如 'BTCUSDT'
+            
+        Returns:
+            {'maker_fee': 0.001, 'taker_fee': 0.001}
+        """
+        symbol = symbol.upper()
+        
+        with self._fee_cache_lock:
+            if symbol in self._fee_cache:
+                return self._fee_cache[symbol]
+        
+        try:
+            fee_info = self.client.get_trade_fee(symbol=symbol)
+            if fee_info and len(fee_info) > 0:
+                maker_fee = float(fee_info[0].get('makerCommission', 0.001))
+                taker_fee = float(fee_info[0].get('takerCommission', 0.001))
+            else:
+                # 默认费率
+                maker_fee = 0.001
+                taker_fee = 0.001
+                
+            fee_data = {'maker_fee': maker_fee, 'taker_fee': taker_fee}
+            
+            with self._fee_cache_lock:
+                self._fee_cache[symbol] = fee_data
+                
+            print(f"{self._get_log_prefix()} 💰 获取 {symbol} 费率: maker={maker_fee*100}%, taker={taker_fee*100}%")
+            return fee_data
+            
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ⚠️ 获取费率失败，使用默认值: {e}")
+            return {'maker_fee': 0.001, 'taker_fee': 0.001}
+
+    def calculate_sell_price(self, buy_price, sell_offset_percent, tick_size, price_decimals, current_price=None):
+        """计算卖出价格（基于实际账户费率）
+        
+        Args:
+            buy_price: 买入价格
+            sell_offset_percent: 卖出偏移百分比
+            tick_size: 价格步长
+            price_decimals: 价格小数位数
+            current_price: 当前价格（可选，用于动态定价）
+            
+        Returns:
+            float: 对齐后的卖出价格
+        """
+        sell_offset = sell_offset_percent / 100.0
+        raw_sell_price = (current_price or buy_price) * (1 + sell_offset)
+        
+        # 获取实际费率（买入+卖出双边费率）
+        fee_data = self._get_trade_fee(self._current_symbol)
+        # 使用 taker 费率（市价单）或 maker 费率（限价单）
+        total_fee_rate = fee_data['maker_fee'] * 2  # 买卖双边
+        
+        # 最低保护价（买入价 + 双边手续费）
+        min_price = buy_price * (1 + total_fee_rate)
+        min_price = math.ceil(min_price / tick_size) * tick_size if tick_size else min_price
+        min_price = round(min_price, price_decimals)
+        
+        # 最终卖价
+        sell_price = max(raw_sell_price, min_price)
+        sell_price = math.floor(sell_price / tick_size) * tick_size if tick_size else sell_price
+        return round(sell_price, price_decimals)
