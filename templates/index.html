@@ -1323,7 +1323,7 @@
             container.innerHTML = data.bots
               .map((bot) => {
                 const mode = (bot.config && parseInt(bot.config.simulate_trading) === 1) ? '模拟' : '实盘';
-                const cp = bot.current_price != null ? ('$' + Number(bot.current_price).toFixed(2)) : '-';
+                const cp = bot.current_price != null ? ('$' + Number(bot.current_price).toPrecision(6)) : '-';
                 
                 // 计算价差
                 let tp = '-';
@@ -1334,7 +1334,7 @@
                     const priceDiffPercent = (priceDiff / bot.current_price * 100).toFixed(3);
                     const diffSign = priceDiff >= 0 ? '+' : '';
                     // 低于现价（负数）绿色，高于现价（正数）红色
-                    tp += ` <span style="color: ${priceDiff < 0 ? '#28a745' : '#dc3545'};">(${diffSign}$${priceDiff.toFixed(2)} / ${diffSign}${priceDiffPercent}%)</span>`;
+                    tp += ` <span style="color: ${priceDiff < 0 ? '#28a745' : '#dc3545'};">(${diffSign}$${priceDiff.toPrecision(6)} / ${diffSign}${priceDiffPercent}%)</span>`;
                   }
                 }
                 
