@@ -39,7 +39,7 @@ class BackpackAdapter(BaseExchange):
         
         self.api_key = api_key
         self.api_secret = api_secret
-        self.symbol = symbol
+        self.symbol = self._convert_symbol(symbol)
         self.testnet = testnet
         
         # 监听器状态（HTTP 轮询模式）
