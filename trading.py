@@ -83,14 +83,22 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
         bot_data.get('processed_filled_orders', set()).discard(order_id)
         return
     
-    # 考虑手续费扣除
-    fee_rate = config.get('fee_rate', 0.002)  # 默认 0.2% 手续费
-    actual_qty = executed_qty * (1 - fee_rate)
-    print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 成交数量: {executed_qty}, 手续费率: {fee_rate*100}%, 扣除后: {actual_qty}")
-    
-    # 对齐卖出数量
-    aligned_qty = math.floor(actual_qty / step_size) * step_size if step_size else actual_qty
-    aligned_qty = round(aligned_qty, qty_decimals)
+    # 检查手续费是否外部支付（如 BNB 抵扣）
+    fee_paid_externally = event.get('feePaidExternally', False)
+    if fee_paid_externally:
+        # 外部支付手续费，不扣除币种数量，使用配置的固定挂单数量
+        aligned_qty = math.floor(config['quantity'] / step_size) * step_size if step_size else config['quantity']
+        aligned_qty = round(aligned_qty, qty_decimals)
+        print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 外部支付手续费，使用固定数量: {aligned_qty}")
+    else:
+        # 从交易币种扣除手续费
+        fee_rate = exchange.get_fee_rate() * 2
+        actual_qty = executed_qty * (1 - fee_rate)
+        print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 成交数量: {executed_qty}, 手续费率: {fee_rate*100}%, 扣除后: {actual_qty}")
+        
+        # 对齐卖出数量
+        aligned_qty = math.floor(actual_qty / step_size) * step_size if step_size else actual_qty
+        aligned_qty = round(aligned_qty, qty_decimals)
     
     if aligned_qty <= 0:
         print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 对齐后数量为 0，无法挂卖单")

@@ -185,6 +185,7 @@ class BinanceAdapter(BaseExchange):
                 print(f"{self._get_log_prefix()} ❌ 解析价格失败: {e}")
 
         # 启动订单监控
+        # https://developers.binance.com/docs/binance-spot-api-docs/user-data-stream#order-update
         def user_data_callback(msg):
             """解析币安用户数据消息"""
             try:
@@ -216,6 +217,11 @@ class BinanceAdapter(BaseExchange):
                     else:
                         event_type = 'order_update'
 
+                    # N: 手续费资产类型 (如 'BNB', 'USDT' 等)
+                    # 如果用 BNB 支付手续费，则不从交易币种中扣除
+                    commission_asset = msg.get('N')
+                    fee_paid_externally = (commission_asset == 'BNB')
+                    
                     event = {
                         'event_type': event_type,
                         'order_id': order_id,
@@ -225,7 +231,8 @@ class BinanceAdapter(BaseExchange):
                         'price': msg.get('p'),
                         'quantity': msg.get('q'),
                         'executedQty': msg.get('z'),
-                        'lastExecutedQty': msg.get('l')
+                        'lastExecutedQty': msg.get('l'),
+                        'feePaidExternally': fee_paid_externally  # 手续费是否外部支付（不扣币）
                     }
                     
                     # 执行回调
@@ -440,3 +447,9 @@ class BinanceAdapter(BaseExchange):
         sell_price = max(raw_sell_price, min_price)
         sell_price = math.floor(sell_price / tick_size) * tick_size if tick_size else sell_price
         return round(sell_price, price_decimals)
+
+
+    def get_fee_rate(self) -> float:
+        """获取交易对的手续费率（重写基类方法）"""
+        fee_data = self._get_trade_fee(self._current_symbol)
+        return fee_data['maker_fee']

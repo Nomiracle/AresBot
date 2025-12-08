@@ -124,7 +124,7 @@ class BaseExchange(ABC):
         raw_sell_price = (current_price or buy_price) * (1 + sell_offset)
         
         # 最低保护价（买入价 + 0.2% 手续费）
-        min_price = buy_price * 1.002
+        min_price = buy_price * (1 + 2 * self.get_fee_rate())  # 买入价 + 2倍手续费
         min_price = math.ceil(min_price / tick_size) * tick_size if tick_size else min_price
         min_price = round(min_price, price_decimals)
         
@@ -133,3 +133,10 @@ class BaseExchange(ABC):
         sell_price = math.floor(sell_price / tick_size) * tick_size if tick_size else sell_price
         return round(sell_price, price_decimals)
 
+    def get_fee_rate(self) -> float:
+        """获取交易对的手续费率
+        
+        Returns:
+            float: 手续费率，例如 0.001 表示 0.1%
+        """
+        return 0.001  # 默认 0.1% 手续费
