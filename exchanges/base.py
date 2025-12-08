@@ -4,6 +4,7 @@ Base exchange adapter interface
 """
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Callable
+import math
 
 
 class BaseExchange(ABC):
@@ -116,3 +117,19 @@ class BaseExchange(ABC):
             
         """
         pass
+
+    def calculate_sell_price(self, buy_price, sell_offset_percent, tick_size, price_decimals, current_price=None):
+        """计算卖出价格（带手续费保护）"""
+        sell_offset = sell_offset_percent / 100.0
+        raw_sell_price = (current_price or buy_price) * (1 + sell_offset)
+        
+        # 最低保护价（买入价 + 0.2% 手续费）
+        min_price = buy_price * 1.002
+        min_price = math.ceil(min_price / tick_size) * tick_size if tick_size else min_price
+        min_price = round(min_price, price_decimals)
+        
+        # 最终卖价
+        sell_price = max(raw_sell_price, min_price)
+        sell_price = math.floor(sell_price / tick_size) * tick_size if tick_size else sell_price
+        return round(sell_price, price_decimals)
+

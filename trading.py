@@ -33,20 +33,7 @@ def calculate_buy_target_price(current_price, offset_percent, tick_size, price_d
     return target_price
 
 
-def calculate_sell_price(buy_price, sell_offset_percent, tick_size, price_decimals, current_price=None):
-    """计算卖出价格（带手续费保护）"""
-    sell_offset = sell_offset_percent / 100.0
-    raw_sell_price = (current_price or buy_price) * (1 + sell_offset)
-    
-    # 最低保护价（买入价 + 0.2% 手续费）
-    min_price = buy_price * 1.002
-    min_price = math.ceil(min_price / tick_size) * tick_size if tick_size else min_price
-    min_price = round(min_price, price_decimals)
-    
-    # 最终卖价
-    sell_price = max(raw_sell_price, min_price)
-    sell_price = math.floor(sell_price / tick_size) * tick_size if tick_size else sell_price
-    return round(sell_price, price_decimals)
+
 
 
 def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_decimals, 
@@ -76,7 +63,7 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
         return
     
     # 计算卖出价格
-    sell_price = calculate_sell_price(
+    sell_price = exchange.calculate_sell_price(
         buy_price, 
         config.get('sell_offset_percent', 0.5),
         tick_size, 
@@ -257,7 +244,7 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
         if not buy_price:
             continue
         # 计算目标卖价
-        target_sell_price = calculate_sell_price(
+        target_sell_price = exchange.calculate_sell_price(
             buy_price,
             config.get('sell_offset_percent', 0.5),
             tick_size,
@@ -479,15 +466,7 @@ def trading_loop(username, symbol):
                     if not bot_data.get('pending_sells', []) and open_sell_orders:
                         sell_offset_percent = config.get('sell_offset_percent', 0.5)
                         for order in open_sell_orders:
-                            sell_price = float(order['price'])
-                            # 基于 calculate_sell_price 逻辑反推买入价
-                            # 正向逻辑:
-                            #   raw_sell_price = buy_price * (1 + sell_offset/100)
-                            #   min_price = buy_price * 1.002 (向上对齐)
-                            #   sell_price = max(raw_sell_price, min_price) (向下对齐)
-                            
-                            # 反推策略: 尝试两种可能,取较小值(更保守)
-                            
+                            sell_price = float(order['price'])                            
                             # 方案1: 假设卖价来自 raw_sell_price
                             # sell_price ≈ buy_price * (1 + sell_offset/100)
                             # buy_price ≈ sell_price / (1 + sell_offset/100)
