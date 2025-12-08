@@ -11,8 +11,16 @@ class BaseExchange(ABC):
     """交易所基类接口"""
     
     @abstractmethod
-    def __init__(self, api_key: str, api_secret: str, testnet: bool = True):
-        """初始化交易所客户端"""
+    def __init__(self, api_key: str, api_secret: str, symbol: str, testnet: bool = True):
+        """初始化交易所客户端
+        
+        Args:
+            api_key: API 密钥
+            api_secret: API 密钥
+            symbol: 交易对（如 BTCUSDT）
+            testnet: 是否使用测试网
+        """
+        self.symbol = symbol
         pass
     
     @abstractmethod
@@ -21,42 +29,42 @@ class BaseExchange(ABC):
         pass
     
     @abstractmethod
-    def get_symbol_info(self, symbol: str) -> Dict:
+    def get_symbol_info(self) -> Dict:
         """获取交易对信息（精度、过滤器等）"""
         pass
     
     @abstractmethod
-    def get_symbol_ticker(self, symbol: str) -> Dict:
+    def get_symbol_ticker(self) -> Dict:
         """获取交易对当前价格（内部使用）"""
         pass
     
     @abstractmethod
-    def get_open_orders(self, symbol: str) -> List[Dict]:
+    def get_open_orders(self) -> List[Dict]:
         """获取未完成订单"""
         pass
     
     @abstractmethod
-    def get_order(self, symbol: str, order_id: str) -> Dict:
+    def get_order(self, order_id: str) -> Dict:
         """查询订单状态"""
         pass
     
     @abstractmethod
-    def order_limit_buy(self, symbol: str, quantity: float, price: str, **kwargs) -> Dict:
+    def order_limit_buy(self, quantity: float, price: str, **kwargs) -> Dict:
         """限价买单"""
         pass
     
     @abstractmethod
-    def order_limit_sell(self, symbol: str, quantity: float, price: str, **kwargs) -> Dict:
+    def order_limit_sell(self, quantity: float, price: str, **kwargs) -> Dict:
         """限价卖单"""
         pass
     
     @abstractmethod
-    def cancel_order(self, symbol: str, order_id: str) -> Dict:
+    def cancel_order(self, order_id: str) -> Dict:
         """取消订单（内部使用）"""
         pass
     
     @abstractmethod
-    def cancel_replace_order(self, symbol: str, side: str, order_type: str, 
+    def cancel_replace_order(self, side: str, order_type: str, 
                             quantity: float, price: str, cancel_order_id: str, **kwargs) -> Dict:
         """取消并替换订单（改价）"""
         pass
@@ -80,12 +88,11 @@ class BaseExchange(ABC):
         pass
     
     @abstractmethod
-    def start_ws(self, symbol: str, on_price_update: Callable[[float], None], 
+    def start_ws(self, on_price_update: Callable[[float], None], 
                  on_order_update: Callable[[Dict], None]) -> bool:
         """启动 WebSocket 监听（价格和订单）
         
         Args:
-            symbol: 交易对
             on_price_update: 价格更新回调函数，参数为最新价格
             on_order_update: 订单更新回调函数，参数为订单事件字典
                 {

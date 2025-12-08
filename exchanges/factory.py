@@ -21,13 +21,14 @@ class ExchangeFactory:
     
     @classmethod
     def create(cls, exchange_name: str, api_key: str, api_secret: str, 
-               testnet: bool = True) -> Optional[BaseExchange]:
+               symbol: str, testnet: bool = True) -> Optional[BaseExchange]:
         """创建交易所适配器实例
         
         Args:
             exchange_name: 交易所名称 ('binance', 'backpack', etc.)
             api_key: API密钥
             api_secret: API密钥
+            symbol: 交易对（如 BTCUSDT）
             testnet: 是否使用测试网
             
         Returns:
@@ -35,7 +36,7 @@ class ExchangeFactory:
         """
         adapter_class = cls.SUPPORTED_EXCHANGES.get(exchange_name.lower())
         if adapter_class:
-            return adapter_class(api_key, api_secret, testnet)
+            return adapter_class(api_key, api_secret, symbol, testnet)
         return None
     
     @classmethod

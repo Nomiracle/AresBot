@@ -222,10 +222,12 @@ def register_routes(app):
         try:
             testnet = bool(config.get('testnet', 1))
             exchange_name = config.get('exchange', 'binance').lower()
+            symbol = config['symbol']
             exchange = ExchangeFactory.create(
                 exchange_name,
                 api_key,
                 api_secret,
+                symbol=symbol,
                 testnet=testnet
             )
             
@@ -233,8 +235,6 @@ def register_routes(app):
                 return jsonify({'success': False, 'message': f'不支持的交易所: {exchange_name}'}), 400
 
             exchange.ping()
-
-            symbol = config['symbol']
             if username not in user_bots or not isinstance(user_bots.get(username), dict):
                 user_bots[username] = {'bots': {}}
             if symbol in user_bots[username]['bots'] and user_bots[username]['bots'][symbol].get('running'):
@@ -608,10 +608,12 @@ def register_routes(app):
         try:
             testnet = bool(config.get('testnet', 1))
             exchange_name = config.get('exchange', 'binance').lower()
+            symbol = config['symbol']
             exchange = ExchangeFactory.create(
                 exchange_name,
                 api_key,
                 api_secret,
+                symbol=symbol,
                 testnet=testnet
             )
             
@@ -619,7 +621,6 @@ def register_routes(app):
                 return jsonify({'success': False, 'message': f'不支持的交易所: {exchange_name}'}), 400
                 
             exchange.ping()
-            symbol = config['symbol']
             if username not in user_bots or not isinstance(user_bots.get(username), dict):
                 user_bots[username] = {'bots': {}}
             if symbol in user_bots[username]['bots'] and user_bots[username]['bots'][symbol].get('running'):
@@ -689,13 +690,13 @@ def register_routes(app):
             try:
                 # 取消所有未完成订单
                 print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 查询未完成订单...")
-                open_orders = exchange.get_open_orders(symbol=symbol)
+                open_orders = exchange.get_open_orders()
                 if open_orders:
                     cancelled_count = 0
                     for order in open_orders:
                         try:
                             order_id = str(order.get('orderId') or order.get('id'))
-                            exchange.cancel_order(symbol=symbol, order_id=order_id)
+                            exchange.cancel_order(order_id=order_id)
                             cancelled_count += 1
                             print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 已取消订单: {order_id}")
                         except Exception as e:

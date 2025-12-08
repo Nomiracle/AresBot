@@ -110,7 +110,6 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
     # 挂卖单
     try:
         sell_order = exchange.order_limit_sell(
-            symbol=config['symbol'],
             quantity=aligned_qty,
             price=f"{sell_price}"
         )
@@ -159,7 +158,7 @@ def handle_reconnected(event, bot_data, exchange, config, tick_size, price_decim
     for pending_buy in pending_buys[:]:
         order_id = pending_buy.get('order_id')
         try:
-            order_info = exchange.get_order(config['symbol'], order_id)
+            order_info = exchange.get_order(order_id)
             order_status = order_info.get('status')
             
             if order_status == 'FILLED':
@@ -196,7 +195,6 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
         
         try:
             resp = exchange.cancel_replace_order(
-                symbol=config['symbol'],
                 side='BUY',
                 order_type='LIMIT',
                 quantity=aligned_quantity,
@@ -273,7 +271,6 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
             aligned_qty = round(aligned_qty, qty_decimals)
             
             resp = exchange.cancel_replace_order(
-                symbol=config['symbol'],
                 side='SELL',
                 order_type='LIMIT',
                 quantity=aligned_qty,
@@ -351,7 +348,7 @@ def trading_loop(username, symbol):
             # 获取交易规则（仅一次）
             if tick_size is None:
                 try:
-                    symbol_info = exchange.get_symbol_info(config['symbol'])
+                    symbol_info = exchange.get_symbol_info()
                     tick_size, price_decimals = exchange.get_price_precision(symbol_info)
                     step_size, qty_decimals = exchange.get_quantity_precision(symbol_info)
                 except Exception as e:
@@ -424,7 +421,7 @@ def trading_loop(username, symbol):
                         print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 订单回调错误: {e}")
                         traceback.print_exc()
 
-                exchange.start_ws(config['symbol'], _on_price_update, _on_order_update)
+                exchange.start_ws(_on_price_update, _on_order_update)
                 bot_data['monitor_started'] = True
 
             # 获取当前价格
@@ -453,7 +450,7 @@ def trading_loop(username, symbol):
             query_success = False
             
             try:
-                open_orders = exchange.get_open_orders(symbol=config['symbol'])
+                open_orders = exchange.get_open_orders()
                 open_buy_orders = [o for o in open_orders if str(o.get('side')) == 'BUY']
                 open_sell_orders = [o for o in open_orders if str(o.get('side')) == 'SELL']
                 query_success = True
@@ -560,7 +557,6 @@ def trading_loop(username, symbol):
                     bot_data['is_placing_order'] = True
                     try:
                         order = exchange.order_limit_buy(
-                            symbol=config['symbol'],
                             quantity=aligned_quantity,
                             price=f"{target_price}"
                         )

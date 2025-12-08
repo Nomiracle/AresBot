@@ -21,12 +21,13 @@ except ImportError:
 class BackpackAdapter(BaseExchange):
     """Backpack 交易所适配器"""
     
-    def __init__(self, api_key: str, api_secret: str, testnet: bool = True):
+    def __init__(self, api_key: str, api_secret: str, symbol: str, testnet: bool = True):
         """初始化 Backpack 客户端
         
         Args:
             api_key: API 公钥 (Base58 格式)
             api_secret: API 私钥 (Base64 编码的 Ed25519 私钥)
+            symbol: 交易对（如 BTCUSDT）
             testnet: 是否使用测试网（Backpack 暂不支持测试网，此参数保留）
         
         注意：
@@ -38,6 +39,7 @@ class BackpackAdapter(BaseExchange):
         
         self.api_key = api_key
         self.api_secret = api_secret
+        self.symbol = symbol
         self.testnet = testnet
         
         # 监听器状态（HTTP 轮询模式）
@@ -186,10 +188,10 @@ class BackpackAdapter(BaseExchange):
         print(f"[{datetime.now().isoformat()}] 💡 [Backpack] 提示: Backpack 只支持 USDC 计价，请使用如 BTCUSDC 或 BTCUSD 格式")
         return symbol
     
-    def get_symbol_info(self, symbol: str) -> Dict:
+    def get_symbol_info(self) -> Dict:
         """获取交易对信息"""
         try:
-            bpx_symbol = self._convert_symbol(symbol)
+            bpx_symbol = self._convert_symbol(self.symbol)
             markets = self._get_markets()
             
             for market in markets:
@@ -200,16 +202,16 @@ class BackpackAdapter(BaseExchange):
             print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 交易对 {bpx_symbol} 不存在")
             return None
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 获取交易对信息失败 ({symbol}): {e}")
+            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 获取交易对信息失败 ({self.symbol}): {e}")
             return None
     
-    def get_symbol_ticker(self, symbol: str) -> Dict:
+    def get_symbol_ticker(self) -> Dict:
         """获取交易对实时价格
         
         优先使用订单簿获取最实时的买一价格，失败则使用 ticker 的最新成交价
         """
         try:
-            bpx_symbol = self._convert_symbol(symbol)
+            bpx_symbol = self._convert_symbol(self.symbol)
             
             # 方法1: 尝试从订单簿获取买一价格（最实时）
             try:
@@ -249,15 +251,15 @@ class BackpackAdapter(BaseExchange):
             return None
         except Exception as e:
             import traceback
-            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 获取价格失败 ({symbol}): {e}")
+            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 获取价格失败 ({self.symbol}): {e}")
             print(f"[{datetime.now().isoformat()}] 📋 [Backpack] 错误堆栈:\n{traceback.format_exc()}")
             return None
     
-    def get_open_orders(self, symbol: str) -> List[Dict]:
+    def get_open_orders(self) -> List[Dict]:
         """获取未完成订单"""
         import time
         
-        bpx_symbol = self._convert_symbol(symbol)
+        bpx_symbol = self._convert_symbol(self.symbol)
         
         # 重试机制
         max_retries = 3
@@ -370,11 +372,11 @@ class BackpackAdapter(BaseExchange):
             
         except Exception as e:
             import traceback
-            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 获取未完成订单失败 ({symbol}): {e}")
+            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 获取未完成订单失败 ({self.symbol}): {e}")
             print(f"[{datetime.now().isoformat()}] 📋 [Backpack] 错误堆栈:\n{traceback.format_exc()}")
             return []
     
-    def get_order(self, symbol: str, orderId: str) -> Dict:
+    def get_order(self, orderId: str) -> Dict:
         """查询订单状态
         
         先查询未完成订单，如果不存在则查询历史订单
@@ -382,9 +384,9 @@ class BackpackAdapter(BaseExchange):
         Returns:
             Dict: 订单信息，如果订单不存在返回 {'status': 'NOT_FOUND'}，网络错误返回 None
         """
-        order_prefix = f"[Order#{orderId}@{symbol}]"
+        order_prefix = f"[Order#{orderId}@{self.symbol}]"
         try:
-            bpx_symbol = self._convert_symbol(symbol)
+            bpx_symbol = self._convert_symbol(self.symbol)
             print(f"[{datetime.now().isoformat()}] 🔍 [Backpack] {order_prefix} 查询订单状态...")
             
             # 步骤 1：先查询未完成订单
@@ -473,10 +475,10 @@ class BackpackAdapter(BaseExchange):
             traceback.print_exc()
             return None
     
-    def order_limit_buy(self, symbol: str, quantity: float, price: str, **kwargs) -> Dict:
+    def order_limit_buy(self, quantity: float, price: str, **kwargs) -> Dict:
         """限价买单"""
         try:
-            bpx_symbol = self._convert_symbol(symbol)
+            bpx_symbol = self._convert_symbol(self.symbol)
             time_in_force = kwargs.get('timeInForce', 'GTC')
             
             print(f"[{datetime.now().isoformat()}] 📤 [Backpack] 下限价买单: {bpx_symbol} BUY {quantity} @ {price}")
@@ -517,15 +519,15 @@ class BackpackAdapter(BaseExchange):
                     'status': 'NEW'
                 }
             else:
-                raise Exception(f"下单返回结果为空: symbol={symbol}, quantity={quantity}, price={price}")
+                raise Exception(f"下单返回结果为空: symbol={self.symbol}, quantity={quantity}, price={price}")
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 限价买单失败 ({symbol}): {e}")
+            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 限价买单失败 ({self.symbol}): {e}")
             raise
     
-    def order_limit_sell(self, symbol: str, quantity: float, price: str, **kwargs) -> Dict:
+    def order_limit_sell(self, quantity: float, price: str, **kwargs) -> Dict:
         """限价卖单"""
         try:
-            bpx_symbol = self._convert_symbol(symbol)
+            bpx_symbol = self._convert_symbol(self.symbol)
             time_in_force = kwargs.get('timeInForce', 'GTC')
             
             print(f"[{datetime.now().isoformat()}] 📤 [Backpack] 下限价卖单: {bpx_symbol} SELL {quantity} @ {price}")
@@ -565,16 +567,16 @@ class BackpackAdapter(BaseExchange):
                     'status': 'NEW'
                 }
             else:
-                raise Exception(f"下单返回结果为空: symbol={symbol}, quantity={quantity}, price={price}")
+                raise Exception(f"下单返回结果为空: symbol={self.symbol}, quantity={quantity}, price={price}")
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 限价卖单失败 ({symbol}): {e}")
+            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 限价卖单失败 ({self.symbol}): {e}")
             raise
     
-    def cancel_order(self, symbol: str, order_id: str) -> Dict:
+    def cancel_order(self, order_id: str) -> Dict:
         """取消订单"""
         order_prefix = f"[Order#{order_id}]"
         try:
-            bpx_symbol = self._convert_symbol(symbol)
+            bpx_symbol = self._convert_symbol(self.symbol)
             print(f"[{datetime.now().isoformat()}] 🗑️ [Backpack] {order_prefix} 取消订单...")
             result = self.account.cancel_order(bpx_symbol, order_id)
             
@@ -588,7 +590,7 @@ class BackpackAdapter(BaseExchange):
             print(f"[{datetime.now().isoformat()}] ❌ [Backpack] {order_prefix} 取消失败: {e}")
             raise
     
-    def cancel_replace_order(self, symbol: str, side: str, order_type: str, 
+    def cancel_replace_order(self, side: str, order_type: str, 
                             quantity: float, price: str, cancel_order_id: str, **kwargs) -> Dict:
         """取消并替换订单（改价）
         
@@ -598,13 +600,13 @@ class BackpackAdapter(BaseExchange):
         """
         try:
             # 1. 取消旧订单
-            self.cancel_order(symbol, cancel_order_id)
+            self.cancel_order(cancel_order_id)
             
             # 2. 下新订单
             if side == 'BUY':
-                new_order = self.order_limit_buy(symbol, quantity, price, **kwargs)
+                new_order = self.order_limit_buy(quantity, price, **kwargs)
             else:
-                new_order = self.order_limit_sell(symbol, quantity, price, **kwargs)
+                new_order = self.order_limit_sell(quantity, price, **kwargs)
             
             # 返回格式兼容 Binance
             return {
@@ -612,7 +614,7 @@ class BackpackAdapter(BaseExchange):
                 'newOrderResponse': new_order
             }
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 改价失败 ({symbol}): {e}")
+            print(f"[{datetime.now().isoformat()}] ❌ [Backpack] 改价失败 ({self.symbol}): {e}")
             raise
     
     def start_websocket(self, symbol: str, on_ticker: Callable, on_user: Optional[Callable] = None) -> Dict:
@@ -721,7 +723,7 @@ class BackpackAdapter(BaseExchange):
         """获取原始公共客户端（用于扩展功能）"""
         return self.public
     
-    def start_ws(self, symbol: str, on_price_update: Callable[[float], None], 
+    def start_ws(self, on_price_update: Callable[[float], None], 
                  on_order_update: Callable[[Dict], None]) -> bool:
         """启动 WebSocket 监听（价格和订单）"""
         print(f"[{datetime.now().isoformat()}] 🔄 [Backpack] 正在启动 WebSocket 监听...")
@@ -729,7 +731,7 @@ class BackpackAdapter(BaseExchange):
         # 保存回调函数
         self._on_price_callback = on_price_update
         self._on_order_callback = on_order_update
-        self._monitor_symbol = self._convert_symbol(symbol)
+        self._monitor_symbol = self._convert_symbol(self.symbol)
         
         # 定义价格消息回调函数
         def on_price_message(data):
@@ -749,7 +751,7 @@ class BackpackAdapter(BaseExchange):
             event = {
                 'event_type': self._convert_order_status(msg_data.get('X')),
                 'order_id': msg_data.get('i'),  # order id
-                'symbol': symbol,  # symbol
+                'symbol': self.symbol,  # symbol
                 'side': 'BUY' if msg_data.get('S') == 'Bid' else 'SELL',  # side
                 'status': self._convert_order_status(msg_data.get('X')),  # order status
                 'price': msg_data.get('p'),  # price
@@ -764,7 +766,7 @@ class BackpackAdapter(BaseExchange):
             try:
                 # 创建 WebSocket 客户端
                 self._backpackWsPublic = BackpackWsAccount(
-                    symbol=self._convert_symbol(symbol),
+                    symbol=self._convert_symbol(self.symbol),
                     on_error=self._on_error,
                     on_close=self._on_close,
                     on_open=self._on_open
@@ -775,7 +777,7 @@ class BackpackAdapter(BaseExchange):
                 await self._backpackWsPublic.connect()
                 
                 # 订阅价格更新
-                print(f"[{datetime.now().isoformat()}] 📡 [Backpack] 正在订阅 {symbol} 价格...")
+                print(f"[{datetime.now().isoformat()}] 📡 [Backpack] 正在订阅 {self.symbol} 价格...")
                 await self._backpackWsPublic.subscribe_markPrice(on_message=on_price_message)
                 
                 print(f"[{datetime.now().isoformat()}] ✅ [Backpack] 价格监听已启动")
@@ -790,7 +792,7 @@ class BackpackAdapter(BaseExchange):
             try:
                 # 创建 WebSocket 客户端
                 self._backpackWsAccount = BackpackWsAccount(
-                    symbol=self._convert_symbol(symbol),
+                    symbol=self._convert_symbol(self.symbol),
                     public_key=self.api_key,
                     secret_key=self.api_secret,
                     on_error=self._on_error,
@@ -803,7 +805,7 @@ class BackpackAdapter(BaseExchange):
                 await self._backpackWsAccount.connect()
                 
                 # 订阅订单更新
-                print(f"[{datetime.now().isoformat()}] 📡 [Backpack] 正在订阅 {self._convert_symbol(symbol)} 订单...")
+                print(f"[{datetime.now().isoformat()}] 📡 [Backpack] 正在订阅 {self._convert_symbol(self.symbol)} 订单...")
                 await self._backpackWsAccount.subscribe_account_order_update(on_message=on_order_message)
                 
                 print(f"[{datetime.now().isoformat()}] ✅ [Backpack] 订单监听已启动")
@@ -890,7 +892,7 @@ class BackpackAdapter(BaseExchange):
         
         for pb in pending_orders:
             try:
-                order_info = self.get_order(symbol=pb['symbol'], orderId=pb['order_id'])
+                order_info = self.get_order(orderId=pb['order_id'])
                 
                 # 检查订单查询是否成功
                 if not order_info:

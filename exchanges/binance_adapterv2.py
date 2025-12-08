@@ -12,11 +12,11 @@ from .base import BaseExchange
 
 
 class BinanceAdapter(BaseExchange):
-    def __init__(self, api_key: str, api_secret: str, testnet: bool = True):
+    def __init__(self, api_key: str, api_secret: str, symbol: str, testnet: bool = True):
         self.api_key = api_key
         self.api_secret = api_secret
+        self.symbol = symbol.upper()
         self.testnet = testnet
-        self._current_symbol = "UNKNOWN"
 
         self.client = Client(api_key, api_secret, testnet=testnet)
         
@@ -61,7 +61,7 @@ class BinanceAdapter(BaseExchange):
     def _get_log_prefix(self) -> str:
         """生成日志前缀"""
         api_key_short = self.api_key[:6] if self.api_key else "NOKEY"
-        return f"[{datetime.now().isoformat()}] [binance-{api_key_short}-{self._current_symbol}]"
+        return f"[{datetime.now().isoformat()}] [binance-{api_key_short}-{self.symbol}]"
     
     def _should_log_error(self, error_key: str) -> bool:
         """检查是否应该打印错误日志（频率控制）"""
@@ -73,54 +73,54 @@ class BinanceAdapter(BaseExchange):
             return True
         return False
 
-    def _restart_ws_async(self, symbol: str, on_price_update: Callable, on_order_update: Callable) -> None:
+    def _restart_ws_async(self, on_price_update: Callable, on_order_update: Callable) -> None:
         """在后台线程中重启 WebSocket 监控（避免线程安全问题）"""
         time.sleep(1)
         self._retry_count = self._retry_count + 1
         print(f"{self._get_log_prefix()} 🔄 WebSocket 监控重启 (第 {self._retry_count} 次)")
         self.stop_ws()
-        self.start_ws(symbol, on_price_update, on_order_update)
+        self.start_ws(on_price_update, on_order_update)
 
-    def get_symbol_info(self, symbol: str) -> Dict:
-        info = self.client.get_symbol_info(symbol.upper())
+    def get_symbol_info(self) -> Dict:
+        info = self.client.get_symbol_info(self.symbol)
         return info or {}
 
-    def get_symbol_ticker(self, symbol: str) -> Dict:
-        return self.client.get_symbol_ticker(symbol=symbol.upper())
+    def get_symbol_ticker(self) -> Dict:
+        return self.client.get_symbol_ticker(symbol=self.symbol)
 
-    def get_open_orders(self, symbol: str) -> List[Dict]:
-        return self.client.get_open_orders(symbol=symbol.upper())
+    def get_open_orders(self) -> List[Dict]:
+        return self.client.get_open_orders(symbol=self.symbol)
 
-    def get_order(self, symbol: str, order_id: str) -> Dict:
-        return self.client.get_order(symbol=symbol.upper(), orderId=order_id)
+    def get_order(self, order_id: str) -> Dict:
+        return self.client.get_order(symbol=self.symbol, orderId=order_id)
 
-    def order_limit_buy(self, symbol: str, quantity: float, price: str, **kwargs) -> Dict:
+    def order_limit_buy(self, quantity: float, price: str, **kwargs) -> Dict:
         return self.client.order_limit_buy(
-            symbol=symbol.upper(),
+            symbol=self.symbol,
             quantity=quantity,
             price=price,
             timeInForce=kwargs.get('timeInForce', 'GTC')
         )
 
-    def order_limit_sell(self, symbol: str, quantity: float, price: str, **kwargs) -> Dict:
+    def order_limit_sell(self, quantity: float, price: str, **kwargs) -> Dict:
         return self.client.order_limit_sell(
-            symbol=symbol.upper(),
+            symbol=self.symbol,
             quantity=quantity,
             price=price,
             timeInForce=kwargs.get('timeInForce', 'GTC')
         )
 
-    def cancel_order(self, symbol: str, order_id: str) -> Dict:
-        return self.client.cancel_order(symbol=symbol.upper(), orderId=order_id)
+    def cancel_order(self, order_id: str) -> Dict:
+        return self.client.cancel_order(symbol=self.symbol, orderId=order_id)
 
-    def cancel_replace_order(self, symbol: str, side: str, order_type: str,
+    def cancel_replace_order(self, side: str, order_type: str,
                              quantity: float, price: str, cancel_order_id: str, **kwargs) -> Dict:
         # 提取并移除已处理的参数，避免重复传入
         time_in_force = kwargs.pop('timeInForce', 'GTC')
         cancel_replace_mode = kwargs.pop('cancelReplaceMode', 'STOP_ON_FAILURE')
         
         return self.client.cancel_replace_order(
-            symbol=symbol.upper(),
+            symbol=self.symbol,
             side=side,
             type=order_type,
             quantity=quantity,
@@ -151,10 +151,9 @@ class BinanceAdapter(BaseExchange):
         return 0.0, 0
 
     # ====================== WebSocket 监控 ======================
-    def _start_ws_in_thread(self, symbol: str, on_price_update: Callable[[float], None], 
+    def _start_ws_in_thread(self, on_price_update: Callable[[float], None], 
                            on_order_update: Callable[[Dict], None]) -> None:
         """在线程中启动 WebSocket 监听（价格和订单）"""
-        self._current_symbol = symbol.upper()
 
         # 启动价格监控
         def price_callback(msg):
@@ -168,7 +167,7 @@ class BinanceAdapter(BaseExchange):
                         # 使用锁防止毫秒级别的多次回调同时触发重启
                         if self._price_restart_lock.acquire(blocking=False):
                             try: 
-                                self._restart_ws_async(symbol, on_price_update, on_order_update)
+                                self._restart_ws_async(on_price_update, on_order_update)
                             finally:
                                 # 延迟释放锁，防止毫秒级的重复触发
                                 threading.Timer(0.5, self._price_restart_lock.release).start()
@@ -200,7 +199,7 @@ class BinanceAdapter(BaseExchange):
                         # 使用锁防止毫秒级别的多次回调同时触发重启
                         if self._order_restart_lock.acquire(blocking=False):
                             try: 
-                                self._restart_ws_async(symbol, on_price_update, on_order_update)
+                                self._restart_ws_async(on_price_update, on_order_update)
                             finally:
                                 # 延迟释放锁，防止毫秒级的重复触发
                                 threading.Timer(0.5, self._order_restart_lock.release).start()
@@ -255,12 +254,12 @@ class BinanceAdapter(BaseExchange):
             )
             self.manager.start()
 
-            print(f"{self._get_log_prefix()} 🆕 启动 WebSocket 监控 (symbol: {symbol})")
+            print(f"{self._get_log_prefix()} 🆕 启动 WebSocket 监控 (symbol: {self.symbol})")
             
             # 启动价格监控
             price_socket_id = self.manager.start_symbol_ticker_socket(
                 callback=price_callback,
-                symbol=symbol
+                symbol=self.symbol
             )
             self.price_socket_id = price_socket_id
             print(f"{self._get_log_prefix()} ✅ 价格监控已启动 (socket_id: {price_socket_id})")
@@ -291,7 +290,7 @@ class BinanceAdapter(BaseExchange):
             traceback.print_exc()
             self._ws_thread_running = False
 
-    def start_ws(self, symbol: str, on_price_update: Callable[[float], None], 
+    def start_ws(self, on_price_update: Callable[[float], None], 
                  on_order_update: Callable[[Dict], None]) -> bool:
         """启动 WebSocket 监听（价格和订单）- 在独立线程中运行"""
         with self._ws_thread_lock:
@@ -306,9 +305,9 @@ class BinanceAdapter(BaseExchange):
             # 创建并启动线程
             self._ws_thread = threading.Thread(
                 target=self._start_ws_in_thread,
-                args=(symbol, on_price_update, on_order_update),
+                args=(on_price_update, on_order_update),
                 daemon=True,
-                name=f"BinanceWS-{symbol}"
+                name=f"BinanceWS-{self.symbol}"
             )
             self._ws_thread.start()
             print(f"{self._get_log_prefix()} 🚀 WebSocket 监控线程已启动 (线程名: {self._ws_thread.name})")
@@ -435,7 +434,7 @@ class BinanceAdapter(BaseExchange):
         raw_sell_price = (current_price or buy_price) * (1 + sell_offset)
         
         # 获取实际费率（买入+卖出双边费率）
-        fee_data = self._get_trade_fee(self._current_symbol)
+        fee_data = self._get_trade_fee(self.symbol)
         # 使用 taker 费率（市价单）或 maker 费率（限价单）
         total_fee_rate = fee_data['maker_fee'] * 2  # 买卖双边
         
@@ -452,5 +451,5 @@ class BinanceAdapter(BaseExchange):
 
     def get_fee_rate(self) -> float:
         """获取交易对的手续费率（重写基类方法）"""
-        fee_data = self._get_trade_fee(self._current_symbol)
+        fee_data = self._get_trade_fee(self.symbol)
         return fee_data['maker_fee']
