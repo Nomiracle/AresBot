@@ -454,10 +454,16 @@ class BinanceAdapter(BaseExchange):
         min_price = math.ceil(min_price / tick_size) * tick_size if tick_size else min_price
         min_price = round(min_price, price_decimals)
         
-        # 最终卖价
+        # 最终卖价（向上取整确保不低于目标价）
         sell_price = max(raw_sell_price, min_price)
-        sell_price = math.floor(sell_price / tick_size) * tick_size if tick_size else sell_price
-        return round(sell_price, price_decimals)
+        sell_price = math.ceil(sell_price / tick_size) * tick_size if tick_size else sell_price
+        sell_price = round(sell_price, price_decimals)
+        
+        # 确保卖价至少高于买价一个 tick_size（防止手续费为0时无利润）
+        if sell_price <= buy_price and tick_size:
+            sell_price = round(buy_price + tick_size, price_decimals)
+        
+        return sell_price
 
 
     def get_fee_rate(self) -> float:
