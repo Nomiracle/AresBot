@@ -75,11 +75,22 @@ class BinanceAdapter(BaseExchange):
 
     def _restart_ws_async(self, on_price_update: Callable, on_order_update: Callable) -> None:
         """在后台线程中重启 WebSocket 监控（避免线程安全问题）"""
-        time.sleep(1)
+        time.sleep(0.01)
         self._retry_count = self._retry_count + 1
         print(f"{self._get_log_prefix()} 🔄 WebSocket 监控重启 (第 {self._retry_count} 次)")
         self.stop_ws()
         self.start_ws(on_price_update, on_order_update)
+        
+        event = {'event_type': 'reconnected'}
+        # 执行回调
+        if on_order_update:
+            try:
+                on_order_update(event)
+            except Exception as cb_e:
+                print(f"{self._get_log_prefix()} ⚠️ 回调执行失败: {cb_e}")
+
+
+
 
     def get_symbol_info(self) -> Dict:
         info = self.client.get_symbol_info(self.symbol)

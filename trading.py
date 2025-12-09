@@ -149,11 +149,11 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
         bot_data['last_error_time'] = datetime.now().isoformat()
 
 
-def handle_reconnected(event, bot_data, exchange, config, tick_size, price_decimals,
-                       step_size, qty_decimals, log_prefix, on_order_update):
+def handle_reconnected(bot_data, exchange, log_prefix, on_order_update):
     """处理重连事件，同步订单状态"""
     print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 WebSocket 已重连，同步订单状态...")
     
+    # 同步买单状态
     pending_buys = bot_data.get('pending_buys', [])
     for pending_buy in pending_buys[:]:
         order_id = pending_buy.get('order_id')
@@ -162,7 +162,7 @@ def handle_reconnected(event, bot_data, exchange, config, tick_size, price_decim
             order_status = order_info.get('status')
             
             if order_status == 'FILLED':
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 发现已成交订单 {order_id}")
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 发现已成交买单 {order_id}")
                 # 构造成交事件
                 filled_event = {
                     'event_type': 'order_filled',
@@ -175,8 +175,61 @@ def handle_reconnected(event, bot_data, exchange, config, tick_size, price_decim
                     'executedQty': order_info.get('executedQty')
                 }
                 on_order_update(filled_event)
+            elif order_status == 'CANCELED':
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 发现已取消买单 {order_id}")
+                # 从 pending_buys 移除
+                bot_data['pending_buys'] = [
+                    pb for pb in bot_data.get('pending_buys', []) 
+                    if pb['order_id'] != order_id
+                ]
+            elif order_status == 'EXPIRED':
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 发现已过期买单 {order_id}")
+                # 从 pending_buys 移除
+                bot_data['pending_buys'] = [
+                    pb for pb in bot_data.get('pending_buys', []) 
+                    if pb['order_id'] != order_id
+                ]
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 查询订单 {order_id} 失败: {e}")
+            print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 查询买单 {order_id} 失败: {e}")
+    
+    # 同步卖单状态
+    pending_sells = bot_data.get('pending_sells', [])
+    for pending_sell in pending_sells[:]:
+        order_id = pending_sell.get('order_id')
+        try:
+            order_info = exchange.get_order(order_id)
+            order_status = order_info.get('status')
+            
+            if order_status == 'FILLED':
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 发现已成交卖单 {order_id}")
+                # 构造成交事件
+                filled_event = {
+                    'event_type': 'order_filled',
+                    'order_id': str(order_info.get('orderId')),
+                    'symbol': order_info.get('symbol'),
+                    'side': order_info.get('side'),
+                    'status': order_status,
+                    'price': order_info.get('price'),
+                    'quantity': order_info.get('origQty'),
+                    'executedQty': order_info.get('executedQty')
+                }
+                on_order_update(filled_event)
+            elif order_status == 'CANCELED':
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 发现已取消卖单 {order_id}")
+                # 从 pending_sells 移除
+                bot_data['pending_sells'] = [
+                    ps for ps in bot_data.get('pending_sells', []) 
+                    if ps['order_id'] != order_id
+                ]
+            elif order_status == 'EXPIRED':
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 发现已过期卖单 {order_id}")
+                # 从 pending_sells 移除
+                bot_data['pending_sells'] = [
+                    ps for ps in bot_data.get('pending_sells', []) 
+                    if ps['order_id'] != order_id
+                ]
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 查询卖单 {order_id} 失败: {e}")
 
 
 def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data, 
@@ -375,9 +428,7 @@ def trading_loop(username, symbol):
                         
                         # 重连事件
                         if event_type == 'reconnected':
-                            handle_reconnected(event, bot_data, exchange, config, tick_size, 
-                                             price_decimals, step_size, qty_decimals, 
-                                             log_prefix, _on_order_update)
+                            handle_reconnected(bot_data, exchange, log_prefix, _on_order_update)
                             return
                         
                         # 错误事件
