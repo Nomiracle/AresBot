@@ -5,6 +5,7 @@
 from typing import Optional
 from .base import BaseExchange
 from .binance_adapterv2 import BinanceAdapter
+from .binance_futures_adapter import BinanceFuturesAdapter
 from .backpack_adapter import BackpackAdapter
 
 class ExchangeFactory:
@@ -12,6 +13,8 @@ class ExchangeFactory:
     
     SUPPORTED_EXCHANGES = {
         'binance': BinanceAdapter,
+        'binance_futures': BinanceFuturesAdapter,
+        'binance-futures': BinanceFuturesAdapter,  # 别名
         'backpack': BackpackAdapter,
         'bpx': BackpackAdapter,  # 别名
         # 未来可以添加其他交易所
