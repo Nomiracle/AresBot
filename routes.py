@@ -6,7 +6,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from exchanges.factory import ExchangeFactory
 
 from config import DB_FILE
-from database import (save_user_config, load_user_config, get_user_orders, get_user_id,
+from database import (save_user_config, load_user_config, get_user_orders, get_user_profits, get_user_id,
                      get_user_trading_pairs, add_trading_pair, delete_trading_pair, 
                      update_trading_pair, get_user_credentials, add_credential,
                      delete_credential, update_credential)
@@ -386,6 +386,26 @@ def register_routes(app):
         username = session['user']
         order_list = get_user_orders(username)
         return jsonify({'orders': order_list})
+
+    @app.route('/api/profits')
+    def api_profits():
+        """获取盈利记录"""
+        if 'user' not in session:
+            return jsonify({'profits': [], 'total_profit': 0}), 401
+
+        username = session['user']
+        profits = get_user_profits(username)
+        
+        # 计算总盈利
+        total_profit = sum(p['profit'] for p in profits)
+        total_fee = sum(p['fee'] for p in profits)
+        
+        return jsonify({
+            'profits': profits,
+            'total_profit': round(total_profit, 6),
+            'total_fee': round(total_fee, 6),
+            'count': len(profits)
+        })
 
     @app.route('/change_password', methods=['GET', 'POST'])
     def change_password():

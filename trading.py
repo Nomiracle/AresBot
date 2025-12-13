@@ -1,6 +1,6 @@
 import time
 from datetime import datetime
-from database import get_user_id
+from database import get_user_id, insert_order, update_order_status
 import math
 import traceback
 
@@ -133,6 +133,26 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
             'buy_order_id': order_id,
             'buy_price': buy_price
         })
+        
+        # 插入卖单记录到数据库
+        user_id = bot_data.get('user_id')
+        if user_id:
+            try:
+                insert_order(
+                    user_id=user_id,
+                    symbol=config['symbol'],
+                    price=str(sell_price),
+                    quantity=str(aligned_qty),
+                    side='SELL',
+                    status='NEW',
+                    order_id=sell_order_id,
+                    buy_price=str(buy_price),
+                    exchange=config.get('exchange', 'unknown'),
+                    fee=None  # 成交后更新
+                )
+                print(f"[{datetime.now().isoformat()}] {log_prefix} 📝 卖单已记录到数据库")
+            except Exception as db_e:
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 卖单记录失败: {db_e}")
         
         # 挂卖单成功，清除错误和警告信息
         bot_data['last_error'] = None
@@ -472,6 +492,15 @@ def trading_loop(username, symbol):
                                 if ps['order_id'] != order_id
                             ]
                             print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单成交 {order_id}")
+                            
+                            # 更新数据库订单状态
+                            try:
+                                # 尝试从事件中获取手续费
+                                fee = event.get('fee') or event.get('commission')
+                                update_order_status(order_id, 'FILLED', fee=fee)
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} 📝 卖单状态已更新: FILLED")
+                            except Exception as db_e:
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 更新卖单状态失败: {db_e}")
                     except Exception as e:
                         print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 订单回调错误: {e}")
                         traceback.print_exc()

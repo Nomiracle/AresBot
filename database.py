@@ -150,7 +150,10 @@ def init_db(recreate=False):
                   status TEXT NOT NULL,
                   order_id TEXT,
                   buy_price TEXT,
+                  exchange TEXT,
+                  fee TEXT,
                   timestamp TEXT NOT NULL,
+                  updated_at TEXT,
                   FOREIGN KEY (user_id) REFERENCES users(id))''')
     
     # 为已存在的 orders 表添加 buy_price 列（如果不存在）
@@ -159,6 +162,27 @@ def init_db(recreate=False):
         print(f"[{datetime.now().isoformat()}] orders 表已添加 buy_price 列")
     except sqlite3.OperationalError:
         pass  # 列已存在
+
+    # 添加 exchange 列（交易所）
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN exchange TEXT")
+        print(f"[{datetime.now().isoformat()}] orders 表已添加 exchange 列")
+    except sqlite3.OperationalError:
+        pass
+
+    # 添加 fee 列（手续费）
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN fee TEXT")
+        print(f"[{datetime.now().isoformat()}] orders 表已添加 fee 列")
+    except sqlite3.OperationalError:
+        pass
+
+    # 添加 updated_at 列（订单更新时间）
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN updated_at TEXT")
+        print(f"[{datetime.now().isoformat()}] orders 表已添加 updated_at 列")
+    except sqlite3.OperationalError:
+        pass
 
     # 新增：API凭证管理表
     c.execute('''CREATE TABLE IF NOT EXISTS api_credentials
@@ -407,16 +431,74 @@ def get_user_orders(username):
     ]
 
 
-def insert_order(user_id, symbol, price, quantity, side, status, order_id, buy_price=None):
+def get_user_profits(username):
+    """获取用户的盈利记录（卖单成交后计算盈利）"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return []
+
     with db_pool.get_cursor() as (conn, c):
-        c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, buy_price, timestamp)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                  (user_id, symbol, price, quantity, side, status, order_id, buy_price, datetime.now().isoformat()))
+        c.execute("""
+            SELECT symbol, price, quantity, buy_price, fee, exchange, timestamp, updated_at, order_id
+            FROM orders 
+            WHERE user_id=? AND side='SELL' AND status IN ('FILLED', 'order_filled')
+            ORDER BY id DESC LIMIT 100
+        """, (user_id,))
+        orders = c.fetchall()
+
+    profits = []
+    for o in orders:
+        symbol = o[0]
+        sell_price = float(o[1]) if o[1] else 0
+        quantity = float(o[2]) if o[2] else 0
+        buy_price = float(o[3]) if o[3] else 0
+        fee = float(o[4]) if o[4] else 0
+        exchange = o[5] or 'unknown'
+        timestamp = o[6] or ''
+        updated_at = o[7] or timestamp
+        order_id = o[8] or ''
+
+        # 计算盈利 = (卖出价 - 买入价) * 数量 - 手续费
+        if buy_price > 0:
+            profit = (sell_price - buy_price) * quantity - fee
+            profit_percent = ((sell_price - buy_price) / buy_price) * 100
+        else:
+            profit = 0
+            profit_percent = 0
+
+        profits.append({
+            'symbol': symbol,
+            'exchange': exchange,
+            'buy_price': buy_price,
+            'sell_price': sell_price,
+            'quantity': quantity,
+            'fee': fee,
+            'profit': round(profit, 6),
+            'profit_percent': round(profit_percent, 4),
+            'timestamp': timestamp,
+            'updated_at': updated_at,
+            'order_id': order_id
+        })
+
+    return profits
 
 
-def update_order_status(order_id, status):
+def insert_order(user_id, symbol, price, quantity, side, status, order_id, buy_price=None, exchange=None, fee=None):
     with db_pool.get_cursor() as (conn, c):
-        c.execute("""UPDATE orders SET status=? WHERE order_id=?""", (status, order_id))
+        c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, buy_price, exchange, fee, timestamp, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (user_id, symbol, price, quantity, side, status, order_id, buy_price, exchange, fee, 
+                   datetime.now().isoformat(), datetime.now().isoformat()))
+
+
+def update_order_status(order_id, status, fee=None):
+    with db_pool.get_cursor() as (conn, c):
+        if fee is not None:
+            c.execute("""UPDATE orders SET status=?, fee=?, updated_at=? WHERE order_id=?""", 
+                      (status, fee, datetime.now().isoformat(), order_id))
+        else:
+            c.execute("""UPDATE orders SET status=?, updated_at=? WHERE order_id=?""", 
+                      (status, datetime.now().isoformat(), order_id))
 
 
 def get_order_buy_price(order_id):
