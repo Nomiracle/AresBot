@@ -1,12 +1,13 @@
 # binance_futures_adapter.py - 币安合约适配器
 from typing import Dict, List, Optional, Callable
-from binance import ThreadedWebsocketManager
+from binance import AsyncClient, BinanceSocketManager
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from datetime import datetime
 import time
 import threading
 import math
+import asyncio
 
 from .base import BaseExchange
 
@@ -23,9 +24,11 @@ class BinanceFuturesAdapter(BaseExchange):
         self.client = Client(api_key, api_secret, testnet=testnet)
         
         # WebSocket 管理器（实例变量）
-        self.manager: Optional[ThreadedWebsocketManager] = None
+        self.async_client: Optional[AsyncClient] = None
+        self.manager: Optional[BinanceSocketManager] = None
         self.price_socket_id: Optional[str] = None
         self._user_socket_id: Optional[str] = None
+        self._event_loop: Optional[asyncio.AbstractEventLoop] = None
         
         # 全局线程变量
         self._ws_thread: Optional[threading.Thread] = None
@@ -232,7 +235,7 @@ class BinanceFuturesAdapter(BaseExchange):
                            on_order_update: Callable[[Dict], None]) -> None:
         """在线程中启动合约 WebSocket 监听（价格和订单）"""
 
-        def price_callback(msg):
+        async def price_callback(msg):
             """解析合约行情消息"""
             try:
                 # 🔍 调试：打印收到的原始消息
@@ -312,7 +315,7 @@ class BinanceFuturesAdapter(BaseExchange):
                 import traceback
                 traceback.print_exc()
 
-        def user_data_callback(msg):
+        async def user_data_callback(msg):
             """解析合约用户数据消息"""
             try:
                 msg_type = msg.get('e', 'unknown')
@@ -367,41 +370,81 @@ class BinanceFuturesAdapter(BaseExchange):
             except Exception as e:
                 print(f"{self._get_log_prefix()} ❌ 解析用户消息失败: {e}")
 
-        try:
-            self.manager = ThreadedWebsocketManager(
-                api_key=self.api_key,
-                api_secret=self.api_secret,
-                testnet=self.testnet
-            )
-            self.manager.start()
+        async def run_websocket():
+            """异步运行 WebSocket 连接"""
+            try:
+                # 创建异步客户端
+                self.async_client = await AsyncClient.create(
+                    api_key=self.api_key,
+                    api_secret=self.api_secret,
+                    testnet=self.testnet
+                )
+                self.manager = BinanceSocketManager(self.async_client)
 
-            print(f"{self._get_log_prefix()} 🆕 启动合约 WebSocket 监控 (symbol: {self.symbol})")
-            print(f"{self._get_log_prefix()} 🔍 [DEBUG] testnet={self.testnet}")
+                print(f"{self._get_log_prefix()} 🆕 启动合约 WebSocket 监控 (symbol: {self.symbol})")
+                print(f"{self._get_log_prefix()} 🔍 [DEBUG] testnet={self.testnet}")
+                
+                # 启动合约价格监控 (使用 symbol ticker)
+                print(f"{self._get_log_prefix()} 🔍 [DEBUG] 正在调用 symbol_ticker_futures_socket...")
+                price_socket = self.manager.symbol_ticker_futures_socket(symbol=self.symbol)
+                
+                # 启动合约用户数据监控
+                user_socket = self.manager.futures_user_socket()
+                
+                print(f"{self._get_log_prefix()} ✅ 合约价格监控已启动")
+                print(f"{self._get_log_prefix()} ✅ 合约订单监控已启动")
+                print(f"{self._get_log_prefix()} 🔍 [DEBUG] 等待价格消息...")
+                
+                # 创建任务来处理两个 WebSocket
+                async def handle_price_socket():
+                    async with price_socket as ps:
+                        while self._ws_thread_running:
+                            try:
+                                msg = await ps.recv()
+                                await price_callback(msg)
+                            except Exception as e:
+                                print(f"{self._get_log_prefix()} ❌ 价格 socket 错误: {e}")
+                                if self._ws_thread_running:
+                                    await asyncio.sleep(1)
+                                else:
+                                    break
+                
+                async def handle_user_socket():
+                    async with user_socket as us:
+                        while self._ws_thread_running:
+                            try:
+                                msg = await us.recv()
+                                await user_data_callback(msg)
+                            except Exception as e:
+                                print(f"{self._get_log_prefix()} ❌ 用户数据 socket 错误: {e}")
+                                if self._ws_thread_running:
+                                    await asyncio.sleep(1)
+                                else:
+                                    break
+                
+                # 同时运行两个 socket
+                await asyncio.gather(
+                    handle_price_socket(),
+                    handle_user_socket()
+                )
+                
+                print(f"{self._get_log_prefix()} � WebSocket 监控收到停止信号,准备退出...")
+                
+            except Exception as e:
+                print(f"{self._get_log_prefix()} ❌ WebSocket 运行错误: {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
+                if self.async_client:
+                    await self.async_client.close_connection()
+        
+        try:
+            # 创建新的事件循环
+            self._event_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._event_loop)
             
-            # 启动合约价格监控 (使用 symbol ticker)
-            print(f"{self._get_log_prefix()} 🔍 [DEBUG] 正在调用 start_symbol_ticker_futures_socket...")
-            price_socket_id = self.manager.start_symbol_ticker_futures_socket(
-                callback=price_callback,
-                symbol=self.symbol
-            )
-            self.price_socket_id = price_socket_id
-            print(f"{self._get_log_prefix()} ✅ 合约价格监控已启动 (socket_id: {price_socket_id})")
-            print(f"{self._get_log_prefix()} 🔍 [DEBUG] 等待价格消息...")
-            
-            # 启动合约用户数据监控
-            order_socket_id = self.manager.start_futures_user_socket(callback=user_data_callback)
-            self._user_socket_id = order_socket_id if order_socket_id else 'futures_user_stream'
-            print(f"{self._get_log_prefix()} ✅ 合约订单监控已启动 (socket_id: {order_socket_id})")
-            
-            print(f"{self._get_log_prefix()} 🔄 WebSocket 监控线程进入运行循环...")
-            loop_count = 0
-            while self._ws_thread_running:
-                time.sleep(1)
-                loop_count += 1
-                if loop_count % 30 == 0:
-                    print(f"{self._get_log_prefix()} 💓 WebSocket 监控线程运行中 (已运行 {loop_count} 秒)")
-            
-            print(f"{self._get_log_prefix()} 🛑 WebSocket 监控线程收到停止信号,准备退出...")
+            # 运行 WebSocket
+            self._event_loop.run_until_complete(run_websocket())
 
         except BinanceAPIException as e:
             print(f"{self._get_log_prefix()} ❌ 启动 WebSocket 监控失败 [API错误]: {e}")
@@ -411,6 +454,14 @@ class BinanceFuturesAdapter(BaseExchange):
             import traceback
             traceback.print_exc()
             self._ws_thread_running = False
+        finally:
+            # 清理事件循环
+            if self._event_loop:
+                try:
+                    self._event_loop.close()
+                except Exception as e:
+                    print(f"{self._get_log_prefix()} ⚠️ 关闭事件循环失败: {e}")
+                self._event_loop = None
 
     def start_ws(self, on_price_update: Callable[[float], None], 
                  on_order_update: Callable[[Dict], None]) -> bool:
@@ -454,28 +505,20 @@ class BinanceFuturesAdapter(BaseExchange):
                     print(f"{self._get_log_prefix()} ✅ WebSocket 线程已停止")
             self._ws_thread = None
             
-            if self.manager:
+            # 清理 WebSocket 管理器
+            self.manager = None
+            
+            # 关闭异步客户端
+            if self.async_client:
                 try:
-                    if self.price_socket_id:
-                        self.manager.stop_socket(self.price_socket_id)
-                        print(f"{self._get_log_prefix()} ✅ 已停止价格 socket: {self.price_socket_id}")
-                        self.price_socket_id = None
+                    # 如果事件循环还在运行,使用它来关闭客户端
+                    if self._event_loop and not self._event_loop.is_closed():
+                        self._event_loop.run_until_complete(self.async_client.close_connection())
+                    print(f"{self._get_log_prefix()} ✅ 异步客户端已关闭")
                 except Exception as e:
-                    print(f"{self._get_log_prefix()} ⚠️ 停止价格 socket 失败: {e}")
-                
-                try:
-                    self.manager.stop_socket('futures_user_socket')
-                    print(f"{self._get_log_prefix()} ✅ 已停止用户数据 socket")
-                except Exception as e:
-                    print(f"{self._get_log_prefix()} ⚠️ 停止用户数据 socket 失败: {e}")
-                
-                try:
-                    print(f"{self._get_log_prefix()} 🛑 正在关闭 WebSocket 管理器...")
-                    self.manager.stop()
-                    self.manager = None
-                    print(f"{self._get_log_prefix()} ✅ WebSocket 管理器已完全关闭")
-                except Exception as e:
-                    print(f"{self._get_log_prefix()} ⚠️ 关闭 WebSocket 管理器失败: {e}")
+                    print(f"{self._get_log_prefix()} ⚠️ 关闭异步客户端失败: {e}")
+                finally:
+                    self.async_client = None
             
             print(f"{self._get_log_prefix()} ✅ 清理完成")
         except Exception as e:
