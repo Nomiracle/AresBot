@@ -306,6 +306,7 @@ class CcxtFuturesAdapter(BaseExchange):
                 """watchTicker 实时价格推送"""
                 update_count = 0
                 last_log_time = time.time()
+                start_time = time.time()
                 while self._monitor_running:
                     try:
                         ticker = await self._ws_client.watch_ticker(self._market_symbol)
@@ -318,10 +319,12 @@ class CcxtFuturesAdapter(BaseExchange):
                                     old_price = self._last_price
                                     self._last_price = p
                                     update_count += 1
-                                    # 每 10 秒或每 100 次更新打印一次日志
+                                    # 每 10 秒打印一次日志，包含速率统计
                                     now = time.time()
-                                    if now - last_log_time >= 10 or update_count % 100 == 1:
-                                        print(f"{self._get_log_prefix()} 📊 价格更新 #{update_count}: {old_price} -> {p}")
+                                    if now - last_log_time >= 10:
+                                        elapsed = now - start_time
+                                        rate = update_count / elapsed if elapsed > 0 else 0
+                                        print(f"{self._get_log_prefix()} 📊 价格更新 #{update_count}: {old_price} -> {p} | 速率: {rate:.2f} 次/秒")
                                         last_log_time = now
                                     if on_price_update:
                                         on_price_update(p)

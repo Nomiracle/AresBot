@@ -564,11 +564,12 @@ def trading_loop(username, symbol):
                     )
                     bot_data['target_price'] = target_price
                     
-                    # 调试日志：打印当前价格、目标价、挂单价
+                    # 调试日志：打印当前价格、目标价、挂单价、配置的偏移
+                    offset_pct_cfg = config.get('offset_percent', -0.5)
                     for order in open_buy_orders:
                         order_price = float(order.get('price', 0))
                         diff_pct = (target_price - order_price) / order_price * 100 if order_price else 0
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 改价检查: 当前价={current_price}, 目标价={target_price}, 挂单价={order_price}, 差异={diff_pct:.4f}%")
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 改价检查: 当前价={current_price}, 目标价={target_price}, 挂单价={order_price}, 差异={diff_pct:.4f}%, offset_percent={offset_pct_cfg}")
                     
                     reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, 
                                      bot_data, exchange, config, log_prefix)
