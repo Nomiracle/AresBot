@@ -119,8 +119,8 @@ class BinanceFuturesAdapter(BaseExchange):
             except Exception as cb_e:
                 print(f"{self._get_log_prefix()} ⚠️ 回调执行失败: {cb_e}")
 
-    def get_symbol_info(self) -> Dict:
-        """获取合约交易对信息"""
+    def _get_symbol_info(self) -> Dict:
+        """获取合约交易对信息（内部使用）"""
         if self._symbol_info_cache:
             return self._symbol_info_cache
             
@@ -208,27 +208,39 @@ class BinanceFuturesAdapter(BaseExchange):
             'newOrderResponse': new_order
         }
 
-    def get_price_precision(self, symbol_info: Dict) -> tuple:
-        """从合约交易对信息中提取价格精度"""
+    def _get_price_precision(self, symbol_info: Dict) -> tuple:
+        """从合约交易对信息中提取价格精度（内部使用）"""
         if not symbol_info or 'filters' not in symbol_info:
-            return 0.0, 0
+            return 0.01, 2
         for f in symbol_info['filters']:
             if f['filterType'] == 'PRICE_FILTER':
                 tick = float(f['tickSize'])
                 decimals = len(str(tick).split('.')[-1].rstrip('0'))
                 return tick, decimals
-        return 0.0, 0
+        return 0.01, 2
 
-    def get_quantity_precision(self, symbol_info: Dict) -> tuple:
-        """从合约交易对信息中提取数量精度"""
+    def _get_quantity_precision(self, symbol_info: Dict) -> tuple:
+        """从合约交易对信息中提取数量精度（内部使用）"""
         if not symbol_info or 'filters' not in symbol_info:
-            return 0.0, 0
+            return 0.001, 3
         for f in symbol_info['filters']:
             if f['filterType'] == 'LOT_SIZE':
                 step = float(f['stepSize'])
                 decimals = len(str(step).split('.')[-1].rstrip('0'))
                 return step, decimals
-        return 0.0, 0
+        return 0.001, 3
+
+    def get_trading_rules(self) -> Dict:
+        """获取交易规则（精度信息）"""
+        symbol_info = self._get_symbol_info()
+        tick_size, price_decimals = self._get_price_precision(symbol_info)
+        step_size, qty_decimals = self._get_quantity_precision(symbol_info)
+        return {
+            'tick_size': tick_size,
+            'price_decimals': price_decimals,
+            'step_size': step_size,
+            'qty_decimals': qty_decimals
+        }
 
     # ====================== WebSocket 监控 ======================
     def _start_ws_in_thread(self, on_price_update: Callable[[float], None], 

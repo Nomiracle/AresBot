@@ -95,7 +95,8 @@ class BinanceAdapter(BaseExchange):
 
 
 
-    def get_symbol_info(self) -> Dict:
+    def _get_symbol_info(self) -> Dict:
+        """获取交易对信息（内部使用）"""
         info = self.client.get_symbol_info(self.symbol)
         return info or {}
 
@@ -144,25 +145,39 @@ class BinanceAdapter(BaseExchange):
             cancelReplaceMode=cancel_replace_mode
         )
 
-    def get_price_precision(self, symbol_info: Dict) -> tuple:
+    def _get_price_precision(self, symbol_info: Dict) -> tuple:
+        """提取价格精度（内部使用）"""
         if not symbol_info or 'filters' not in symbol_info:
-            return 0.0, 0
+            return 0.01, 2
         for f in symbol_info['filters']:
             if f['filterType'] == 'PRICE_FILTER':
                 tick = float(f['tickSize'])
                 decimals = len(str(tick).split('.')[-1].rstrip('0'))
                 return tick, decimals
-        return 0.0, 0
+        return 0.01, 2
 
-    def get_quantity_precision(self, symbol_info: Dict) -> tuple:
+    def _get_quantity_precision(self, symbol_info: Dict) -> tuple:
+        """提取数量精度（内部使用）"""
         if not symbol_info or 'filters' not in symbol_info:
-            return 0.0, 0
+            return 0.001, 3
         for f in symbol_info['filters']:
             if f['filterType'] == 'LOT_SIZE':
                 step = float(f['stepSize'])
                 decimals = len(str(step).split('.')[-1].rstrip('0'))
                 return step, decimals
-        return 0.0, 0
+        return 0.001, 3
+
+    def get_trading_rules(self) -> Dict:
+        """获取交易规则（精度信息）"""
+        symbol_info = self._get_symbol_info()
+        tick_size, price_decimals = self._get_price_precision(symbol_info)
+        step_size, qty_decimals = self._get_quantity_precision(symbol_info)
+        return {
+            'tick_size': tick_size,
+            'price_decimals': price_decimals,
+            'step_size': step_size,
+            'qty_decimals': qty_decimals
+        }
 
     # ====================== WebSocket 监控 ======================
     def _start_ws_in_thread(self, on_price_update: Callable[[float], None], 

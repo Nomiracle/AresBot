@@ -401,13 +401,17 @@ def trading_loop(username, symbol):
             # 获取交易规则（仅一次）
             if tick_size is None:
                 try:
-                    symbol_info = exchange.get_symbol_info()
-                    tick_size, price_decimals = exchange.get_price_precision(symbol_info)
-                    step_size, qty_decimals = exchange.get_quantity_precision(symbol_info)
+                    rules = exchange.get_trading_rules()
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 原始交易规则: {rules}")
+                    tick_size = rules['tick_size']
+                    price_decimals = rules['price_decimals']
+                    step_size = rules['step_size']
+                    qty_decimals = rules['qty_decimals']
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 交易规则: tick_size={tick_size}, price_decimals={price_decimals}, step_size={step_size}, qty_decimals={qty_decimals}")
                 except Exception as e:
                     tick_size, price_decimals = 0.01, 2
                     step_size, qty_decimals = 0.000001, 6
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 获取交易规则失败，使用默认值")
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 获取交易规则失败，使用默认值: {e}")
 
             # 启动监听（仅一次）
             if not bot_data.get('monitor_started'):

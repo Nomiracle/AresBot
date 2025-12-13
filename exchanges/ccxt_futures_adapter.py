@@ -118,8 +118,8 @@ class CcxtFuturesAdapter(BaseExchange):
             print(f"{self._get_log_prefix()} Error: {e}")
             return False
 
-    def get_symbol_info(self) -> Dict:
-        """获取合约交易对信息"""
+    def _get_symbol_info(self) -> Dict:
+        """获取合约交易对信息（内部使用）"""
         if self._symbol_info_cache:
             return self._symbol_info_cache
 
@@ -265,19 +265,53 @@ class CcxtFuturesAdapter(BaseExchange):
             "newOrderResponse": new_order,
         }
 
-    def get_price_precision(self, symbol_info: Dict) -> Tuple[float, int]:
-        """从合约交易对信息中提取价格精度"""
+    def _get_price_precision(self, symbol_info: Dict) -> Tuple[float, int]:
+        """从合约交易对信息中提取价格精度（内部使用）"""
         prec = (symbol_info or {}).get("precision", {})
-        price_decimals = int(prec.get("price") or 2)
-        tick_size = 10 ** (-price_decimals)
+        limits = (symbol_info or {}).get("limits", {})
+        
+        # 调试日志
+        print(f"{self._get_log_prefix()} 🔍 precision={prec}, limits={limits}")
+        
+        # ccxt 的 precision.price 可能是小数位数（如 2）或 tick_size（如 0.01）
+        price_prec = prec.get("price")
+        
+        if price_prec is not None:
+            if price_prec >= 1:
+                # 是小数位数
+                price_decimals = int(price_prec)
+                tick_size = 10 ** (-price_decimals)
+            else:
+                # 是 tick_size 本身
+                tick_size = float(price_prec)
+                # 计算小数位数
+                price_decimals = max(0, -int(math.floor(math.log10(tick_size) + 1e-9)))
+        else:
+            # 默认值
+            price_decimals = 2
+            tick_size = 0.01
+        
+        print(f"{self._get_log_prefix()} 🔍 计算结果: tick_size={tick_size}, price_decimals={price_decimals}")
         return float(tick_size), price_decimals
 
-    def get_quantity_precision(self, symbol_info: Dict) -> Tuple[float, int]:
-        """从合约交易对信息中提取数量精度"""
+    def _get_quantity_precision(self, symbol_info: Dict) -> Tuple[float, int]:
+        """从合约交易对信息中提取数量精度（内部使用）"""
         prec = (symbol_info or {}).get("precision", {})
         qty_decimals = int(prec.get("amount") or 3)
         step_size = 10 ** (-qty_decimals)
         return float(step_size), qty_decimals
+
+    def get_trading_rules(self) -> Dict:
+        """获取交易规则（精度信息）"""
+        symbol_info = self._get_symbol_info()
+        tick_size, price_decimals = self._get_price_precision(symbol_info)
+        step_size, qty_decimals = self._get_quantity_precision(symbol_info)
+        return {
+            'tick_size': tick_size,
+            'price_decimals': price_decimals,
+            'step_size': step_size,
+            'qty_decimals': qty_decimals
+        }
 
     # ====================== WebSocket 监控（ccxt pro 真正 WS） ======================
     def start_ws(

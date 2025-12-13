@@ -188,8 +188,8 @@ class BackpackAdapter(BaseExchange):
         print(f"[{datetime.now().isoformat()}] 💡 [Backpack] 提示: Backpack 只支持 USDC 计价，请使用如 BTCUSDC 或 BTCUSD 格式")
         return symbol
     
-    def get_symbol_info(self) -> Dict:
-        """获取交易对信息"""
+    def _get_symbol_info(self) -> Dict:
+        """获取交易对信息（内部使用）"""
         try:
             bpx_symbol = self._convert_symbol(self.symbol)
             markets = self._get_markets()
@@ -197,7 +197,6 @@ class BackpackAdapter(BaseExchange):
             for market in markets:
                 if market.get('symbol') == bpx_symbol:
                     return market
-                # print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 交易对 {market.get('symbol')} 不存在：{bpx_symbol}")
             
             print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 交易对 {bpx_symbol} 不存在")
             return None
@@ -663,14 +662,12 @@ class BackpackAdapter(BaseExchange):
         # Backpack 使用 REST 轮询，不需要解析 WebSocket 消息
         return None
     
-    def get_price_precision(self, symbol_info: Dict) -> tuple:
-        """提取价格精度"""
+    def _get_price_precision(self, symbol_info: Dict) -> tuple:
+        """提取价格精度（内部使用）"""
         if not symbol_info:
-            print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] symbol_info 无效，使用默认价格精度")
             return 0.01, 2
         
         try:
-            # Backpack 使用 filters 字段
             filters = symbol_info.get('filters', {})
             price_filter = filters.get('price', {})
             
@@ -683,14 +680,12 @@ class BackpackAdapter(BaseExchange):
         
         return 0.01, 2
     
-    def get_quantity_precision(self, symbol_info: Dict) -> tuple:
-        """提取数量精度"""
+    def _get_quantity_precision(self, symbol_info: Dict) -> tuple:
+        """提取数量精度（内部使用）"""
         if not symbol_info:
-            print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] symbol_info 无效，使用默认数量精度")
             return 0.000001, 6
         
         try:
-            # Backpack 使用 filters 字段
             filters = symbol_info.get('filters', {})
             quantity_filter = filters.get('quantity', {})
             
@@ -702,6 +697,18 @@ class BackpackAdapter(BaseExchange):
             print(f"[{datetime.now().isoformat()}] ⚠️ [Backpack] 解析数量精度失败: {e}")
         
         return 0.000001, 6
+
+    def get_trading_rules(self) -> Dict:
+        """获取交易规则（精度信息）"""
+        symbol_info = self._get_symbol_info()
+        tick_size, price_decimals = self._get_price_precision(symbol_info)
+        step_size, qty_decimals = self._get_quantity_precision(symbol_info)
+        return {
+            'tick_size': tick_size,
+            'price_decimals': price_decimals,
+            'step_size': step_size,
+            'qty_decimals': qty_decimals
+        }
     
     def _convert_order_status(self, bpx_status: str) -> str:
         """转换订单状态为统一格式"""

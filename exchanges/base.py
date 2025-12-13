@@ -29,11 +29,6 @@ class BaseExchange(ABC):
         pass
     
     @abstractmethod
-    def get_symbol_info(self) -> Dict:
-        """获取交易对信息（精度、过滤器等）"""
-        pass
-    
-    @abstractmethod
     def get_symbol_ticker(self) -> Dict:
         """获取交易对当前价格（内部使用）"""
         pass
@@ -70,20 +65,16 @@ class BaseExchange(ABC):
         pass
     
     @abstractmethod
-    def get_price_precision(self, symbol_info: Dict) -> tuple:
-        """从交易对信息中提取价格精度
+    def get_trading_rules(self) -> Dict:
+        """获取交易规则（精度信息）
         
         Returns:
-            (tick_size: float, price_decimals: int)
-        """
-        pass
-    
-    @abstractmethod
-    def get_quantity_precision(self, symbol_info: Dict) -> tuple:
-        """从交易对信息中提取数量精度
-        
-        Returns:
-            (step_size: float, qty_decimals: int)
+            {
+                'tick_size': float,      # 价格步长
+                'price_decimals': int,   # 价格小数位数
+                'step_size': float,      # 数量步长
+                'qty_decimals': int      # 数量小数位数
+            }
         """
         pass
     
