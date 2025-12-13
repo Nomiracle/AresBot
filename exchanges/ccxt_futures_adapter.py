@@ -304,6 +304,8 @@ class CcxtFuturesAdapter(BaseExchange):
 
             async def watch_ticker():
                 """watchTicker 实时价格推送"""
+                update_count = 0
+                last_log_time = time.time()
                 while self._monitor_running:
                     try:
                         ticker = await self._ws_client.watch_ticker(self._market_symbol)
@@ -311,8 +313,16 @@ class CcxtFuturesAdapter(BaseExchange):
                         if price is not None:
                             p = float(price)
                             with self._last_price_lock:
-                                if self._last_price is None or abs(p - self._last_price) > 1e-12:
+                                price_changed = self._last_price is None or abs(p - self._last_price) > 1e-12
+                                if price_changed:
+                                    old_price = self._last_price
                                     self._last_price = p
+                                    update_count += 1
+                                    # 每 10 秒或每 100 次更新打印一次日志
+                                    now = time.time()
+                                    if now - last_log_time >= 10 or update_count % 100 == 1:
+                                        print(f"{self._get_log_prefix()} 📊 价格更新 #{update_count}: {old_price} -> {p}")
+                                        last_log_time = now
                                     if on_price_update:
                                         on_price_update(p)
                     except Exception as e:
@@ -327,8 +337,15 @@ class CcxtFuturesAdapter(BaseExchange):
                         orders = await self._ws_client.watch_orders(self._market_symbol)
                         for o in orders:
                             order_id = str(o.get("id"))
-                            status = self._map_status(o.get("status"))
+                            raw_status = o.get("status")
+                            status = self._map_status(raw_status)
                             side = str(o.get("side", "")).upper()
+                            price = o.get("price")
+                            amount = o.get("amount")
+                            filled = o.get("filled")
+
+                            # 打印所有订单事件
+                            print(f"{self._get_log_prefix()} 📨 订单事件: id={order_id}, status={raw_status}->{status}, side={side}, price={price}, amount={amount}, filled={filled}")
 
                             # 合约手续费从 USDT 扣除
                             fee_paid_externally = True
@@ -350,14 +367,29 @@ class CcxtFuturesAdapter(BaseExchange):
                                         "symbol": self.symbol,
                                         "side": side,
                                         "status": "FILLED",
-                                        "price": str(o.get("price") or 0),
-                                        "quantity": str(o.get("amount") or 0),
-                                        "executedQty": str(o.get("filled") or 0),
+                                        "price": str(price or 0),
+                                        "quantity": str(amount or 0),
+                                        "executedQty": str(filled or 0),
                                         "feePaidExternally": fee_paid_externally,
+                                    })
+                            else:
+                                # NEW 或其他状态也通知
+                                if on_order_update:
+                                    on_order_update({
+                                        "event_type": "order_update",
+                                        "order_id": order_id,
+                                        "symbol": self.symbol,
+                                        "side": side,
+                                        "status": status,
+                                        "price": str(price or 0),
+                                        "quantity": str(amount or 0),
+                                        "executedQty": str(filled or 0),
                                     })
                     except Exception as e:
                         if self._monitor_running:
                             print(f"{self._get_log_prefix()} ⚠️ watchOrders 错误: {e}")
+                            import traceback
+                            traceback.print_exc()
                             await asyncio.sleep(1)
 
             async def run_all():
