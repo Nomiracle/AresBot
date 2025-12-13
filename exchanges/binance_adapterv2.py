@@ -379,31 +379,23 @@ class BinanceAdapter(BaseExchange):
         try:
             print(f"{self._get_log_prefix()} 🔌 开始清理 WebSocket 连接...")
             
-            # 停止线程
+            # 设置停止标志,让 WebSocket 线程自己退出
             self._ws_thread_running = False
+            
+            # 等待线程停止
             if self._ws_thread and self._ws_thread.is_alive():
                 print(f"{self._get_log_prefix()} 🛑 等待 WebSocket 线程停止...")
-                self._ws_thread.join(timeout=3)
+                self._ws_thread.join(timeout=5)
                 if self._ws_thread.is_alive():
-                    print(f"{self._get_log_prefix()} ⚠️ WebSocket 线程未能在3秒内停止")
+                    print(f"{self._get_log_prefix()} ⚠️ WebSocket 线程未能在5秒内停止")
                 else:
                     print(f"{self._get_log_prefix()} ✅ WebSocket 线程已停止")
             self._ws_thread = None
             
-            # 清理 WebSocket 管理器
+            # 清理引用(实际清理在 WebSocket 线程的 finally 块中完成)
             self.manager = None
-            
-            # 关闭异步客户端
-            if self.async_client:
-                try:
-                    # 如果事件循环还在运行,使用它来关闭客户端
-                    if self._event_loop and not self._event_loop.is_closed():
-                        self._event_loop.run_until_complete(self.async_client.close_connection())
-                    print(f"{self._get_log_prefix()} ✅ 异步客户端已关闭")
-                except Exception as e:
-                    print(f"{self._get_log_prefix()} ⚠️ 关闭异步客户端失败: {e}")
-                finally:
-                    self.async_client = None
+            self.async_client = None
+            self._event_loop = None
             
             print(f"{self._get_log_prefix()} ✅ 清理完成")
         except Exception as e:
