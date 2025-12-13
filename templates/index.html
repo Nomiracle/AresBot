@@ -463,8 +463,7 @@
           <div class="input-group">
             <label>交易所 🏦</label>
             <select id="exchange" onchange="updateExchangeUI()">
-              <option value="binance">Binance (币安)</option>
-              <option value="backpack">Backpack (BPX)</option>
+              <option value="">加载中...</option>
             </select>
           </div>
           <div class="input-group">
@@ -584,8 +583,7 @@
               id="newCredExchange"
               style="padding: 10px; border: 2px solid #ddd; border-radius: 6px;"
             >
-              <option value="binance">Binance</option>
-              <option value="backpack">Backpack</option>
+              <option value="">加载中...</option>
             </select>
             <input
               type="text"
@@ -688,6 +686,8 @@
     <script>
       let currentTab = "trading";
       let desiredSymbolFromConfig = null;
+      let exchangesData = []; // 存储从服务端获取的交易所列表
+      let exchangeDisplayNames = {}; // 交易所显示名称映射
 
       // Toast通知函数
       function showToast(message, type = 'info') {
@@ -754,6 +754,47 @@
         }
       }
       
+      // 从服务端加载交易所列表
+      function loadExchanges() {
+        return fetch("/api/exchanges")
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.success && data.exchanges) {
+              exchangesData = data.exchanges;
+              
+              // 构建显示名称映射
+              exchangeDisplayNames = {};
+              data.exchanges.forEach(ex => {
+                exchangeDisplayNames[ex.value] = ex.display_name;
+              });
+              
+              // 填充交易配置页面的交易所下拉框
+              const exchangeSelect = document.getElementById("exchange");
+              const currentExchange = exchangeSelect.value;
+              exchangeSelect.innerHTML = data.exchanges
+                .map(ex => `<option value="${ex.value}">${ex.display_name}</option>`)
+                .join("");
+              
+              // 恢复之前的选择
+              if (currentExchange && data.exchanges.find(e => e.value === currentExchange)) {
+                exchangeSelect.value = currentExchange;
+              }
+              
+              // 填充API密钥管理页面的交易所下拉框
+              const newCredExchangeSelect = document.getElementById("newCredExchange");
+              newCredExchangeSelect.innerHTML = data.exchanges
+                .map(ex => `<option value="${ex.value}">${ex.display_name}</option>`)
+                .join("");
+              
+              console.log('交易所列表加载成功:', data.exchanges);
+            }
+          })
+          .catch(err => {
+            console.error('加载交易所列表失败:', err);
+            showToast('加载交易所列表失败', 'error');
+          });
+      }
+      
       // 页面加载时更新配置下拉框
       function updateConfigSelect(autoLoad = false) {
         fetch("/api/configs")
@@ -765,7 +806,7 @@
             if (data.success && data.configs.length > 0) {
               select.innerHTML = data.configs
                 .map((cfg) => {
-                  const exchangeName = cfg.exchange === 'binance' ? 'Binance' : 'Backpack';
+                  const exchangeName = exchangeDisplayNames[cfg.exchange] || cfg.exchange;
                   return `<option value="${cfg.config_name}">${cfg.config_name} (${exchangeName} - ${cfg.symbol})</option>`;
                 })
                 .join("");
@@ -1119,9 +1160,12 @@
           });
       }
 
+      // 页面加载时初始化
+      loadExchanges().then(() => {
+        updateConfigSelect(true); // 初始化配置下拉框并自动加载配置
+      });
       setInterval(updateStatus, 2000);
       updateStatus();
-      updateConfigSelect(true); // 初始化配置下拉框并自动加载配置
 
       function loadTradingPairs() {
         fetch("/api/trading_pairs")
@@ -1136,8 +1180,7 @@
                   (pair) => {
                     const exchanges = pair.exchanges || 'binance,backpack';
                     const exchangeList = exchanges.split(',').map(e => {
-                      const names = { 'binance': 'Binance', 'backpack': 'Backpack' };
-                      return names[e] || e;
+                      return exchangeDisplayNames[e] || e;
                     }).join(', ');
                     return `
                     <div class="pair-item" id="pair-${pair.id}">
@@ -1234,17 +1277,20 @@
 
       function editPair(id, symbol, displayName, exchanges) {
         const pairDiv = document.getElementById(`pair-${id}`);
-        const exchangesValue = exchanges || 'binance,backpack';
-        const binanceChecked = exchangesValue.includes('binance') ? 'checked' : '';
-        const backpackChecked = exchangesValue.includes('backpack') ? 'checked' : '';
+        const exchangesValue = exchanges || exchangesData.map(e => e.value).join(',');
+        
+        // 为每个交易所生成复选框
+        const exchangeCheckboxes = exchangesData.map(ex => {
+          const checked = exchangesValue.includes(ex.value) ? 'checked' : '';
+          return `<label style="margin: 0;"><input type="checkbox" id="edit-${ex.value}-${id}" ${checked}> ${ex.display_name}</label>`;
+        }).join('\n                ');
         
         pairDiv.innerHTML = `
         <div class="edit-mode">
             <input type="text" id="edit-symbol-${id}" value="${symbol}" style="flex: 1;" placeholder="交易对">
             <input type="text" id="edit-name-${id}" value="${displayName}" style="flex: 1;" placeholder="显示名称">
-            <div style="flex: 1; display: flex; gap: 10px; align-items: center;">
-                <label style="margin: 0;"><input type="checkbox" id="edit-binance-${id}" ${binanceChecked}> Binance</label>
-                <label style="margin: 0;"><input type="checkbox" id="edit-backpack-${id}" ${backpackChecked}> Backpack</label>
+            <div style="flex: 1; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                ${exchangeCheckboxes}
             </div>
         </div>
         <div class="pair-actions">
@@ -1265,12 +1311,12 @@
         
         // 获取选中的交易所
         const exchanges = [];
-        if (document.getElementById(`edit-binance-${id}`).checked) {
-          exchanges.push('binance');
-        }
-        if (document.getElementById(`edit-backpack-${id}`).checked) {
-          exchanges.push('backpack');
-        }
+        exchangesData.forEach(ex => {
+          const checkbox = document.getElementById(`edit-${ex.value}-${id}`);
+          if (checkbox && checkbox.checked) {
+            exchanges.push(ex.value);
+          }
+        });
 
         if (!symbol || !displayName) {
           showToast("交易对和显示名称不能为空", 'warning');

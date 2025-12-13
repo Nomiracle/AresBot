@@ -815,3 +815,33 @@ def register_routes(app):
             return jsonify({'success': True, 'message': 'API凭证更新成功'})
         else:
             return jsonify({'success': False, 'message': '更新失败或别名已存在'})
+
+    @app.route('/api/exchanges')
+    def api_exchanges():
+        """获取支持的交易所列表"""
+        exchanges = ExchangeFactory.get_supported_exchanges()
+        
+        # 交易所显示名称映射
+        exchange_display_names = {
+            'binance': 'Binance (币安现货)',
+            'binance_futures': 'Binance (币安合约)',
+            'binance-futures': 'Binance (币安合约)',
+            'backpack': 'Backpack (BPX)',
+            'bpx': 'Backpack (BPX)',
+        }
+        
+        # 去重并构建返回数据
+        unique_exchanges = {}
+        for exchange in exchanges:
+            # 统一使用下划线格式
+            normalized = exchange.replace('-', '_')
+            if normalized not in unique_exchanges:
+                unique_exchanges[normalized] = {
+                    'value': normalized,
+                    'display_name': exchange_display_names.get(exchange, exchange.upper())
+                }
+        
+        return jsonify({
+            'success': True,
+            'exchanges': list(unique_exchanges.values())
+        })
