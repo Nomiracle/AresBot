@@ -339,11 +339,13 @@ class CcxtFuturesAdapter(BaseExchange):
             async def watch_ticker():
                 """watchTicker 实时价格推送"""
                 update_count = 0
+                msg_count = 0  # WebSocket 消息计数
                 last_log_time = time.time()
                 start_time = time.time()
                 while self._monitor_running:
                     try:
                         ticker = await self._ws_client.watch_ticker(self._market_symbol)
+                        msg_count += 1  # 每收到一条消息就计数
                         price = ticker.get("last") or ticker.get("close")
                         if price is not None:
                             p = float(price)
@@ -353,15 +355,18 @@ class CcxtFuturesAdapter(BaseExchange):
                                     old_price = self._last_price
                                     self._last_price = p
                                     update_count += 1
-                                    # 每 10 秒打印一次日志，包含速率统计
-                                    now = time.time()
-                                    if now - last_log_time >= 10:
-                                        elapsed = now - start_time
-                                        rate = update_count / elapsed if elapsed > 0 else 0
-                                        print(f"{self._get_log_prefix()} 📊 价格更新 #{update_count}: {old_price} -> {p} | 速率: {rate:.2f} 次/秒")
-                                        last_log_time = now
-                                    if on_price_update:
-                                        on_price_update(p)
+                                
+                                # 每 10 秒打印一次日志，包含速率统计
+                                now = time.time()
+                                if now - last_log_time >= 10:
+                                    elapsed = now - start_time
+                                    msg_rate = msg_count / elapsed if elapsed > 0 else 0
+                                    change_rate = update_count / elapsed if elapsed > 0 else 0
+                                    print(f"{self._get_log_prefix()} 📊 价格={p} | WS消息: {msg_count}条 ({msg_rate:.1f}/秒) | 价格变化: {update_count}次 ({change_rate:.2f}/秒)")
+                                    last_log_time = now
+                                
+                                if price_changed and on_price_update:
+                                    on_price_update(p)
                     except Exception as e:
                         if self._monitor_running:
                             print(f"{self._get_log_prefix()} ⚠️ watchTicker 错误: {e}")
