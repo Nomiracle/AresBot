@@ -215,6 +215,11 @@ class BinanceFuturesAdapter(BaseExchange):
                 # 🔍 调试：打印收到的原始消息
                 print(f"{self._get_log_prefix()} 🔍 [DEBUG] 收到价格消息: {msg}")
                 
+                # 处理嵌套消息结构（Binance 返回 {'stream': '...', 'data': {...}}）
+                if 'data' in msg:
+                    print(f"{self._get_log_prefix()} 🔍 [DEBUG] 检测到嵌套消息，提取 data 字段")
+                    msg = msg['data']
+                
                 if msg.get('e') == 'error':
                     error_key = f"price_error_{msg.get('type', 'unknown')}"
                     if self._should_log_error(error_key):
