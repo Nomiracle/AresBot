@@ -53,6 +53,10 @@ class BinanceFuturesAdapter(BaseExchange):
         # 合约特有：缓存交易规则
         self._symbol_info_cache: Optional[Dict] = None
         
+        # 价格去重：缓存最后一次推送的价格
+        self._last_price: Optional[float] = None
+        self._last_price_lock = threading.Lock()
+        
         self.get_fee_rate()
 
     def ping(self) -> bool:
@@ -77,21 +81,47 @@ class BinanceFuturesAdapter(BaseExchange):
             self._error_log_cache[error_key] = current_time
             return True
         return False
+    
+    def _should_update_price(self, new_price: float) -> bool:
+        """检查价格是否需要更新（去重）
+        
+        Args:
+            new_price: 新价格
+            
+        Returns:
+            True: 价格有变化，需要更新
+            False: 价格未变化，跳过
+        """
+        with self._last_price_lock:
+            if self._last_price is None or abs(new_price - self._last_price) > 1e-8:
+                self._last_price = new_price
+                return True
+            return False
 
     def _restart_ws_async(self, on_price_update: Callable, on_order_update: Callable) -> None:
         """在后台线程中重启 WebSocket 监控（避免线程安全问题）"""
         time.sleep(0.01)
         self._retry_count = self._retry_count + 1
         print(f"{self._get_log_prefix()} 🔄 WebSocket 监控重启 (第 {self._retry_count} 次)")
-        self.stop_ws()
-        self.start_ws(on_price_update, on_order_update)
         
+        # 先发送重连事件（在 stop_ws 之前）
+        print(f"{self._get_log_prefix()} 📤 准备发送重连事件...")
         event = {'event_type': 'reconnected'}
         if on_order_update:
             try:
+                print(f"{self._get_log_prefix()} 📤 正在调用 on_order_update 回调...")
                 on_order_update(event)
+                print(f"{self._get_log_prefix()} ✅ 重连事件已发送")
             except Exception as cb_e:
-                print(f"{self._get_log_prefix()} ⚠️ 回调执行失败: {cb_e}")
+                print(f"{self._get_log_prefix()} ⚠️ 重连事件回调执行失败: {cb_e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"{self._get_log_prefix()} ⚠️ on_order_update 回调为 None，无法发送重连事件")
+        
+        # 然后重启 WebSocket
+        self.stop_ws()
+        self.start_ws(on_price_update, on_order_update)
 
     def get_symbol_info(self) -> Dict:
         """获取合约交易对信息"""
@@ -240,8 +270,11 @@ class BinanceFuturesAdapter(BaseExchange):
                     price = float(msg.get('p', 0))
                     print(f"{self._get_log_prefix()} 🔍 [DEBUG] markPriceUpdate - 价格: {price}")
                     if price and on_price_update:
-                        print(f"{self._get_log_prefix()} 💰 标记价格更新: {price}")
-                        on_price_update(price)
+                        if self._should_update_price(price):
+                            print(f"{self._get_log_prefix()} 💰 标记价格更新: {price}")
+                            on_price_update(price)
+                        else:
+                            print(f"{self._get_log_prefix()} ⏭️ 价格未变化，跳过: {price}")
                     return
                 
                 # 合约 24hr ticker 消息格式
@@ -250,9 +283,12 @@ class BinanceFuturesAdapter(BaseExchange):
                     print(f"{self._get_log_prefix()} 🔍 [DEBUG] 24hrTicker - 最新价格字段 'c': {price}")
                     if price:
                         price = float(price)
-                        print(f"{self._get_log_prefix()} 💰 Ticker 价格更新: {price}")
                         if on_price_update:
-                            on_price_update(price)
+                            if self._should_update_price(price):
+                                print(f"{self._get_log_prefix()} 💰 Ticker 价格更新: {price}")
+                                on_price_update(price)
+                            else:
+                                print(f"{self._get_log_prefix()} ⏭️ 价格未变化，跳过: {price}")
                     else:
                         print(f"{self._get_log_prefix()} ⚠️ 24hrTicker 消息中未找到价格字段 'c'")
                     return
@@ -265,9 +301,12 @@ class BinanceFuturesAdapter(BaseExchange):
                     if bid_price and ask_price:
                         # 使用中间价
                         price = (float(bid_price) + float(ask_price)) / 2
-                        print(f"{self._get_log_prefix()} 💰 BookTicker 价格更新 (中间价): {price}")
                         if on_price_update:
-                            on_price_update(price)
+                            if self._should_update_price(price):
+                                print(f"{self._get_log_prefix()} 💰 BookTicker 价格更新 (中间价): {price}")
+                                on_price_update(price)
+                            else:
+                                print(f"{self._get_log_prefix()} ⏭️ 价格未变化，跳过: {price}")
                     return
                 
                 # 未知消息类型
@@ -407,6 +446,10 @@ class BinanceFuturesAdapter(BaseExchange):
         """完全关闭 WebSocket 管理器和所有连接"""
         try:
             print(f"{self._get_log_prefix()} 🔌 开始清理 WebSocket 连接...")
+            
+            # 重置价格缓存
+            with self._last_price_lock:
+                self._last_price = None
             
             self._ws_thread_running = False
             if self._ws_thread and self._ws_thread.is_alive():
