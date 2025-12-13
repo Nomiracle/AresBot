@@ -81,7 +81,7 @@ class BinanceAdapter(BaseExchange):
         self.stop_ws()
         self.start_ws(on_price_update, on_order_update)
         
-        event = {'event_type': 'reconnected'}
+        event = {'event_type': 'reconnected', 'symbol': self.symbol}
         # 执行回调
         if on_order_update:
             try:

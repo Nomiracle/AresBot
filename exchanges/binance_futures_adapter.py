@@ -104,24 +104,17 @@ class BinanceFuturesAdapter(BaseExchange):
         self._retry_count = self._retry_count + 1
         print(f"{self._get_log_prefix()} 🔄 WebSocket 监控重启 (第 {self._retry_count} 次)")
         
-        # 先发送重连事件（在 stop_ws 之前）
-        print(f"{self._get_log_prefix()} 📤 准备发送重连事件...")
-        event = {'event_type': 'reconnected'}
-        if on_order_update:
-            try:
-                print(f"{self._get_log_prefix()} 📤 正在调用 on_order_update 回调...")
-                on_order_update(event)
-                print(f"{self._get_log_prefix()} ✅ 重连事件已发送")
-            except Exception as cb_e:
-                print(f"{self._get_log_prefix()} ⚠️ 重连事件回调执行失败: {cb_e}")
-                import traceback
-                traceback.print_exc()
-        else:
-            print(f"{self._get_log_prefix()} ⚠️ on_order_update 回调为 None，无法发送重连事件")
-        
         # 然后重启 WebSocket
         self.stop_ws()
         self.start_ws(on_price_update, on_order_update)
+
+        event = {'event_type': 'reconnected', 'symbol': self.symbol}
+        # 执行回调
+        if on_order_update:
+            try:
+                on_order_update(event)
+            except Exception as cb_e:
+                print(f"{self._get_log_prefix()} ⚠️ 回调执行失败: {cb_e}")
 
     def get_symbol_info(self) -> Dict:
         """获取合约交易对信息"""
