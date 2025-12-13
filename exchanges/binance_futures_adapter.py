@@ -110,7 +110,13 @@ class BinanceFuturesAdapter(BaseExchange):
 
     def get_symbol_ticker(self) -> Dict:
         """获取合约当前价格"""
-        return self.client.futures_symbol_ticker(symbol=self.symbol)
+        try:
+            ticker = self.client.futures_symbol_ticker(symbol=self.symbol)
+            print(f"{self._get_log_prefix()} 🔍 [DEBUG] HTTP 获取价格成功: {ticker}")
+            return ticker
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ❌ HTTP 获取价格失败: {e}")
+            raise
 
     def get_open_orders(self) -> List[Dict]:
         """获取合约未完成订单"""
@@ -206,6 +212,9 @@ class BinanceFuturesAdapter(BaseExchange):
         def price_callback(msg):
             """解析合约行情消息"""
             try:
+                # 🔍 调试：打印收到的原始消息
+                print(f"{self._get_log_prefix()} 🔍 [DEBUG] 收到价格消息: {msg}")
+                
                 if msg.get('e') == 'error':
                     error_key = f"price_error_{msg.get('type', 'unknown')}"
                     if self._should_log_error(error_key):
@@ -217,23 +226,54 @@ class BinanceFuturesAdapter(BaseExchange):
                                 threading.Timer(0.5, self._price_restart_lock.release).start()
                     return
 
+                # 🔍 调试：检查消息类型
+                msg_type = msg.get('e', 'unknown')
+                print(f"{self._get_log_prefix()} 🔍 [DEBUG] 消息类型: {msg_type}")
+
                 # 合约 mark price 消息格式
-                if msg.get('e') == 'markPriceUpdate':
+                if msg_type == 'markPriceUpdate':
                     price = float(msg.get('p', 0))
+                    print(f"{self._get_log_prefix()} 🔍 [DEBUG] markPriceUpdate - 价格: {price}")
                     if price and on_price_update:
+                        print(f"{self._get_log_prefix()} 💰 标记价格更新: {price}")
                         on_price_update(price)
                     return
                 
-                # 合约 ticker 消息格式
-                price = msg.get('c')
-                if price:
-                    price = float(price)
-                    if on_price_update:
-                        on_price_update(price)
-                else:
-                    print(f"{self._get_log_prefix()} ⚠️ 消息中未找到价格字段: {list(msg.keys())}")
+                # 合约 24hr ticker 消息格式
+                if msg_type == '24hrTicker':
+                    price = msg.get('c')  # 最新价格
+                    print(f"{self._get_log_prefix()} 🔍 [DEBUG] 24hrTicker - 最新价格字段 'c': {price}")
+                    if price:
+                        price = float(price)
+                        print(f"{self._get_log_prefix()} 💰 Ticker 价格更新: {price}")
+                        if on_price_update:
+                            on_price_update(price)
+                    else:
+                        print(f"{self._get_log_prefix()} ⚠️ 24hrTicker 消息中未找到价格字段 'c'")
+                    return
+                
+                # 合约 bookTicker 消息格式 (最优买卖价)
+                if msg_type == 'bookTicker':
+                    bid_price = msg.get('b')  # 最优买价
+                    ask_price = msg.get('a')  # 最优卖价
+                    print(f"{self._get_log_prefix()} 🔍 [DEBUG] bookTicker - 买价: {bid_price}, 卖价: {ask_price}")
+                    if bid_price and ask_price:
+                        # 使用中间价
+                        price = (float(bid_price) + float(ask_price)) / 2
+                        print(f"{self._get_log_prefix()} 💰 BookTicker 价格更新 (中间价): {price}")
+                        if on_price_update:
+                            on_price_update(price)
+                    return
+                
+                # 未知消息类型
+                print(f"{self._get_log_prefix()} ⚠️ 未识别的消息类型: {msg_type}")
+                print(f"{self._get_log_prefix()} 🔍 [DEBUG] 消息所有字段: {list(msg.keys())}")
+                print(f"{self._get_log_prefix()} 🔍 [DEBUG] 完整消息内容: {msg}")
+                
             except Exception as e:
                 print(f"{self._get_log_prefix()} ❌ 解析价格失败: {e}")
+                import traceback
+                traceback.print_exc()
 
         def user_data_callback(msg):
             """解析合约用户数据消息"""
@@ -299,14 +339,17 @@ class BinanceFuturesAdapter(BaseExchange):
             self.manager.start()
 
             print(f"{self._get_log_prefix()} 🆕 启动合约 WebSocket 监控 (symbol: {self.symbol})")
+            print(f"{self._get_log_prefix()} 🔍 [DEBUG] testnet={self.testnet}")
             
             # 启动合约价格监控 (使用 symbol ticker)
+            print(f"{self._get_log_prefix()} 🔍 [DEBUG] 正在调用 start_symbol_ticker_futures_socket...")
             price_socket_id = self.manager.start_symbol_ticker_futures_socket(
                 callback=price_callback,
                 symbol=self.symbol
             )
             self.price_socket_id = price_socket_id
             print(f"{self._get_log_prefix()} ✅ 合约价格监控已启动 (socket_id: {price_socket_id})")
+            print(f"{self._get_log_prefix()} 🔍 [DEBUG] 等待价格消息...")
             
             # 启动合约用户数据监控
             order_socket_id = self.manager.start_futures_user_socket(callback=user_data_callback)
@@ -402,6 +445,19 @@ class BinanceFuturesAdapter(BaseExchange):
     def check_pending_orders(self, pending_orders: List[Dict]):
         """检查待处理订单的状态（用于 HTTP 轮询模式）"""
         pass
+    
+    def get_ws_status(self) -> Dict:
+        """获取 WebSocket 连接状态（用于调试）"""
+        status = {
+            'ws_thread_running': self._ws_thread_running,
+            'ws_thread_alive': self._ws_thread.is_alive() if self._ws_thread else False,
+            'manager_exists': self.manager is not None,
+            'price_socket_id': self.price_socket_id,
+            'user_socket_id': self._user_socket_id,
+            'retry_count': self._retry_count
+        }
+        print(f"{self._get_log_prefix()} 🔍 [DEBUG] WebSocket 状态: {status}")
+        return status
 
     def _get_trade_fee(self, symbol: str) -> Dict[str, float]:
         """获取合约交易对的手续费率（带缓存）"""
