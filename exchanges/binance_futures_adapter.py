@@ -362,21 +362,11 @@ class BinanceFuturesAdapter(BaseExchange):
                 self.manager = BinanceSocketManager(self.async_client)
 
                 print(f"{self._get_log_prefix()} 🆕 启动合约 WebSocket 监控 (symbol: {self.symbol})")
-                print(f"{self._get_log_prefix()} 🔍 [DEBUG] testnet={self.testnet}")
                 
-                # 启动合约价格监控 (使用 symbol ticker)
-                print(f"{self._get_log_prefix()} 🔍 [DEBUG] 正在调用 symbol_ticker_futures_socket...")
-                price_socket = self.manager.symbol_ticker_futures_socket(symbol=self.symbol)
-                
-                # 启动合约用户数据监控
-                user_socket = self.manager.futures_user_socket()
-                
-                print(f"{self._get_log_prefix()} ✅ 合约价格监控已启动")
-                print(f"{self._get_log_prefix()} ✅ 合约订单监控已启动")
-                print(f"{self._get_log_prefix()} 🔍 [DEBUG] 等待价格消息...")
-                
-                # 创建任务来处理两个 WebSocket
+                # 创建任务来处理两个 WebSocket - 立即开始接收,避免队列积压
                 async def handle_price_socket():
+                    # 启动合约价格监控并立即开始接收
+                    price_socket = self.manager.symbol_ticker_futures_socket(symbol=self.symbol)
                     async with price_socket as ps:
                         while self._ws_thread_running:
                             try:
@@ -391,6 +381,8 @@ class BinanceFuturesAdapter(BaseExchange):
                                     break
                 
                 async def handle_user_socket():
+                    # 启动合约用户数据监控并立即开始接收
+                    user_socket = self.manager.futures_user_socket()
                     async with user_socket as us:
                         while self._ws_thread_running:
                             try:
