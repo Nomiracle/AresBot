@@ -7,6 +7,7 @@ from .base import BaseExchange
 from .binance_adapterv2 import BinanceAdapter
 from .binance_futures_adapter import BinanceFuturesAdapter
 from .backpack_adapter import BackpackAdapter
+from .ccxt_futures_adapter import CcxtFuturesAdapter
 
 class ExchangeFactory:
     """交易所工厂"""
@@ -17,6 +18,8 @@ class ExchangeFactory:
         'binance-futures': BinanceFuturesAdapter,  # 别名
         'backpack': BackpackAdapter,
         'bpx': BackpackAdapter,  # 别名
+        'ccxt_futures': CcxtFuturesAdapter,
+        'ccxt-futures': CcxtFuturesAdapter,  # 别名
         # 未来可以添加其他交易所
         # 'okx': OKXAdapter,
         # 'bybit': BybitAdapter,
