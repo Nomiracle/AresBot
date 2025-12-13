@@ -1,5 +1,5 @@
 Flask==3.0.0
-python-binance==v1.0.31
+python-binance==1.0.33
 Werkzeug==3.0.1
 cryptography>=42.0.5,<44.0.0
 bpx-py==2.0.11
