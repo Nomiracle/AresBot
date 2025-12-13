@@ -287,7 +287,8 @@ class BinanceAdapter(BaseExchange):
                         while self._ws_thread_running:
                             try:
                                 msg = await ps.recv()
-                                await price_callback(msg)
+                                # 使用 create_task 非阻塞处理,避免队列积压
+                                asyncio.create_task(price_callback(msg))
                             except Exception as e:
                                 print(f"{self._get_log_prefix()} ❌ 价格 socket 错误: {e}")
                                 if self._ws_thread_running:
@@ -300,7 +301,8 @@ class BinanceAdapter(BaseExchange):
                         while self._ws_thread_running:
                             try:
                                 msg = await us.recv()
-                                await user_data_callback(msg)
+                                # 使用 create_task 非阻塞处理,避免队列积压
+                                asyncio.create_task(user_data_callback(msg))
                             except Exception as e:
                                 print(f"{self._get_log_prefix()} ❌ 用户数据 socket 错误: {e}")
                                 if self._ws_thread_running:
