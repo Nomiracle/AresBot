@@ -238,12 +238,8 @@ class BinanceFuturesAdapter(BaseExchange):
         async def price_callback(msg):
             """解析合约行情消息"""
             try:
-                # 🔍 调试：打印收到的原始消息
-                print(f"{self._get_log_prefix()} 🔍 [DEBUG] 收到价格消息: {msg}")
-                
                 # 处理嵌套消息结构（Binance 返回 {'stream': '...', 'data': {...}}）
                 if 'data' in msg:
-                    print(f"{self._get_log_prefix()} 🔍 [DEBUG] 检测到嵌套消息，提取 data 字段")
                     msg = msg['data']
                 
                 if msg.get('e') == 'error':
@@ -257,58 +253,40 @@ class BinanceFuturesAdapter(BaseExchange):
                                 threading.Timer(0.5, self._price_restart_lock.release).start()
                     return
 
-                # 🔍 调试：检查消息类型
                 msg_type = msg.get('e', 'unknown')
-                print(f"{self._get_log_prefix()} 🔍 [DEBUG] 消息类型: {msg_type}")
 
                 # 合约 mark price 消息格式
                 if msg_type == 'markPriceUpdate':
                     price = float(msg.get('p', 0))
-                    print(f"{self._get_log_prefix()} 🔍 [DEBUG] markPriceUpdate - 价格: {price}")
-                    if price and on_price_update:
-                        if self._should_update_price(price):
-                            print(f"{self._get_log_prefix()} 💰 标记价格更新: {price}")
-                            on_price_update(price)
-                        else:
-                            print(f"{self._get_log_prefix()} ⏭️ 价格未变化，跳过: {price}")
+                    if price and on_price_update and self._should_update_price(price):
+                        # 在线程池中执行同步回调,避免阻塞事件循环
+                        loop = asyncio.get_event_loop()
+                        await loop.run_in_executor(None, on_price_update, price)
                     return
                 
                 # 合约 24hr ticker 消息格式
                 if msg_type == '24hrTicker':
                     price = msg.get('c')  # 最新价格
-                    print(f"{self._get_log_prefix()} 🔍 [DEBUG] 24hrTicker - 最新价格字段 'c': {price}")
-                    if price:
+                    if price and on_price_update:
                         price = float(price)
-                        if on_price_update:
-                            if self._should_update_price(price):
-                                print(f"{self._get_log_prefix()} 💰 Ticker 价格更新: {price}")
-                                on_price_update(price)
-                            else:
-                                print(f"{self._get_log_prefix()} ⏭️ 价格未变化，跳过: {price}")
-                    else:
-                        print(f"{self._get_log_prefix()} ⚠️ 24hrTicker 消息中未找到价格字段 'c'")
+                        if self._should_update_price(price):
+                            # 在线程池中执行同步回调,避免阻塞事件循环
+                            loop = asyncio.get_event_loop()
+                            await loop.run_in_executor(None, on_price_update, price)
                     return
                 
                 # 合约 bookTicker 消息格式 (最优买卖价)
                 if msg_type == 'bookTicker':
                     bid_price = msg.get('b')  # 最优买价
                     ask_price = msg.get('a')  # 最优卖价
-                    print(f"{self._get_log_prefix()} 🔍 [DEBUG] bookTicker - 买价: {bid_price}, 卖价: {ask_price}")
-                    if bid_price and ask_price:
+                    if bid_price and ask_price and on_price_update:
                         # 使用中间价
                         price = (float(bid_price) + float(ask_price)) / 2
-                        if on_price_update:
-                            if self._should_update_price(price):
-                                print(f"{self._get_log_prefix()} 💰 BookTicker 价格更新 (中间价): {price}")
-                                on_price_update(price)
-                            else:
-                                print(f"{self._get_log_prefix()} ⏭️ 价格未变化，跳过: {price}")
+                        if self._should_update_price(price):
+                            # 在线程池中执行同步回调,避免阻塞事件循环
+                            loop = asyncio.get_event_loop()
+                            await loop.run_in_executor(None, on_price_update, price)
                     return
-                
-                # 未知消息类型
-                print(f"{self._get_log_prefix()} ⚠️ 未识别的消息类型: {msg_type}")
-                print(f"{self._get_log_prefix()} 🔍 [DEBUG] 消息所有字段: {list(msg.keys())}")
-                print(f"{self._get_log_prefix()} 🔍 [DEBUG] 完整消息内容: {msg}")
                 
             except Exception as e:
                 print(f"{self._get_log_prefix()} ❌ 解析价格失败: {e}")
@@ -363,7 +341,9 @@ class BinanceFuturesAdapter(BaseExchange):
                     
                     if on_order_update:
                         try:
-                            on_order_update(event)
+                            # 在线程池中执行同步回调,避免阻塞事件循环
+                            loop = asyncio.get_event_loop()
+                            await loop.run_in_executor(None, on_order_update, event)
                         except Exception as cb_e:
                             print(f"{self._get_log_prefix()} ⚠️ 回调执行失败: {cb_e}")
 

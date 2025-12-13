@@ -188,13 +188,11 @@ class BinanceAdapter(BaseExchange):
                     return
 
                 price = msg.get('c')
-                if price:
+                if price and on_price_update:
                     price = float(price)
-                    # print(f"{self._get_log_prefix()} 💰 价格更新: {price}")
-                    if on_price_update:
-                        on_price_update(price)
-                else:
-                    print(f"{self._get_log_prefix()} ⚠️ 消息中未找到价格字段: {list(msg.keys())}")
+                    # 在线程池中执行同步回调,避免阻塞事件循环
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, on_price_update, price)
             except Exception as e:
                 print(f"{self._get_log_prefix()} ❌ 解析价格失败: {e}")
 
@@ -252,7 +250,9 @@ class BinanceAdapter(BaseExchange):
                     # 执行回调
                     if on_order_update:
                         try:
-                            on_order_update(event)
+                            # 在线程池中执行同步回调,避免阻塞事件循环
+                            loop = asyncio.get_event_loop()
+                            await loop.run_in_executor(None, on_order_update, event)
                         except Exception as cb_e:
                             print(f"{self._get_log_prefix()} ⚠️ 回调执行失败: {cb_e}")
 
