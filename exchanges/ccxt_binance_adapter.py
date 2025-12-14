@@ -178,33 +178,52 @@ class CcxtBinanceAdapter(BaseExchange):
             raise
 
     def get_open_orders(self) -> List[Dict]:
-        """获取现货未完成订单"""
-        print(f"{self._get_log_prefix()} 🔍 获取未完成订单: {self._market_symbol}")
+        """获取现货未完成订单（优先使用 WebSocket，失败回退到 REST）"""
+        # 优先使用 fetchOpenOrdersWs（WebSocket 方式）
+        if self._ws_client and self._event_loop and self._event_loop.is_running():
+            try:
+                print(f"{self._get_log_prefix()} 🔍 [WS] 查询未完成订单: {self._market_symbol}")
+                future = asyncio.run_coroutine_threadsafe(
+                    self._ws_client.fetch_open_orders_ws(self._market_symbol),
+                    self._event_loop
+                )
+                orders = future.result(timeout=10)
+                print(f"{self._get_log_prefix()} 🔍 [WS] 查询到 {len(orders)} 笔未完成订单")
+                return self._adapt_orders(orders)
+            except Exception as e:
+                print(f"{self._get_log_prefix()} ⚠️ fetchOpenOrdersWs 失败，回退到 REST: {e}")
+        
+        # 回退到 REST API
         try:
+            print(f"{self._get_log_prefix()} 🔍 [REST] 查询未完成订单: {self._market_symbol}")
             orders = self.client.fetch_open_orders(self._market_symbol)
-            print(f"{self._get_log_prefix()} 🔍 原始订单数据: {len(orders)}条")
-            adapted = []
-            for o in orders:
-                status = self._map_status(o.get("status"))
-                order_data = {
-                    "orderId": str(o.get("id")),
-                    "id": str(o.get("id")),
-                    "symbol": self.symbol,
-                    "side": str(o.get("side", "")).upper(),
-                    "price": str(o.get("price") or 0),
-                    "origQty": str(o.get("amount") or 0),
-                    "executedQty": str(o.get("filled") or 0),
-                    "status": status,
-                    "info": o.get("info"),
-                }
-                adapted.append(order_data)
-                print(f"{self._get_log_prefix()} 📋 订单: id={order_data['orderId']}, side={order_data['side']}, price={order_data['price']}, qty={order_data['origQty']}, status={status}")
-            print(f"{self._get_log_prefix()} ✅ 获取到{len(adapted)}个未完成订单")
-            return adapted
+            print(f"{self._get_log_prefix()} 🔍 [REST] 查询到 {len(orders)} 笔未完成订单")
+            return self._adapt_orders(orders)
         except Exception as e:
             print(f"{self._get_log_prefix()} ❌ 获取未完成订单失败: {e}")
             traceback.print_exc()
             return []
+
+    def _adapt_orders(self, orders: List) -> List[Dict]:
+        """将 ccxt 订单格式转换为统一格式"""
+        adapted = []
+        for o in orders:
+            status = self._map_status(o.get("status"))
+            order_data = {
+                "orderId": str(o.get("id")),
+                "id": str(o.get("id")),
+                "symbol": self.symbol,
+                "side": str(o.get("side", "")).upper(),
+                "price": str(o.get("price") or 0),
+                "origQty": str(o.get("amount") or 0),
+                "executedQty": str(o.get("filled") or 0),
+                "status": status,
+                "info": o.get("info"),
+            }
+            adapted.append(order_data)
+            print(f"{self._get_log_prefix()} 📋 订单: id={order_data['orderId']}, side={order_data['side']}, price={order_data['price']}, qty={order_data['origQty']}, status={status}")
+        print(f"{self._get_log_prefix()} ✅ 获取到{len(adapted)}个未完成订单")
+        return adapted
 
     def get_order(self, order_id: str) -> Dict:
         """查询现货订单状态"""
