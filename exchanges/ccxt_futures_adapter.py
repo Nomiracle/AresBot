@@ -146,7 +146,9 @@ class CcxtFuturesAdapter(BaseExchange):
     def get_open_orders(self) -> List[Dict]:
         """获取合约未完成订单"""
         try:
+            print(f"{self._get_log_prefix()} 🔍 查询未完成订单: symbol={self._market_symbol}")
             orders = self.client.fetch_open_orders(self._market_symbol)
+            print(f"{self._get_log_prefix()} 🔍 查询到 {len(orders)} 笔未完成订单")
             adapted = []
             for o in orders:
                 status = self._map_status(o.get("status"))
