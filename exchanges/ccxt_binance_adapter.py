@@ -302,10 +302,39 @@ class CcxtBinanceAdapter(BaseExchange):
         cancel_order_id: str,
         **kwargs,
     ) -> Dict:
-        """取消并替换订单（现货无原子操作，拆分为取消+新建）"""
+        """取消并替换订单（优先使用 editOrderWs 原子操作，失败则回退到取消+新建）"""
         print(f"{self._get_log_prefix()} 🔄 取消并替换订单: cancel_id={cancel_order_id}, side={side}, qty={quantity}, price={price}")
         
-        # 先取消旧订单
+        # 尝试使用 editOrderWs（WebSocket 原子改单）
+        if self._ws_client and self._event_loop and self._event_loop.is_running():
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self._ws_client.edit_order_ws(
+                        id=cancel_order_id,
+                        symbol=self._market_symbol,
+                        type='limit',
+                        side=side.lower(),
+                        amount=quantity,
+                        price=float(price)
+                    ),
+                    self._event_loop
+                )
+                result = future.result(timeout=10)  # 10秒超时
+                new_order_id = str(result.get('id') or result.get('orderId'))
+                print(f"{self._get_log_prefix()} ✅ editOrderWs 改单成功: {cancel_order_id} → {new_order_id}")
+                return {
+                    "cancelResult": "SUCCESS",
+                    "newOrderResult": "SUCCESS",
+                    "newOrderResponse": {
+                        "orderId": new_order_id,
+                        "id": new_order_id,
+                        **result
+                    },
+                }
+            except Exception as e:
+                print(f"{self._get_log_prefix()} ⚠️ editOrderWs 失败，回退到取消+新建: {e}")
+        
+        # 回退：先取消旧订单，再创建新订单
         try:
             self.cancel_order(cancel_order_id)
             print(f"{self._get_log_prefix()} ✅ 旧订单已取消")
