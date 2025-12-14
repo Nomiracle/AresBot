@@ -343,6 +343,9 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
             aligned_qty = math.floor(float(sell_order['origQty']) / step_size) * step_size
             aligned_qty = round(aligned_qty, qty_decimals)
             
+            # 标记正在改价的订单，防止 WebSocket 事件误清理 pending_sells
+            bot_data['repricing_order_id'] = sell_order_id
+            
             resp = exchange.cancel_replace_order(
                 side='SELL',
                 order_type='LIMIT',
@@ -375,8 +378,18 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
             bot_data['last_error'] = None
             bot_data['last_error_time'] = None
             bot_data['last_warning'] = None
+            
+            # 改价成功，从 pending_sells 移除旧订单（新订单已添加）
+            bot_data['pending_sells'] = [
+                ps for ps in bot_data.get('pending_sells', []) 
+                if ps['order_id'] != sell_order_id
+            ]
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 卖单改价失败 {sell_order_id}: {e}")
+            # 改价失败，保留原订单在 pending_sells 中（不清理）
+        finally:
+            # 清除改价标记
+            bot_data['repricing_order_id'] = None
 
 
 def trading_loop(username, symbol):
@@ -463,6 +476,12 @@ def trading_loop(username, symbol):
                         # 订单取消
                         if event_type == 'order_cancelled':
                             order_id = event.get('order_id')
+                            # 检查是否正在改价中，如果是则跳过清理（改价会自己处理）
+                            repricing_order_id = bot_data.get('repricing_order_id')
+                            if repricing_order_id == order_id:
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 订单 {order_id} 正在改价中，跳过清理")
+                                return
+                            
                             if event.get('side') == 'BUY':
                                 bot_data['pending_buys'] = [
                                     pb for pb in bot_data.get('pending_buys', []) 
