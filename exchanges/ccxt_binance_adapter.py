@@ -61,6 +61,9 @@ class CcxtBinanceAdapter(BaseExchange):
         self._error_log_cache: Dict[str, float] = {}
         self._error_log_interval = 2.0
         
+        # WS 方法可用性标记（失败后禁用避免重复尝试）
+        self._ws_fetch_orders_enabled = True
+        
         # 初始化时获取费率
         print(f"{self._get_log_prefix()} 🔧 获取交易费率...")
         self.get_fee_rate()
@@ -179,8 +182,10 @@ class CcxtBinanceAdapter(BaseExchange):
 
     def get_open_orders(self) -> List[Dict]:
         """获取现货未完成订单（优先使用 WebSocket，失败回退到 REST）"""
-        # 优先使用 fetchOpenOrdersWs（WebSocket 方式）
-        if self._ws_client and self._event_loop and self._event_loop.is_running():
+        orders = []
+        
+        # 优先使用 fetchOpenOrdersWs（WebSocket 方式），失败后禁用
+        if self._ws_fetch_orders_enabled and self._ws_client and self._event_loop and self._event_loop.is_running():
             try:
                 print(f"{self._get_log_prefix()} 🔍 [WS] 查询未完成订单: {self._market_symbol}")
                 future = asyncio.run_coroutine_threadsafe(
@@ -191,7 +196,8 @@ class CcxtBinanceAdapter(BaseExchange):
                 print(f"{self._get_log_prefix()} 🔍 [WS] 查询到 {len(orders)} 笔未完成订单")
                 return self._adapt_orders(orders)
             except Exception as e:
-                print(f"{self._get_log_prefix()} ⚠️ fetchOpenOrdersWs 失败，回退到 REST: {e}")
+                print(f"{self._get_log_prefix()} ⚠️ fetchOpenOrdersWs 失败，后续使用 REST: {e}")
+                self._ws_fetch_orders_enabled = False
         
         # 回退到 REST API
         try:

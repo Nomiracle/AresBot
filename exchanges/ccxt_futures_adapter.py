@@ -53,6 +53,9 @@ class CcxtFuturesAdapter(BaseExchange):
         self._positions_cache: List[Dict] = []
         self._positions_lock = threading.Lock()
 
+        # WS 方法可用性标记（失败后禁用避免重复尝试）
+        self._ws_fetch_orders_enabled = True
+
     def _to_ccxt_symbol(self, symbol: str) -> str:
         """将 BTCUSDT 转换为 ccxt 格式 BTC/USDT:USDT（合约）"""
         s = symbol.strip().upper()
@@ -156,8 +159,8 @@ class CcxtFuturesAdapter(BaseExchange):
         """
         orders = []
         
-        # 优先使用 fetchOpenOrdersWs（WebSocket 方式）
-        if self._ws_client and self._event_loop and self._event_loop.is_running():
+        # 优先使用 fetchOpenOrdersWs（WebSocket 方式），失败后禁用
+        if self._ws_fetch_orders_enabled and self._ws_client and self._event_loop and self._event_loop.is_running():
             try:
                 print(f"{self._get_log_prefix()} 🔍 [WS] 查询未完成订单: symbol={self._market_symbol}")
                 future = asyncio.run_coroutine_threadsafe(
@@ -168,7 +171,8 @@ class CcxtFuturesAdapter(BaseExchange):
                 print(f"{self._get_log_prefix()} 🔍 [WS] 查询到 {len(orders)} 笔未完成订单")
                 orders = self._adapt_orders(orders)
             except Exception as e:
-                print(f"{self._get_log_prefix()} ⚠️ fetchOpenOrdersWs 失败，回退到 REST: {e}")
+                print(f"{self._get_log_prefix()} ⚠️ fetchOpenOrdersWs 失败，后续使用 REST: {e}")
+                self._ws_fetch_orders_enabled = False
                 orders = []
         
         # 回退到 REST API
@@ -329,6 +333,10 @@ class CcxtFuturesAdapter(BaseExchange):
             print(f"{self._get_log_prefix()} ❌ 取消订单失败: {e}")
             raise
 
+    def _is_virtual_order(self, order_id: str) -> bool:
+        """检查是否为虚拟订单（由持仓映射生成）"""
+        return str(order_id).startswith("pos_long_") or str(order_id).startswith("pos_short_")
+
     def cancel_replace_order(
         self,
         side: str,
@@ -339,6 +347,19 @@ class CcxtFuturesAdapter(BaseExchange):
         **kwargs,
     ) -> Dict:
         """取消并替换订单（优先使用 editOrderWs 原子操作，失败则回退到取消+新建）"""
+        
+        # 虚拟订单（持仓映射）：跳过取消，直接下新单
+        if self._is_virtual_order(cancel_order_id):
+            print(f"{self._get_log_prefix()} 📍 虚拟订单 {cancel_order_id}，直接下新单")
+            if str(side).upper() == "BUY":
+                new_order = self.order_limit_buy(quantity=quantity, price=price, **kwargs)
+            else:
+                new_order = self.order_limit_sell(quantity=quantity, price=price, **kwargs)
+            return {
+                "cancelResult": "SUCCESS",
+                "newOrderResult": "SUCCESS",
+                "newOrderResponse": new_order,
+            }
         
         # 尝试使用 editOrderWs（WebSocket 原子改单）
         if self._ws_client and self._event_loop and self._event_loop.is_running():
