@@ -673,7 +673,9 @@ def trading_loop(username, symbol):
             # 下新单（要求查询成功、没有未完成订单、没有待处理买单、没有待处理卖单、没有正在下单）
             has_pending_buys = bool(bot_data.get('pending_buys', []))
             has_pending_sells = bool(bot_data.get('pending_sells', []))
-            if query_success and not open_orders and not has_pending_buys and not has_pending_sells and not bot_data.get('is_placing_order'):
+            is_placing_order = bot_data.get('is_placing_order', False)
+            
+            if query_success and not open_orders and not has_pending_buys and not has_pending_sells and not is_placing_order:
                 is_buy_enabled = (config.get('simulate_trading', 1) != 1)
                 if is_buy_enabled:
                     # 计算买单目标价
@@ -717,6 +719,21 @@ def trading_loop(username, symbol):
                         bot_data['last_error_time'] = datetime.now().isoformat()
                     finally:
                         bot_data['is_placing_order'] = False
+            else:
+                # 打印跳过下单的原因
+                skip_reasons = []
+                if not query_success:
+                    skip_reasons.append("查询失败")
+                if open_orders:
+                    skip_reasons.append(f"有未完成订单({len(open_orders)}笔)")
+                if has_pending_buys:
+                    skip_reasons.append(f"有待处理买单({len(bot_data.get('pending_buys', []))}笔)")
+                if has_pending_sells:
+                    skip_reasons.append(f"有待处理卖单({len(bot_data.get('pending_sells', []))}笔)")
+                if is_placing_order:
+                    skip_reasons.append("正在下单中")
+                if skip_reasons:
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} ⏸️ 跳过下单: {', '.join(skip_reasons)}")
 
             time.sleep(config.get('interval', 1))
 
