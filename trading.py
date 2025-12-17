@@ -107,6 +107,12 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
     
     print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单成交 {order_id}: 买价={buy_price}, 数量={aligned_qty}")
     
+    # 先从 pending_buys 移除（买单已成交）
+    bot_data['pending_buys'] = [
+        pb for pb in bot_data.get('pending_buys', []) 
+        if pb['order_id'] != order_id
+    ]
+    
     # 挂卖单
     try:
         sell_order = exchange.order_limit_sell(
@@ -118,12 +124,6 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
         
         # 更新 target_price 为卖单价格
         bot_data['target_price'] = sell_price
-        
-        # 从 pending_buys 移除
-        bot_data['pending_buys'] = [
-            pb for pb in bot_data.get('pending_buys', []) 
-            if pb['order_id'] != order_id
-        ]
         
         # 添加到 pending_sells 跟踪列表
         bot_data.setdefault('pending_sells', []).append({
