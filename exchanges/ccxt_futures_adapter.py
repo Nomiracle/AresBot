@@ -49,6 +49,13 @@ class CcxtFuturesAdapter(BaseExchange):
         # 重试计数
         self._retry_count = 0
 
+        # 持仓缓存（通过 watchPositions 更新）
+        self._positions_cache: List[Dict] = []
+        self._positions_lock = threading.Lock()
+
+        # WS 方法可用性标记（失败后禁用避免重复尝试）
+        self._ws_fetch_orders_enabled = True
+
     def _to_ccxt_symbol(self, symbol: str) -> str:
         """将 BTCUSDT 转换为 ccxt 格式 BTC/USDT:USDT（合约）"""
         s = symbol.strip().upper()
@@ -144,9 +151,16 @@ class CcxtFuturesAdapter(BaseExchange):
             raise
 
     def get_open_orders(self) -> List[Dict]:
-        """获取合约未完成订单（优先使用 WebSocket，失败回退到 REST）"""
-        # 优先使用 fetchOpenOrdersWs（WebSocket 方式）
-        if self._ws_client and self._event_loop and self._event_loop.is_running():
+        """获取合约未完成订单（优先使用 WebSocket，失败回退到 REST）
+        
+        特殊逻辑：如果没有挂单但有持仓，将持仓映射为虚拟订单
+        - 多单持仓 → 虚拟卖单（等待平仓）
+        - 空单持仓 → 虚拟买单（等待平仓）
+        """
+        orders = []
+        
+        # 优先使用 fetchOpenOrdersWs（WebSocket 方式），失败后禁用
+        if self._ws_fetch_orders_enabled and self._ws_client and self._event_loop and self._event_loop.is_running():
             try:
                 print(f"{self._get_log_prefix()} 🔍 [WS] 查询未完成订单: symbol={self._market_symbol}")
                 future = asyncio.run_coroutine_threadsafe(
@@ -155,18 +169,80 @@ class CcxtFuturesAdapter(BaseExchange):
                 )
                 orders = future.result(timeout=10)
                 print(f"{self._get_log_prefix()} 🔍 [WS] 查询到 {len(orders)} 笔未完成订单")
-                return self._adapt_orders(orders)
+                orders = self._adapt_orders(orders)
             except Exception as e:
-                print(f"{self._get_log_prefix()} ⚠️ fetchOpenOrdersWs 失败，回退到 REST: {e}")
+                print(f"{self._get_log_prefix()} ⚠️ fetchOpenOrdersWs 失败，后续使用 REST: {e}")
+                self._ws_fetch_orders_enabled = False
+                orders = []
         
         # 回退到 REST API
+        if not orders:
+            try:
+                print(f"{self._get_log_prefix()} 🔍 [REST] 查询未完成订单: symbol={self._market_symbol}")
+                raw_orders = self.client.fetch_open_orders(self._market_symbol)
+                print(f"{self._get_log_prefix()} 🔍 [REST] 查询到 {len(raw_orders)} 笔未完成订单")
+                orders = self._adapt_orders(raw_orders)
+            except Exception as e:
+                print(f"{self._get_log_prefix()} ❌ 获取未完成订单失败: {e}")
+                return []
+        
+        # 如果没有挂单，检查持仓并映射为虚拟订单
+        if not orders:
+            orders = self._position_to_virtual_orders()
+        
+        return orders
+
+    def _position_to_virtual_orders(self) -> List[Dict]:
+        """将持仓映射为虚拟订单
+        - 多单持仓 → 虚拟卖单
+        - 空单持仓 → 虚拟买单
+        """
         try:
-            print(f"{self._get_log_prefix()} 🔍 [REST] 查询未完成订单: symbol={self._market_symbol}")
-            orders = self.client.fetch_open_orders(self._market_symbol)
-            print(f"{self._get_log_prefix()} 🔍 [REST] 查询到 {len(orders)} 笔未完成订单")
-            return self._adapt_orders(orders)
+            positions = self.get_position()
+            if not positions:
+                return []
+            
+            virtual_orders = []
+            for pos in positions:
+                pos_qty = abs(float(pos.get('contracts', 0) or pos.get('info', {}).get('positionAmt', 0)))
+                pos_side = pos.get('side', '').lower()
+                entry_price = float(pos.get('entryPrice', 0) or pos.get('info', {}).get('entryPrice', 0))
+                
+                if pos_qty <= 0 or entry_price <= 0:
+                    continue
+                
+                if pos_side == 'long':
+                    # 多单持仓 → 虚拟卖单
+                    virtual_orders.append({
+                        "orderId": f"pos_long_{self.symbol}",
+                        "id": f"pos_long_{self.symbol}",
+                        "symbol": self.symbol,
+                        "side": "SELL",
+                        "price": str(entry_price),
+                        "origQty": str(pos_qty),
+                        "executedQty": "0",
+                        "status": "NEW",
+                        "info": {"virtual": True, "from_position": True, "entry_price": entry_price},
+                    })
+                    print(f"{self._get_log_prefix()} 📍 多单持仓映射为虚拟卖单: 数量={pos_qty}, 入场价={entry_price}")
+                elif pos_side == 'short':
+                    # 空单持仓 → 虚拟买单
+                    virtual_orders.append({
+                        "orderId": f"pos_short_{self.symbol}",
+                        "id": f"pos_short_{self.symbol}",
+                        "symbol": self.symbol,
+                        "side": "BUY",
+                        "price": str(entry_price),
+                        "origQty": str(pos_qty),
+                        "executedQty": "0",
+                        "status": "NEW",
+                        "info": {"virtual": True, "from_position": True, "entry_price": entry_price},
+                    })
+                    print(f"{self._get_log_prefix()} 📍 空单持仓映射为虚拟买单: 数量={pos_qty}, 入场价={entry_price}")
+            
+            return virtual_orders
         except Exception as e:
-            print(f"{self._get_log_prefix()} ❌ 获取未完成订单失败: {e}")
+            print(f"{self._get_log_prefix()} ⚠️ 持仓映射失败: {e}")
             return []
 
     def _adapt_orders(self, orders: List) -> List[Dict]:
@@ -257,6 +333,10 @@ class CcxtFuturesAdapter(BaseExchange):
             print(f"{self._get_log_prefix()} ❌ 取消订单失败: {e}")
             raise
 
+    def _is_virtual_order(self, order_id: str) -> bool:
+        """检查是否为虚拟订单（由持仓映射生成）"""
+        return str(order_id).startswith("pos_long_") or str(order_id).startswith("pos_short_")
+
     def cancel_replace_order(
         self,
         side: str,
@@ -267,6 +347,19 @@ class CcxtFuturesAdapter(BaseExchange):
         **kwargs,
     ) -> Dict:
         """取消并替换订单（优先使用 editOrderWs 原子操作，失败则回退到取消+新建）"""
+        
+        # 虚拟订单（持仓映射）：跳过取消，直接下新单
+        if self._is_virtual_order(cancel_order_id):
+            print(f"{self._get_log_prefix()} 📍 虚拟订单 {cancel_order_id}，直接下新单")
+            if str(side).upper() == "BUY":
+                new_order = self.order_limit_buy(quantity=quantity, price=price, **kwargs)
+            else:
+                new_order = self.order_limit_sell(quantity=quantity, price=price, **kwargs)
+            return {
+                "cancelResult": "SUCCESS",
+                "newOrderResult": "SUCCESS",
+                "newOrderResponse": new_order,
+            }
         
         # 尝试使用 editOrderWs（WebSocket 原子改单）
         if self._ws_client and self._event_loop and self._event_loop.is_running():
@@ -503,10 +596,27 @@ class CcxtFuturesAdapter(BaseExchange):
                             traceback.print_exc()
                             await asyncio.sleep(1)
 
+            async def watch_positions():
+                """监听持仓更新（watchPositions）"""
+                while self._monitor_running:
+                    try:
+                        positions = await self._ws_client.watch_positions([self._market_symbol])
+                        # 过滤当前交易对且有持仓的
+                        filtered = [p for p in positions if float(p.get('contracts', 0)) != 0]
+                        with self._positions_lock:
+                            self._positions_cache = filtered
+                        if filtered:
+                            pos = filtered[0]
+                            print(f"{self._get_log_prefix()} 📍 [WS] 持仓更新: side={pos.get('side')}, qty={pos.get('contracts')}, entry={pos.get('entryPrice')}")
+                    except Exception as e:
+                        if self._monitor_running:
+                            print(f"{self._get_log_prefix()} ⚠️ watchPositions 错误: {e}")
+                            await asyncio.sleep(1)
+
             async def run_all():
-                """watchTicker 和 watchOrders 并行运行"""
+                """watchTicker、watchOrders、watchPositions 并行运行"""
                 try:
-                    await asyncio.gather(watch_ticker(), watch_orders())
+                    await asyncio.gather(watch_ticker(), watch_orders(), watch_positions())
                 except asyncio.CancelledError:
                     pass
                 except Exception as e:
@@ -546,6 +656,10 @@ class CcxtFuturesAdapter(BaseExchange):
         # 重置价格缓存
         with self._last_price_lock:
             self._last_price = None
+        
+        # 重置持仓缓存
+        with self._positions_lock:
+            self._positions_cache = []
 
     def check_pending_orders(self, pending_orders: List[Dict]):
         """检查待处理订单的状态（用于 HTTP 轮询模式）"""
@@ -627,7 +741,13 @@ class CcxtFuturesAdapter(BaseExchange):
             raise
 
     def get_position(self) -> List[Dict]:
-        """获取当前持仓"""
+        """获取当前持仓（优先使用 WS 缓存，失败回退到 REST）"""
+        # 优先使用 WebSocket 缓存
+        with self._positions_lock:
+            if self._positions_cache:
+                return self._positions_cache.copy()
+        
+        # 回退到 REST API
         try:
             positions = self.client.fetch_positions([self._market_symbol])
             return [p for p in positions if float(p.get("contracts", 0)) != 0]

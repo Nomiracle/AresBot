@@ -283,8 +283,18 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
                 if isinstance(new_order_data, dict):
                     new_order_id = str(new_order_data.get('orderId') or new_order_data.get('id'))
             
-            existing_ids = {p['order_id'] for p in bot_data.get('pending_buys', [])}
-            if new_order_id not in existing_ids:
+            old_order_id = str(order['orderId'])
+            
+            # 更新或添加 pending_buys 中的订单
+            if new_order_id == old_order_id:
+                # editOrderWs 返回相同 ID，更新现有条目的价格
+                for pb in bot_data.get('pending_buys', []):
+                    if pb['order_id'] == old_order_id:
+                        pb['price'] = target_price
+                        break
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单改价成功: {old_order_id}, 目标价格={target_price:.6f}/当前价格={bot_data['current_price']:.6f}")
+            else:
+                # 订单 ID 变化，添加新条目并移除旧条目
                 bot_data.setdefault('pending_buys', []).append({
                     'order_id': new_order_id,
                     'price': target_price,
@@ -292,7 +302,11 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
                     'symbol': config['symbol'],
                     'user_id': bot_data['user_id']
                 })
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 改价成功: {order['orderId']} → {new_order_id}, 目标价格={target_price:.6f}/当前价格={bot_data['current_price']:.6f}，本地缓存买单：{bot_data.get('pending_buys', [])}")
+                bot_data['pending_buys'] = [
+                    pb for pb in bot_data.get('pending_buys', []) 
+                    if pb['order_id'] != old_order_id
+                ]
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单改价成功: {old_order_id} → {new_order_id}, 目标价格={target_price:.6f}/当前价格={bot_data['current_price']:.6f}，本地缓存买单：{bot_data.get('pending_buys', [])}")
                 
             # 改价成功，清除错误和警告信息
             bot_data['last_error'] = None
@@ -362,28 +376,34 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
                 if isinstance(new_order_data, dict):
                     new_order_id = str(new_order_data.get('orderId') or new_order_data.get('id'))
             
-            existing_ids = {p['order_id'] for p in bot_data.get('pending_sells', [])}
-            if new_order_id not in existing_ids:
+            # 更新或添加 pending_sells 中的订单
+            if new_order_id == sell_order_id:
+                # editOrderWs 返回相同 ID，更新现有条目的价格
+                for ps in bot_data.get('pending_sells', []):
+                    if ps['order_id'] == sell_order_id:
+                        ps['price'] = target_sell_price
+                        break
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单改价成功: {sell_order_id}, 目标价格={target_sell_price:.6f}/当前价格={bot_data['current_price']:.6f}")
+            else:
+                # 订单 ID 变化，添加新条目并移除旧条目
                 bot_data.setdefault('pending_sells', []).append({
                     'order_id': new_order_id,
                     'price': target_sell_price,
                     'quantity': aligned_qty,
                     'symbol': config['symbol'],
                     'user_id': bot_data['user_id'],
-                    'buy_price': buy_price  # 保留原买入价，用于后续改价计算
+                    'buy_price': buy_price
                 })
+                bot_data['pending_sells'] = [
+                    ps for ps in bot_data.get('pending_sells', []) 
+                    if ps['order_id'] != sell_order_id
+                ]
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单改价成功: {sell_order_id} → {new_order_id}, 目标价格={target_sell_price:.6f}/当前价格={bot_data['current_price']:.6f}，本地缓存卖单：{bot_data.get('pending_sells', [])}")
                 
             # 改价成功，清除错误和警告信息
             bot_data['last_error'] = None
             bot_data['last_error_time'] = None
             bot_data['last_warning'] = None
-            
-            # 改价成功，从 pending_sells 移除旧订单（新订单已添加）
-            bot_data['pending_sells'] = [
-                ps for ps in bot_data.get('pending_sells', []) 
-                if ps['order_id'] != sell_order_id
-            ]
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 卖单改价失败 {sell_order_id}: {e}")
             # 改价失败，保留原订单在 pending_sells 中（不清理）
