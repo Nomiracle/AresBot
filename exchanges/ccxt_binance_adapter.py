@@ -406,9 +406,26 @@ class CcxtBinanceAdapter(BaseExchange):
     def _get_quantity_precision(self, symbol_info: Dict) -> Tuple[float, int]:
         """从现货交易对信息中提取数量精度（内部使用）"""
         prec = (symbol_info or {}).get("precision", {})
-        qty_decimals = int(prec.get("amount") or 3)
-        step_size = 10 ** (-qty_decimals)
-        print(f"{self._get_log_prefix()} 🔍 数量精度: qty_decimals={qty_decimals}, step_size={step_size}")
+        
+        # ccxt 的 precision.amount 可能是小数位数（如 3）或 step_size（如 0.001）
+        amount_prec = prec.get("amount")
+        
+        if amount_prec is not None:
+            if amount_prec >= 1:
+                # 是小数位数
+                qty_decimals = int(amount_prec)
+                step_size = 10 ** (-qty_decimals)
+            else:
+                # 是 step_size 本身
+                step_size = float(amount_prec)
+                # 计算小数位数
+                qty_decimals = max(0, -int(math.floor(math.log10(step_size) + 1e-9)))
+        else:
+            # 默认值
+            qty_decimals = 3
+            step_size = 0.001
+        
+        print(f"{self._get_log_prefix()} 🔍 数量精度: amount_prec={amount_prec}, step_size={step_size}, qty_decimals={qty_decimals}")
         return float(step_size), qty_decimals
 
     def get_trading_rules(self) -> Dict:
