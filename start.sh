@@ -11,6 +11,8 @@ GRACE_PERIOD=10    # 等待优雅退出的秒数
 
 cd "$(dirname "$0")" || exit 1
 
+
+pip3.12 install -r requirements.txt --upgrade
 git pull origin main
 
 # 查找与 app 关联的 pid（尽量精确匹配 python3.12 ... app.py）
