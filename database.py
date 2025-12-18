@@ -222,6 +222,18 @@ def init_db(recreate=False):
     except sqlite3.OperationalError:
         pass  # 列已存在
 
+    # 新增：系统配置表（存储钉钉webhook等配置）
+    c.execute('''CREATE TABLE IF NOT EXISTS system_config
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user_id INTEGER NOT NULL,
+                  config_key TEXT NOT NULL,
+                  config_value TEXT NOT NULL,
+                  description TEXT,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  FOREIGN KEY (user_id) REFERENCES users(id),
+                  UNIQUE(user_id, config_key))''')
+
     try:
         c.execute("INSERT INTO users (username, password, created_at) VALUES (?, ?, ?)",
                   ('admin', generate_password_hash('admin123'), datetime.now().isoformat()))
@@ -709,3 +721,54 @@ def get_credential_by_id(user_id, credential_id):
         'api_key': decrypt_data(result[2]),
         'api_secret': decrypt_data(result[3])
     }
+
+
+# 系统配置管理功能
+def get_system_config(username, config_key):
+    """获取用户的系统配置值"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return None
+        
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("SELECT config_value FROM system_config WHERE user_id=? AND config_key=?", (user_id, config_key))
+        result = c.fetchone()
+        return result[0] if result else None
+
+
+def set_system_config(username, config_key, config_value, description=None):
+    """设置用户的系统配置值"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return False
+        
+    with db_pool.get_cursor() as (conn, c):
+        now = datetime.now().isoformat()
+        c.execute("SELECT id FROM system_config WHERE user_id=? AND config_key=?", (user_id, config_key))
+        exists = c.fetchone()
+        
+        if exists:
+            c.execute("""UPDATE system_config SET config_value=?, updated_at=? WHERE user_id=? AND config_key=?""",
+                      (config_value, now, user_id, config_key))
+        else:
+            c.execute("""INSERT INTO system_config (user_id, config_key, config_value, description, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?)""",
+                      (user_id, config_key, config_value, description, now, now))
+        
+        print(f"[{now}] ✅ 系统配置已保存: {config_key} (user={username})")
+        return True
+
+
+def delete_system_config(username, config_key):
+    """删除用户的系统配置"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return False
+        
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("DELETE FROM system_config WHERE user_id=? AND config_key=?", (user_id, config_key))
+        deleted = c.rowcount > 0
+        
+    if deleted:
+        print(f"[{datetime.now().isoformat()}] ✅ 系统配置已删除: {config_key} (user={username})")
+    return deleted

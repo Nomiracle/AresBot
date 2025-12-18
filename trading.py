@@ -1,10 +1,38 @@
 import time
+import threading
 from datetime import datetime
 from database import get_user_id, insert_order, update_order_status
+from notification import DingTalkNotification
 import math
 import traceback
 
 user_bots = {}
+
+
+def send_order_notification(username, side, symbol, price, quantity, order_id):
+    """发送订单成交通知（异步执行，不阻塞主线程）
+    
+    Args:
+        username: 用户名
+        side: 订单方向 ('BUY' 或 'SELL')
+        symbol: 交易对
+        price: 成交价格
+        quantity: 成交数量
+        order_id: 订单号
+    """
+    if not username:
+        return
+    
+    def _send():
+        try:
+            notifier = DingTalkNotification(username=username)
+            side_text = "买单" if side == 'BUY' else "卖单"
+            price_text = "买入价" if side == 'BUY' else "卖出价"
+            notifier.send(f"✅ {side_text}成交\n交易对: {symbol}\n{price_text}: {price}\n数量: {quantity}\n订单号: {order_id}")
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ⚠️ 发送钉钉通知失败: {e}")
+    
+    threading.Thread(target=_send, daemon=True).start()
 
 
 def calculate_buy_target_price(current_price, offset_percent, tick_size, price_decimals):
@@ -106,6 +134,9 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
         return
     
     print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单成交 {order_id}: 买价={buy_price}, 数量={aligned_qty}")
+    
+    # 发送钉钉通知
+    send_order_notification(bot_data.get('username'), 'BUY', config['symbol'], buy_price, aligned_qty, order_id)
     
     # 先从 pending_buys 移除（买单已成交）
     bot_data['pending_buys'] = [
@@ -440,6 +471,7 @@ def trading_loop(username, symbol):
     bot_data['warning_count'] = 0
     user_id = get_user_id(username)
     bot_data['user_id'] = user_id
+    bot_data['username'] = username
 
     while bot_data.get('running'):
         try:
@@ -531,6 +563,11 @@ def trading_loop(username, symbol):
                                 if ps['order_id'] != order_id
                             ]
                             print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单成交 {order_id}")
+                            
+                            # 发送钉钉通知
+                            sell_price = event.get('price', 0)
+                            sell_qty = event.get('executedQty') or event.get('quantity', 0)
+                            send_order_notification(bot_data.get('username'), 'SELL', config['symbol'], sell_price, sell_qty, order_id)
                             
                             # 更新数据库订单状态
                             try:

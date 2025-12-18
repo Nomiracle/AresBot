@@ -9,7 +9,8 @@ from config import DB_FILE
 from database import (save_user_config, load_user_config, get_user_orders, get_user_profits, get_user_id,
                      get_user_trading_pairs, add_trading_pair, delete_trading_pair, 
                      update_trading_pair, get_user_credentials, add_credential,
-                     delete_credential, update_credential)
+                     delete_credential, update_credential, get_system_config, set_system_config)
+from notification import DingTalkNotification
 
 from trading import trading_loop, user_bots
 from rate_limit_manager import check_and_adjust_rate_limit
@@ -865,3 +866,50 @@ def register_routes(app):
             'success': True,
             'exchanges': list(unique_exchanges.values())
         })
+
+    @app.route('/system_settings', methods=['GET', 'POST'])
+    def system_settings():
+        if 'user' not in session:
+            return redirect(url_for('login'))
+        
+        username = session['user']
+        message = None
+        msg_type = None
+        
+        if request.method == 'POST':
+            dingtalk_token = request.form.get('dingtalk_access_token', '').strip()
+            if dingtalk_token:
+                set_system_config(username, 'dingtalk_access_token', dingtalk_token, '钉钉机器人access_token')
+                message = '设置保存成功'
+                msg_type = 'success'
+            else:
+                message = 'Access Token 不能为空'
+                msg_type = 'error'
+        
+        # 获取当前配置
+        dingtalk_access_token = get_system_config(username, 'dingtalk_access_token')
+        
+        return render_template('system_settings.html', 
+                             username=username,
+                             dingtalk_access_token=dingtalk_access_token,
+                             message=message,
+                             msg_type=msg_type)
+
+    @app.route('/api/test_dingtalk', methods=['POST'])
+    def test_dingtalk():
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未登录'})
+        
+        username = session['user']
+        try:
+            notifier = DingTalkNotification(username=username)
+            if not notifier.webhook_url:
+                return jsonify({'success': False, 'message': '钉钉access_token未配置'})
+            
+            result = notifier.send(f"🔔 测试通知\n这是来自 AresBot 的测试消息\n用户: {username}\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            if result:
+                return jsonify({'success': True, 'message': '发送成功'})
+            else:
+                return jsonify({'success': False, 'message': '发送失败，请检查access_token和关键词设置'})
+        except Exception as e:
+            return jsonify({'success': False, 'message': str(e)})
