@@ -46,9 +46,8 @@ class DingTalkNotification(BaseNotification):
             print(f"[{datetime.now().isoformat()}] ❌ 钉钉消息发送失败: webhook_url未配置")
             return False
         
-        # 添加ares关键字（钉钉机器人安全设置要求）
-        if 'ares' not in message.lower():
-            message = f"[ares] {message}"
+        # 添加ares关键字前缀（钉钉机器人安全设置要求）
+        message = f"[ares] {message}"
             
         try:
             headers = {"Content-Type": "application/json"}
