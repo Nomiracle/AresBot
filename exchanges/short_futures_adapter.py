@@ -81,6 +81,62 @@ class CcxtBinanceFuturesShort(CcxtBinanceFutures):
         
         return orders
     
+    def cancel_replace_order(
+        self,
+        side: str,
+        order_type: str,
+        quantity: float,
+        price: str,
+        cancel_order_id: str,
+        **kwargs,
+    ) -> Dict:
+        """取消并替换订单（反转 side 后调用父类）
+        
+        trading.py 传入的 side 是逻辑 side（已被 get_open_orders 反转），
+        需要再次反转回实际 side 给父类处理。
+        """
+        # 反转 side
+        actual_side = side.upper()
+        if actual_side == "BUY":
+            actual_side = "SELL"
+        elif actual_side == "SELL":
+            actual_side = "BUY"
+        
+        return super().cancel_replace_order(
+            side=actual_side,
+            order_type=order_type,
+            quantity=quantity,
+            price=price,
+            cancel_order_id=cancel_order_id,
+            **kwargs
+        )
+    
+    def get_order(self, order_id: str) -> Dict:
+        """查询订单状态（反转 side）"""
+        order = super().get_order(order_id)
+        original_side = str(order.get('side', '')).upper()
+        if original_side == 'BUY':
+            order['side'] = 'SELL'
+        elif original_side == 'SELL':
+            order['side'] = 'BUY'
+        return order
+    
+    def _position_to_virtual_orders(self) -> List[Dict]:
+        """将持仓映射为虚拟订单（反转 side）
+        
+        做空策略中：
+        - 空单持仓 → 虚拟卖单（对应 trading.py 的平仓单）
+        """
+        orders = super()._position_to_virtual_orders()
+        # 反转每个虚拟订单的 side
+        for order in orders:
+            original_side = str(order.get('side', '')).upper()
+            if original_side == 'BUY':
+                order['side'] = 'SELL'
+            elif original_side == 'SELL':
+                order['side'] = 'BUY'
+        return orders
+    
     # ====================== 价格计算反转 ======================
     
     def calculate_sell_price(self, buy_price, sell_offset_percent, tick_size, price_decimals, current_price=None):
