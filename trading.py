@@ -591,7 +591,7 @@ def trading_loop(username, symbol):
                 open_buy_orders = [o for o in open_orders if str(o.get('side')).upper() == 'BUY']
                 open_sell_orders = [o for o in open_orders if str(o.get('side')).upper() == 'SELL']
                 query_success = True
-
+                current_price = bot_data.get('current_price')
                 # 恢复 pending_buys 和 pending_sells（仅启动时）
                 if not pending_buys_recovered:
                     print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 启动恢复检查: open_buy_orders={len(open_buy_orders)}, open_sell_orders={len(open_sell_orders)}, pending_buys={len(bot_data.get('pending_buys', []))}, pending_sells={len(bot_data.get('pending_sells', []))}")
