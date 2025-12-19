@@ -35,30 +35,7 @@ def send_order_notification(username, side, symbol, price, quantity, order_id):
     threading.Thread(target=_send, daemon=True).start()
 
 
-def calculate_buy_target_price(current_price, offset_percent, tick_size, price_decimals):
-    """
-    计算买单目标价格
-    
-    Args:
-        current_price: 当前市场价格
-        offset_percent: 偏移百分比（通常为负数，如 -0.1）
-        tick_size: 价格步长
-        price_decimals: 价格小数位数
-    
-    Returns:
-        float: 对齐后的买单目标价格
-    """
-    offset = offset_percent / 100.0
-    target_price = current_price * (1 + offset)
-    
-    # 按 tick_size 对齐（向下取整）
-    if tick_size and tick_size > 0:
-        target_price = math.floor(target_price / tick_size) * tick_size
-    
-    # 按小数位数对齐
-    target_price = round(target_price, price_decimals)
-    
-    return target_price
+
 
 
 
@@ -666,7 +643,7 @@ def trading_loop(username, symbol):
                 # 改价买单
                 if open_buy_orders:
                     # 计算买单目标价
-                    target_price = calculate_buy_target_price(
+                    target_price = exchange.calculate_buy_target_price(
                         current_price,
                         config.get('offset_percent', -0.5),
                         tick_size,
@@ -716,7 +693,7 @@ def trading_loop(username, symbol):
                 is_buy_enabled = (config.get('simulate_trading', 1) != 1)
                 if is_buy_enabled:
                     # 计算买单目标价
-                    target_price = calculate_buy_target_price(
+                    target_price = exchange.calculate_buy_target_price(
                         current_price,
                         config.get('offset_percent', -0.1),
                         tick_size,

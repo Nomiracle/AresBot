@@ -12,7 +12,7 @@ import asyncio
 from .base import BaseExchange
 
 
-class BinanceFuturesAdapter(BaseExchange):
+class NativeBinanceFutures(BaseExchange):
     """币安合约交易适配器"""
     
     def __init__(self, api_key: str, api_secret: str, symbol: str, testnet: bool = True):

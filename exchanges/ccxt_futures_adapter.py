@@ -14,7 +14,7 @@ import ccxt
 from .base import BaseExchange
 
 
-class CcxtFuturesAdapter(BaseExchange):
+class CcxtBinanceFutures(BaseExchange):
     """使用 ccxt 实现的币安合约交易适配器"""
 
     def __init__(self, api_key: str, api_secret: str, symbol: str, testnet: bool = True):

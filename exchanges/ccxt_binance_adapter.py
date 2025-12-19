@@ -15,7 +15,7 @@ import ccxt
 from .base import BaseExchange
 
 
-class CcxtBinanceAdapter(BaseExchange):
+class CcxtBinanceSpot(BaseExchange):
     """使用 ccxt 实现的币安现货交易适配器
     
     交易所名称: ccxt-binance

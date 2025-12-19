@@ -4,28 +4,36 @@
 """
 from typing import Optional
 from .base import BaseExchange
-from .binance_adapterv2 import BinanceAdapter
-from .binance_futures_adapter import BinanceFuturesAdapter
-from .backpack_adapter import BackpackAdapter
-from .ccxt_futures_adapter import CcxtFuturesAdapter
-from .ccxt_binance_adapter import CcxtBinanceAdapter
+from .binance_adapterv2 import NativeBinanceSpot
+from .binance_futures_adapter import NativeBinanceFutures
+from .backpack_adapter import NativeBackpackSpot
+from .ccxt_futures_adapter import CcxtBinanceFutures
+from .ccxt_binance_adapter import CcxtBinanceSpot
+from .short_futures_adapter import CcxtBinanceFuturesShort
 
 class ExchangeFactory:
     """交易所工厂"""
     
+    # 命名规则: 框架_交易所_市场
+    # 框架: native(原生SDK) / ccxt
+    # 交易所: binance / backpack / ...
+    # 市场: spot(现货) / futures(合约) / futures_short(合约做空)
     SUPPORTED_EXCHANGES = {
-        'binance': BinanceAdapter,
-        'binance_futures': BinanceFuturesAdapter,
-        'binance-futures': BinanceFuturesAdapter,  # 别名
-        'backpack': BackpackAdapter,
-        'bpx': BackpackAdapter,  # 别名
-        'ccxt_futures': CcxtFuturesAdapter,
-        'ccxt-futures': CcxtFuturesAdapter,  # 别名
-        'ccxt_binance': CcxtBinanceAdapter,
-        'ccxt-binance': CcxtBinanceAdapter,  # 别名
-        # 未来可以添加其他交易所
-        # 'okx': OKXAdapter,
-        # 'bybit': BybitAdapter,
+        # Native SDK 实现
+        'native_binance_spot': NativeBinanceSpot,
+        'native_binance_futures': NativeBinanceFutures,
+        'native_backpack_spot': NativeBackpackSpot,
+        # CCXT 实现
+        'ccxt_binance_spot': CcxtBinanceSpot,
+        'ccxt_binance_futures': CcxtBinanceFutures,
+        'ccxt_binance_futures_short': CcxtBinanceFuturesShort,
+        # 兼容旧名称（别名）
+        'binance': NativeBinanceSpot,
+        'binance_futures': NativeBinanceFutures,
+        'backpack': NativeBackpackSpot,
+        'bpx': NativeBackpackSpot,
+        'ccxt_futures': CcxtBinanceFutures,
+        'ccxt_binance': CcxtBinanceSpot,
     }
     
     @classmethod
@@ -35,6 +43,8 @@ class ExchangeFactory:
         
         Args:
             exchange_name: 交易所名称 ('binance', 'backpack', etc.)
+                          做空适配器使用 '_short' 或 '-short' 后缀
+                          例如: 'ccxt_futures_short'
             api_key: API密钥
             api_secret: API密钥
             symbol: 交易对（如 BTCUSDT）

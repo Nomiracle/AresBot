@@ -12,7 +12,7 @@ import asyncio
 from .base import BaseExchange
 
 
-class BinanceAdapter(BaseExchange):
+class NativeBinanceSpot(BaseExchange):
     def __init__(self, api_key: str, api_secret: str, symbol: str, testnet: bool = True):
         self.api_key = api_key
         self.api_secret = api_secret

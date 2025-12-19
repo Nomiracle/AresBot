@@ -18,7 +18,7 @@ except ImportError:
     Public = None
 
 
-class BackpackAdapter(BaseExchange):
+class NativeBackpackSpot(BaseExchange):
     """Backpack 交易所适配器"""
     
     def __init__(self, api_key: str, api_secret: str, symbol: str, testnet: bool = True):

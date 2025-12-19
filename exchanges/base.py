@@ -138,3 +138,28 @@ class BaseExchange(ABC):
             float: 手续费率，例如 0.001 表示 0.1%
         """
         return 0.001  # 默认 0.1% 手续费
+
+    def calculate_buy_target_price(self, current_price, offset_percent, tick_size, price_decimals):
+        """
+        计算买单目标价格
+        
+        Args:
+            current_price: 当前市场价格
+            offset_percent: 偏移百分比（通常为负数，如 -0.1）
+            tick_size: 价格步长
+            price_decimals: 价格小数位数
+        
+        Returns:
+            float: 对齐后的买单目标价格
+        """
+        offset = offset_percent / 100.0
+        target_price = current_price * (1 + offset)
+        
+        # 按 tick_size 对齐（向下取整）
+        if tick_size and tick_size > 0:
+            target_price = math.floor(target_price / tick_size) * tick_size
+        
+        # 按小数位数对齐
+        target_price = round(target_price, price_decimals)
+        
+        return target_price
