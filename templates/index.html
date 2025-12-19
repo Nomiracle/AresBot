@@ -1508,12 +1508,16 @@
                   `;
                 }
                 
+                // 交易所显示
+                const exchangeName = (bot.config && bot.config.exchange) ? bot.config.exchange.toUpperCase() : 'BINANCE';
+                
                 return `
                   <div class="pair-item" id="bot-${bot.symbol}">
                     <div class="pair-info">
                       <div style="display: flex; align-items: center; margin-bottom: 8px;">
                         <span class="status-indicator ${statusClass}"></span>
                         <strong style="font-size: 16px;">${bot.symbol}</strong>
+                        <span class="bot-status-badge" style="margin-left: 8px; background: #6f42c1; color: white;">${exchangeName}</span>
                         <span style="margin-left: 10px; color: ${statusColor}; font-weight: 600;">${bot.status_text}</span>
                       </div>
                       <div style="margin-bottom: 5px;">
