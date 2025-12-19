@@ -476,6 +476,59 @@ class CcxtBinanceFutures(BaseExchange):
         }
 
     # ====================== WebSocket 监控（ccxt pro 真正 WS） ======================
+    
+    def _process_order_event(self, o: Dict, on_order_update: Callable[[Dict], None]):
+        """处理单个订单事件（子类可重写以修改 side 等字段）"""
+        order_id = str(o.get("id"))
+        raw_status = o.get("status")
+        status = self._map_status(raw_status)
+        side = str(o.get("side", "")).upper()
+        price = o.get("price")
+        amount = o.get("amount")
+        filled = o.get("filled")
+
+        # 打印所有订单事件
+        print(f"{self._get_log_prefix()} 📨 订单事件: id={order_id}, status={raw_status}->{status}, side={side}, price={price}, amount={amount}, filled={filled}")
+
+        # 合约手续费从 USDT 扣除
+        fee_paid_externally = True
+
+        if status == "CANCELED":
+            if on_order_update:
+                on_order_update({
+                    "event_type": "order_cancelled",
+                    "order_id": order_id,
+                    "symbol": self.symbol,
+                    "side": side,
+                    "status": status,
+                })
+        elif status == "FILLED":
+            if on_order_update:
+                on_order_update({
+                    "event_type": "order_filled",
+                    "order_id": order_id,
+                    "symbol": self.symbol,
+                    "side": side,
+                    "status": "FILLED",
+                    "price": str(price or 0),
+                    "quantity": str(amount or 0),
+                    "executedQty": str(filled or 0),
+                    "feePaidExternally": fee_paid_externally,
+                })
+        else:
+            # NEW 或其他状态也通知
+            if on_order_update:
+                on_order_update({
+                    "event_type": "order_update",
+                    "order_id": order_id,
+                    "symbol": self.symbol,
+                    "side": side,
+                    "status": status,
+                    "price": str(price or 0),
+                    "quantity": str(amount or 0),
+                    "executedQty": str(filled or 0),
+                })
+    
     def start_ws(
         self,
         on_price_update: Callable[[float], None],
@@ -540,55 +593,7 @@ class CcxtBinanceFutures(BaseExchange):
                     try:
                         orders = await self._ws_client.watch_orders(self._market_symbol)
                         for o in orders:
-                            order_id = str(o.get("id"))
-                            raw_status = o.get("status")
-                            status = self._map_status(raw_status)
-                            side = str(o.get("side", "")).upper()
-                            price = o.get("price")
-                            amount = o.get("amount")
-                            filled = o.get("filled")
-
-                            # 打印所有订单事件
-                            print(f"{self._get_log_prefix()} 📨 订单事件: id={order_id}, status={raw_status}->{status}, side={side}, price={price}, amount={amount}, filled={filled}")
-
-                            # 合约手续费从 USDT 扣除
-                            fee_paid_externally = True
-
-                            if status == "CANCELED":
-                                if on_order_update:
-                                    on_order_update({
-                                        "event_type": "order_cancelled",
-                                        "order_id": order_id,
-                                        "symbol": self.symbol,
-                                        "side": side,
-                                        "status": status,
-                                    })
-                            elif status == "FILLED":
-                                if on_order_update:
-                                    on_order_update({
-                                        "event_type": "order_filled",
-                                        "order_id": order_id,
-                                        "symbol": self.symbol,
-                                        "side": side,
-                                        "status": "FILLED",
-                                        "price": str(price or 0),
-                                        "quantity": str(amount or 0),
-                                        "executedQty": str(filled or 0),
-                                        "feePaidExternally": fee_paid_externally,
-                                    })
-                            else:
-                                # NEW 或其他状态也通知
-                                if on_order_update:
-                                    on_order_update({
-                                        "event_type": "order_update",
-                                        "order_id": order_id,
-                                        "symbol": self.symbol,
-                                        "side": side,
-                                        "status": status,
-                                        "price": str(price or 0),
-                                        "quantity": str(amount or 0),
-                                        "executedQty": str(filled or 0),
-                                    })
+                            self._process_order_event(o, on_order_update)
                     except Exception as e:
                         if self._monitor_running:
                             print(f"{self._get_log_prefix()} ⚠️ watchOrders 错误: {e}")

@@ -44,6 +44,43 @@ class CcxtBinanceFuturesShort(CcxtBinanceFutures):
         print(f"{self._get_log_prefix()} ✅ 做空平仓成功: 订单ID={result.get('orderId')}")
         return result
     
+    # ====================== 订单相关：反转 side ======================
+    
+    def _process_order_event(self, o: Dict, on_order_update):
+        """处理订单事件（反转 side，使 trading.py 逻辑兼容做空）
+        
+        做空策略中：
+        - 实际 SELL 订单（开仓）→ 事件中 side 改为 BUY
+        - 实际 BUY 订单（平仓）→ 事件中 side 改为 SELL
+        """
+        # 反转 side 后调用父类处理
+        original_side = str(o.get("side", "")).upper()
+        if original_side == "BUY":
+            o["side"] = "sell"  # 小写，父类会转大写
+        elif original_side == "SELL":
+            o["side"] = "buy"
+        
+        super()._process_order_event(o, on_order_update)
+    
+    def get_open_orders(self) -> List[Dict]:
+        """获取未完成订单（反转 side，使 trading.py 逻辑兼容做空）
+        
+        做空策略中：
+        - 实际 SELL 订单（开仓）→ 返回为 BUY（对应 trading.py 的 open_buy_orders）
+        - 实际 BUY 订单（平仓）→ 返回为 SELL（对应 trading.py 的 open_sell_orders）
+        """
+        orders = super().get_open_orders()
+        
+        # 反转每个订单的 side
+        for order in orders:
+            original_side = str(order.get('side', '')).upper()
+            if original_side == 'BUY':
+                order['side'] = 'SELL'
+            elif original_side == 'SELL':
+                order['side'] = 'BUY'
+        
+        return orders
+    
     # ====================== 价格计算反转 ======================
     
     def calculate_sell_price(self, buy_price, sell_offset_percent, tick_size, price_decimals, current_price=None):
