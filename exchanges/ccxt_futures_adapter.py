@@ -330,7 +330,7 @@ class CcxtBinanceFutures(BaseExchange):
             o = self.client.cancel_order(order_id, self._market_symbol)
             return {"orderId": str(o.get("id")), "id": str(o.get("id")), **(o or {})}
         except Exception as e:
-            print(f"{self._get_log_prefix()} ❌ 取消订单失败: {e}")
+            print(f"{self._get_log_prefix()} ❌ 取消订单失败 (order_id={order_id}): {e}")
             raise
 
     def _is_virtual_order(self, order_id: str) -> bool:
@@ -388,14 +388,14 @@ class CcxtBinanceFutures(BaseExchange):
                     },
                 }
             except Exception as e:
-                print(f"{self._get_log_prefix()} ⚠️ editOrderWs 失败，回退到取消+新建: {e}")
+                print(f"{self._get_log_prefix()} ⚠️ editOrderWs 失败 (order_id={cancel_order_id})，回退到取消+新建: {e}")
         
         # 回退：先取消旧订单，再创建新订单
         try:
             self.cancel_order(cancel_order_id)
         except Exception as e:
             # 订单可能已成交或已取消，忽略
-            print(f"{self._get_log_prefix()} ⚠️ 取消旧订单失败（可能已成交）: {e}")
+            print(f"{self._get_log_prefix()} ⚠️ 取消旧订单失败 (order_id={cancel_order_id})，可能已成交: {e}")
 
         # 创建新订单
         if str(side).upper() == "BUY":
@@ -552,22 +552,25 @@ class CcxtBinanceFutures(BaseExchange):
             self._ws_client = self._create_ws_client(self.api_key, self.api_secret, self.testnet)
 
             async def watch_ticker():
-                """watchTicker 实时价格推送"""
+                """watch_bids_asks 实时价格推送（使用 bookTicker 流，更新更快）"""
                 update_count = 0
                 msg_count = 0  # WebSocket 消息计数
                 last_log_time = time.time()
                 start_time = time.time()
                 while self._monitor_running:
                     try:
-                        ticker = await self._ws_client.watch_ticker(self._market_symbol)
-                        msg_count += 1  # 每收到一条消息就计数
-                        price = ticker.get("last") or ticker.get("close")
-                        if price is not None:
-                            p = float(price)
+                        # 使用 watch_bids_asks (bookTicker) 获取更快的价格更新
+                        bids_asks = await self._ws_client.watch_bids_asks([self._market_symbol])
+                        msg_count += 1
+                        ba = bids_asks.get(self._market_symbol, {})
+                        # 使用 bid 和 ask 的中间价作为当前价格
+                        bid = ba.get("bid")
+                        ask = ba.get("ask")
+                        if bid is not None and ask is not None:
+                            p = (float(bid) + float(ask)) / 2
                             with self._last_price_lock:
                                 price_changed = self._last_price is None or abs(p - self._last_price) > 1e-12
                                 if price_changed:
-                                    old_price = self._last_price
                                     self._last_price = p
                                     update_count += 1
                                 
@@ -577,14 +580,14 @@ class CcxtBinanceFutures(BaseExchange):
                                     elapsed = now - start_time
                                     msg_rate = msg_count / elapsed if elapsed > 0 else 0
                                     change_rate = update_count / elapsed if elapsed > 0 else 0
-                                    print(f"{self._get_log_prefix()} 📊 价格={p} | WS消息: {msg_count}条 ({msg_rate:.1f}/秒) | 价格变化: {update_count}次 ({change_rate:.2f}/秒)")
+                                    print(f"{self._get_log_prefix()} 📊 价格={p:.2f} (bid={bid}, ask={ask}) | WS消息: {msg_count}条 ({msg_rate:.1f}/秒) | 价格变化: {update_count}次 ({change_rate:.2f}/秒)")
                                     last_log_time = now
                                 
                                 if price_changed and on_price_update:
                                     on_price_update(p)
                     except Exception as e:
                         if self._monitor_running:
-                            print(f"{self._get_log_prefix()} ⚠️ watchTicker 错误: {e}")
+                            print(f"{self._get_log_prefix()} ⚠️ watch_bids_asks 错误: {e}")
                             await asyncio.sleep(1)
 
             async def watch_orders():

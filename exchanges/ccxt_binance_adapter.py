@@ -478,8 +478,8 @@ class CcxtBinanceSpot(BaseExchange):
             print(f"{self._get_log_prefix()} ✅ WebSocket客户端已创建")
 
             async def watch_ticker():
-                """watchTicker 实时价格推送"""
-                print(f"{self._get_log_prefix()} 🔌 启动价格监控: {self._market_symbol}")
+                """watch_bids_asks 实时价格推送（使用 bookTicker 流，更新更快）"""
+                print(f"{self._get_log_prefix()} 🔌 启动价格监控(bookTicker): {self._market_symbol}")
                 update_count = 0
                 msg_count = 0
                 last_log_time = time.time()
@@ -487,12 +487,16 @@ class CcxtBinanceSpot(BaseExchange):
                 
                 while self._monitor_running:
                     try:
-                        ticker = await self._ws_client.watch_ticker(self._market_symbol)
+                        # 使用 watch_bids_asks (bookTicker) 获取更快的价格更新
+                        bids_asks = await self._ws_client.watch_bids_asks([self._market_symbol])
                         msg_count += 1
-                        price = ticker.get("last") or ticker.get("close")
+                        ba = bids_asks.get(self._market_symbol, {})
+                        # 使用 bid 和 ask 的中间价作为当前价格
+                        bid = ba.get("bid")
+                        ask = ba.get("ask")
                         
-                        if price is not None:
-                            p = float(price)
+                        if bid is not None and ask is not None:
+                            p = (float(bid) + float(ask)) / 2
                             with self._last_price_lock:
                                 price_changed = self._last_price is None or abs(p - self._last_price) > 1e-12
                                 if price_changed:
@@ -505,7 +509,7 @@ class CcxtBinanceSpot(BaseExchange):
                                     elapsed = now - start_time
                                     msg_rate = msg_count / elapsed if elapsed > 0 else 0
                                     change_rate = update_count / elapsed if elapsed > 0 else 0
-                                    print(f"{self._get_log_prefix()} 📊 价格={p} | WS消息: {msg_count}条 ({msg_rate:.1f}/秒) | 价格变化: {update_count}次 ({change_rate:.2f}/秒)")
+                                    print(f"{self._get_log_prefix()} 📊 价格={p:.2f} (bid={bid}, ask={ask}) | WS消息: {msg_count}条 ({msg_rate:.1f}/秒) | 价格变化: {update_count}次 ({change_rate:.2f}/秒)")
                                     last_log_time = now
                                 
                                 if price_changed and on_price_update:
@@ -515,9 +519,9 @@ class CcxtBinanceSpot(BaseExchange):
                         break
                     except Exception as e:
                         if self._monitor_running:
-                            error_key = f"watch_ticker_{type(e).__name__}"
+                            error_key = f"watch_bids_asks_{type(e).__name__}"
                             if self._should_log_error(error_key):
-                                print(f"{self._get_log_prefix()} ⚠️ watchTicker 错误: {e}")
+                                print(f"{self._get_log_prefix()} ⚠️ watch_bids_asks 错误: {e}")
                                 traceback.print_exc()
                             await asyncio.sleep(1)
 
