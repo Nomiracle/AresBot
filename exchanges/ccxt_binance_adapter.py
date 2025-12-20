@@ -647,18 +647,25 @@ class CcxtBinanceSpot(BaseExchange):
         """停止 WebSocket 监控"""
         print(f"{self._get_log_prefix()} 🛑 停止WebSocket监控...")
         
+        # 先设置停止标志，让循环自然退出
         with self._monitor_lock:
             self._monitor_running = False
 
-        # 取消事件循环中所有正在运行的任务
-        if self._event_loop and self._event_loop.is_running():
-            print(f"{self._get_log_prefix()} 🔧 取消所有异步任务...")
+        # 优雅关闭：先关闭 WebSocket 客户端，让任务自然结束
+        if self._event_loop and self._event_loop.is_running() and self._ws_client:
+            print(f"{self._get_log_prefix()} 🔧 关闭WebSocket客户端...")
             
-            def cancel_all_tasks():
-                for task in asyncio.all_tasks(self._event_loop):
-                    task.cancel()
+            async def close_ws():
+                try:
+                    await self._ws_client.close()
+                except:
+                    pass
             
-            self._event_loop.call_soon_threadsafe(cancel_all_tasks)
+            future = asyncio.run_coroutine_threadsafe(close_ws(), self._event_loop)
+            try:
+                future.result(timeout=3)  # 等待最多3秒
+            except:
+                pass
 
         if self._monitor_thread and self._monitor_thread.is_alive():
             print(f"{self._get_log_prefix()} 🔧 等待监控线程结束...")
