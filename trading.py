@@ -420,16 +420,17 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
             bot_data['repricing_order_id'] = None
 
 
-def trading_loop(username, symbol):
+def trading_loop(username, bot_key):
     """交易主循环"""
     user_data = user_bots.get(username)
     if not user_data:
         return
-    bot_data = user_data.get('bots', {}).get(symbol)
+    bot_data = user_data.get('bots', {}).get(bot_key)
     if not bot_data:
         return
 
     exchange_name = bot_data.get('config', {}).get('exchange', 'binance').upper()
+    symbol = bot_data.get('config', {}).get('symbol', bot_key)
     log_prefix = f"[{username}-{exchange_name}-{symbol}]"
     print(f"[{datetime.now().isoformat()}] {log_prefix} ▶️ 交易循环已启动")
 

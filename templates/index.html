@@ -1534,8 +1534,8 @@
                       ${rateLimitDisplay}
                     </div>
                     <div class="pair-actions">
-                      <button class="btn btn-primary btn-sm" onclick="editBot('${bot.symbol}')">✏️ 编辑</button>
-                      <button class="btn btn-danger btn-sm" onclick="deleteBotSymbol('${bot.symbol}')">🗑️ 删除</button>
+                      <button class="btn btn-primary btn-sm" onclick="editBot('${bot.symbol}', '${bot.config.exchange || 'binance'}')">✏️ 编辑</button>
+                      <button class="btn btn-danger btn-sm" onclick="deleteBotSymbol('${bot.symbol}', '${bot.config.exchange || 'binance'}')">🗑️ 删除</button>
                     </div>
                   </div>
                 `;
@@ -1544,7 +1544,8 @@
           });
       }
 
-      function editBot(symbol) {
+      function editBot(symbol, exchange) {
+        const botKey = `${exchange}:${symbol}`;
         const bot = botsCache[symbol];
         if (!bot) return;
         
@@ -1569,15 +1570,16 @@
             </div>
           </div>
           <div class="pair-actions">
-            <button class="btn btn-success btn-sm" onclick="saveBot('${symbol}')">💾 保存</button>
+            <button class="btn btn-success btn-sm" onclick="saveBot('${symbol}', '${exchange}')">💾 保存</button>
             <button class="btn btn-secondary btn-sm" onclick="cancelEditBot()">❌ 取消</button>
           </div>
         `;
       }
 
-      function saveBot(symbol) {
+      function saveBot(symbol, exchange) {
         const payload = {
           symbol,
+          exchange,
           offset_percent: parseFloat(document.getElementById(`edit-offset-${symbol}`).value),
           sell_offset_percent: parseFloat(document.getElementById(`edit-selloffset-${symbol}`).value),
           quantity: parseFloat(document.getElementById(`edit-qty-${symbol}`).value),
@@ -1606,12 +1608,12 @@
         loadBots();
       }
 
-      function deleteBotSymbol(symbol) {
-        if (!confirm(`确定删除 ${symbol} 机器人吗？\n\n此操作将：\n✓ 停止机器人运行\n✓ 取消所有未完成订单\n✓ 从列表中移除机器人\n\n此操作不可撤销！`)) return;
+      function deleteBotSymbol(symbol, exchange) {
+        if (!confirm(`确定删除 ${exchange.toUpperCase()} 交易所的 ${symbol} 机器人吗？\n\n此操作将：\n✓ 停止机器人运行\n✓ 取消所有未完成订单\n✓ 从列表中移除机器人\n\n此操作不可撤销！`)) return;
         fetch("/api/bot/stop", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ symbol })
+          body: JSON.stringify({ symbol, exchange })
         })
           .then(r => r.json())
           .then(data => {

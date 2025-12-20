@@ -238,8 +238,9 @@ def register_routes(app):
             exchange.ping()
             if username not in user_bots or not isinstance(user_bots.get(username), dict):
                 user_bots[username] = {'bots': {}}
-            if symbol in user_bots[username]['bots'] and user_bots[username]['bots'][symbol].get('running'):
-                return jsonify({'success': False, 'message': '该交易对机器人已运行'})
+            bot_key = f"{exchange_name}:{symbol}"
+            if bot_key in user_bots[username]['bots'] and user_bots[username]['bots'][bot_key].get('running'):
+                return jsonify({'success': False, 'message': f'{exchange_name} 交易所的 {symbol} 机器人已运行'})
 
             # 只对币安交易所检查并调整API限制
             limit_msg = ""
@@ -253,7 +254,7 @@ def register_routes(app):
                 if limit_msg:
                     print(f"[{datetime.now().isoformat()}] {limit_msg}")
 
-            user_bots[username]['bots'][symbol] = {
+            user_bots[username]['bots'][bot_key] = {
                 'running': True,
                 'exchange': exchange,
                 'config': config,
@@ -263,9 +264,9 @@ def register_routes(app):
                 'start_time': datetime.now()
             }
 
-            thread = threading.Thread(target=trading_loop, args=(username, symbol), daemon=True)
+            thread = threading.Thread(target=trading_loop, args=(username, bot_key), daemon=True)
             thread.start()
-            user_bots[username]['bots'][symbol]['thread'] = thread
+            user_bots[username]['bots'][bot_key]['thread'] = thread
 
             exchange_name = config.get('exchange', 'binance').upper()
             log_prefix = f"[{username}-{exchange_name}-{symbol}]"
@@ -525,7 +526,10 @@ def register_routes(app):
         user_data = user_bots.get(username, {})
         bots = []
         if isinstance(user_data, dict):
-            for sym, b in user_data.get('bots', {}).items():
+            for bot_key, b in user_data.get('bots', {}).items():
+                # 从 bot_key 中提取 symbol（格式: exchange:symbol）
+                sym = b.get('config', {}).get('symbol', bot_key)
+                
                 # 检查线程状态
                 thread = b.get('thread')
                 thread_alive = thread.is_alive() if thread else False
@@ -644,8 +648,9 @@ def register_routes(app):
             exchange.ping()
             if username not in user_bots or not isinstance(user_bots.get(username), dict):
                 user_bots[username] = {'bots': {}}
-            if symbol in user_bots[username]['bots'] and user_bots[username]['bots'][symbol].get('running'):
-                return jsonify({'success': False, 'message': '该交易对机器人已运行'})
+            bot_key = f"{exchange_name}:{symbol}"
+            if bot_key in user_bots[username]['bots'] and user_bots[username]['bots'][bot_key].get('running'):
+                return jsonify({'success': False, 'message': f'{exchange_name} 交易所的 {symbol} 机器人已运行'})
             
             # 只对币安交易所检查并调整API限制
             limit_msg = ""
@@ -659,7 +664,7 @@ def register_routes(app):
                 if limit_msg:
                     print(f"[{datetime.now().isoformat()}] {limit_msg}")
             
-            user_bots[username]['bots'][symbol] = {
+            user_bots[username]['bots'][bot_key] = {
                 'running': True,
                 'exchange': exchange,
                 'config': config,
@@ -667,9 +672,9 @@ def register_routes(app):
                 'target_price': None,
                 'pending_buys': []
             }
-            thread = threading.Thread(target=trading_loop, args=(username, symbol), daemon=True)
+            thread = threading.Thread(target=trading_loop, args=(username, bot_key), daemon=True)
             thread.start()
-            user_bots[username]['bots'][symbol]['thread'] = thread
+            user_bots[username]['bots'][bot_key]['thread'] = thread
             
             # 构建返回消息
             success_msg = f'{symbol} 机器人已启动'
@@ -689,17 +694,19 @@ def register_routes(app):
         username = session['user']
         data = request.json or {}
         symbol = data.get('symbol')
+        exchange_name = data.get('exchange', 'binance').lower()
         if not symbol:
             return jsonify({'success': False, 'message': '缺少symbol'}), 400
+        bot_key = f"{exchange_name}:{symbol}"
         user_data = user_bots.get(username, {})
         bot = None
         if isinstance(user_data, dict):
-            bot = user_data.get('bots', {}).get(symbol)
+            bot = user_data.get('bots', {}).get(bot_key)
         if not bot:
             return jsonify({'success': False, 'message': '机器人不存在'})
         
-        exchange_name = bot.get('config', {}).get('exchange', 'binance').upper()
-        log_prefix = f"[{username}-{exchange_name}-{symbol}]"
+        exchange_name_upper = bot.get('config', {}).get('exchange', 'binance').upper()
+        log_prefix = f"[{username}-{exchange_name_upper}-{symbol}]"
         
         # 停止机器人运行
         bot['running'] = False
@@ -737,8 +744,8 @@ def register_routes(app):
         
         # 从内存中删除机器人
         if isinstance(user_data, dict) and 'bots' in user_data:
-            if symbol in user_data['bots']:
-                del user_data['bots'][symbol]
+            if bot_key in user_data['bots']:
+                del user_data['bots'][bot_key]
                 print(f"[{datetime.now().isoformat()}] {log_prefix} 🗑️ 已从内存中删除机器人")
         
         return jsonify({'success': True, 'message': f'{symbol} 机器人已删除，所有订单已取消'})
@@ -750,12 +757,14 @@ def register_routes(app):
         username = session['user']
         data = request.json or {}
         symbol = data.get('symbol')
+        exchange_name = data.get('exchange', 'binance').lower()
         if not symbol:
             return jsonify({'success': False, 'message': '缺少symbol'}), 400
+        bot_key = f"{exchange_name}:{symbol}"
         user_data = user_bots.get(username, {})
         bot = None
         if isinstance(user_data, dict):
-            bot = user_data.get('bots', {}).get(symbol)
+            bot = user_data.get('bots', {}).get(bot_key)
         if not bot:
             return jsonify({'success': False, 'message': '机器人不存在'})
         cfg = bot.get('config', {})
