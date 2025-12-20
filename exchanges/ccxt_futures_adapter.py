@@ -650,15 +650,28 @@ class CcxtBinanceFutures(BaseExchange):
 
     def stop_ws(self) -> None:
         """停止 WebSocket 监控"""
+        print(f"{self._get_log_prefix()} 🛑 停止WebSocket监控...")
+        
         with self._monitor_lock:
             self._monitor_running = False
 
-        # 尝试取消事件循环中的任务
+        # 取消事件循环中所有正在运行的任务
         if self._event_loop and self._event_loop.is_running():
-            self._event_loop.call_soon_threadsafe(self._event_loop.stop)
+            print(f"{self._get_log_prefix()} 🔧 取消所有异步任务...")
+            
+            def cancel_all_tasks():
+                for task in asyncio.all_tasks(self._event_loop):
+                    task.cancel()
+            
+            self._event_loop.call_soon_threadsafe(cancel_all_tasks)
 
         if self._monitor_thread and self._monitor_thread.is_alive():
+            print(f"{self._get_log_prefix()} 🔧 等待监控线程结束...")
             self._monitor_thread.join(timeout=5)
+            if self._monitor_thread.is_alive():
+                print(f"{self._get_log_prefix()} ⚠️ 监控线程未能在5秒内停止")
+            else:
+                print(f"{self._get_log_prefix()} ✅ 监控线程已停止")
         self._monitor_thread = None
 
         # 重置价格缓存
@@ -668,6 +681,8 @@ class CcxtBinanceFutures(BaseExchange):
         # 重置持仓缓存
         with self._positions_lock:
             self._positions_cache = []
+        
+        print(f"{self._get_log_prefix()} ✅ WebSocket监控已停止")
 
     def check_pending_orders(self, pending_orders: List[Dict]):
         """检查待处理订单的状态（用于 HTTP 轮询模式）"""
