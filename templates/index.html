@@ -1391,6 +1391,13 @@
                 const mode = (bot.config && parseInt(bot.config.simulate_trading) === 1) ? '模拟' : '实盘';
                 const cp = bot.current_price != null ? ('$' + Number(bot.current_price).toPrecision(6)) : '-';
                 
+                // 计算仓位大小（现价 × 数量）
+                let positionSize = '-';
+                if (bot.current_price != null && bot.config && bot.config.quantity) {
+                  const size = bot.current_price * bot.config.quantity;
+                  positionSize = '≈$' + size.toFixed(2);
+                }
+                
                 // 计算价差
                 let tp = '-';
                 if (bot.target_price != null) {
@@ -1521,7 +1528,7 @@
                         <span style="margin-left: 10px; color: ${statusColor}; font-weight: 600;">${bot.status_text}</span>
                       </div>
                       <div style="margin-bottom: 5px;">
-                        当前价: <strong>${cp}</strong> | 目标价: <strong>${tp}</strong>
+                        当前价: <strong>${cp}</strong> | 目标价: <strong>${tp}</strong> | 仓位: <strong>${positionSize}</strong>
                       </div>
                       <div class="bot-status-detail">
                         ${bot.running ? uptimeBadge + monitorBadge + orderMonitorBadge + threadBadge + pendingBadge : '<span class="bot-status-badge badge-secondary">已停止</span>'}
