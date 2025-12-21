@@ -1385,7 +1385,7 @@
               botsCache = {};
               return;
             }
-            botsCache = Object.fromEntries(data.bots.map(b => [b.symbol, b]));
+            botsCache = Object.fromEntries(data.bots.map(b => [`${b.config.exchange || 'binance'}:${b.symbol}`, b]));
             container.innerHTML = data.bots
               .map((bot) => {
                 const mode = (bot.config && parseInt(bot.config.simulate_trading) === 1) ? '模拟' : '实盘';
@@ -1519,7 +1519,7 @@
                 const exchangeName = (bot.config && bot.config.exchange) ? bot.config.exchange.toUpperCase() : 'BINANCE';
                 
                 return `
-                  <div class="pair-item" id="bot-${bot.symbol}">
+                  <div class="pair-item" id="bot-${bot.config.exchange || 'binance'}-${bot.symbol}">
                     <div class="pair-info">
                       <div style="display: flex; align-items: center; margin-bottom: 8px;">
                         <span class="status-indicator ${statusClass}"></span>
@@ -1553,23 +1553,23 @@
 
       function editBot(symbol, exchange) {
         const botKey = `${exchange}:${symbol}`;
-        const bot = botsCache[symbol];
+        const bot = botsCache[botKey];
         if (!bot) return;
         
         // 进入编辑模式
         isEditingBot = true;
         
-        const div = document.getElementById(`bot-${symbol}`);
+        const div = document.getElementById(`bot-${exchange}-${symbol}`);
         const cfg = bot.config || {};
         div.innerHTML = `
           <div class="edit-mode">
             <div style="flex:1; display:grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap:10px;">
-              <label>偏移% <input type="number" id="edit-offset-${symbol}" value="${cfg.offset_percent}" step="0.01"></label>
-              <label>卖加价% <input type="number" id="edit-selloffset-${symbol}" value="${cfg.sell_offset_percent || 0.5}" step="0.01"></label>
-              <label>数量 <input type="number" id="edit-qty-${symbol}" value="${cfg.quantity}" step="0.0001"></label>
-              <label>间隔(秒) <input type="number" id="edit-interval-${symbol}" value="${cfg.interval}" min="1"></label>
+              <label>偏移% <input type="number" id="edit-offset-${exchange}-${symbol}" value="${cfg.offset_percent}" step="0.01"></label>
+              <label>卖加价% <input type="number" id="edit-selloffset-${exchange}-${symbol}" value="${cfg.sell_offset_percent || 0.5}" step="0.01"></label>
+              <label>数量 <input type="number" id="edit-qty-${exchange}-${symbol}" value="${cfg.quantity}" step="0.0001"></label>
+              <label>间隔(秒) <input type="number" id="edit-interval-${exchange}-${symbol}" value="${cfg.interval}" min="1"></label>
               <label>模式
-                <select id="edit-sim-${symbol}">
+                <select id="edit-sim-${exchange}-${symbol}">
                   <option value="1" ${parseInt(cfg.simulate_trading)===1?'selected':''}>模拟</option>
                   <option value="0" ${parseInt(cfg.simulate_trading)!==1?'selected':''}>实盘</option>
                 </select>
@@ -1587,11 +1587,11 @@
         const payload = {
           symbol,
           exchange,
-          offset_percent: parseFloat(document.getElementById(`edit-offset-${symbol}`).value),
-          sell_offset_percent: parseFloat(document.getElementById(`edit-selloffset-${symbol}`).value),
-          quantity: parseFloat(document.getElementById(`edit-qty-${symbol}`).value),
-          interval: parseInt(document.getElementById(`edit-interval-${symbol}`).value),
-          simulate_trading: parseInt(document.getElementById(`edit-sim-${symbol}`).value)
+          offset_percent: parseFloat(document.getElementById(`edit-offset-${exchange}-${symbol}`).value),
+          sell_offset_percent: parseFloat(document.getElementById(`edit-selloffset-${exchange}-${symbol}`).value),
+          quantity: parseFloat(document.getElementById(`edit-qty-${exchange}-${symbol}`).value),
+          interval: parseInt(document.getElementById(`edit-interval-${exchange}-${symbol}`).value),
+          simulate_trading: parseInt(document.getElementById(`edit-sim-${exchange}-${symbol}`).value)
         };
         fetch("/api/bot/update", {
           method: "POST",
