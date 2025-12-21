@@ -611,24 +611,16 @@ def trading_loop(username, bot_key):
                         sell_offset_percent = config.get('sell_offset_percent', 0.5)
                         for order in open_sell_orders:
                             sell_price = float(order['price'])                            
-                            # 方案1: 假设卖价来自 raw_sell_price
-                            # sell_price ≈ buy_price * (1 + sell_offset/100)
-                            # buy_price ≈ sell_price / (1 + sell_offset/100)
-                            buy_price_from_raw = sell_price / (1 + sell_offset_percent / 100.0)
                             
-                            # 方案2: 假设卖价来自 min_price (最低保护价)
-                            # min_price ≈ buy_price * 1.002
-                            # buy_price ≈ sell_price / 1.002
-                            buy_price_from_min = sell_price / 1.002
-                            
-                            # 取较小值作为估算买入价 (更保守,确保不会低估)
-                            estimated_buy_price = min(buy_price_from_raw, buy_price_from_min)
-                            
-                            # 按 tick_size 向下对齐
-                            if tick_size and tick_size > 0:
-                                estimated_buy_price = math.floor(estimated_buy_price / tick_size) * tick_size
-                            
-                            estimated_buy_price = round(estimated_buy_price, price_decimals)
+                            # 使用交易所适配器计算估算的买入价格
+                            # 适配器内部处理了做多/做空的逻辑差异
+                            estimated_buy_price = exchange.calculate_estimated_buy_price(
+                                sell_price, 
+                                sell_offset_percent, 
+                                tick_size, 
+                                price_decimals,
+                                order=order
+                            )
                             
                             bot_data.setdefault('pending_sells', []).append({
                                 'order_id': str(order['orderId']),
@@ -636,7 +628,7 @@ def trading_loop(username, bot_key):
                                 'quantity': float(order['origQty']),
                                 'buy_price': estimated_buy_price  # 反推的买入价
                             })
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复 {order['orderId']}，buy_price={estimated_buy_price}")
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复 {order['orderId']}，estimated_buy_price={estimated_buy_price}")
                         print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复 {len(open_sell_orders)} 笔卖单")
                     
                     pending_buys_recovered = True

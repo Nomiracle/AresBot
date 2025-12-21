@@ -33,10 +33,42 @@ class BaseExchange(ABC):
         """获取交易对当前价格（内部使用）"""
         pass
     
-    @abstractmethod
-    def get_open_orders(self) -> List[Dict]:
-        """获取未完成订单"""
-        pass
+    def calculate_estimated_buy_price(self, sell_price: float, sell_offset_percent: float, tick_size: float, price_decimals: int, order: Optional[Dict] = None) -> float:
+        """根据卖单价格反推估算的买入价格（用于恢复程序状态）
+        
+        默认实现（做多逻辑）：
+        sell_price = buy_price * (1 + sell_offset)
+        buy_price = sell_price / (1 + sell_offset)
+        
+        Args:
+            sell_price: 当前挂出的卖单价格
+            sell_offset_percent: 配置的卖出加价百分比
+            tick_size: 价格最小跳动单位
+            price_decimals: 价格小数位数
+            order: 原始订单对象（可选），用于检查是否为虚拟订单等
+            
+        Returns:
+            estimated_buy_price: 估算的原始买入价格
+        """
+        # 默认实现不使用 order 参数
+        
+        # 方案1: 假设卖价来自 raw_sell_price
+        # sell_price ≈ buy_price * (1 + sell_offset/100)
+        buy_price_from_raw = sell_price / (1 + sell_offset_percent / 100.0)
+        
+        # 方案2: 假设卖价来自 min_price (最低保护价, 默认按 2倍手续费保护)
+        # min_price ≈ buy_price * (1 + 2*fee)
+        # fee = 0.001 -> 1.002
+        buy_price_from_min = sell_price / (1 + 2 * self.get_fee_rate())
+        
+        # 取较小值作为估算买入价 (更保守,确保不会低估)
+        estimated_buy_price = min(buy_price_from_raw, buy_price_from_min)
+        
+        # 按 tick_size 向下对齐
+        if tick_size and tick_size > 0:
+            estimated_buy_price = math.floor(estimated_buy_price / tick_size) * tick_size
+        
+        return round(estimated_buy_price, price_decimals)
     
     @abstractmethod
     def get_order(self, order_id: str) -> Dict:

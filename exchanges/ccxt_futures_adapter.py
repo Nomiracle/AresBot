@@ -391,6 +391,43 @@ class CcxtBinanceFutures(BaseExchange):
                 print(f"{self._get_log_prefix()} ❌ editOrderWs 失败 (order_id={cancel_order_id}): {e}")
                 raise
 
+    def calculate_estimated_buy_price(self, sell_price: float, sell_offset_percent: float, tick_size: float, price_decimals: int, order: Optional[Dict] = None) -> float:
+        """根据卖单价格反推估算的买入价格
+        
+        对于合约虚拟订单（持仓映射的平仓单），直接返回入场价格（entry_price）
+        """
+        # 1. 如果是虚拟订单，直接从 order info 中获取入场价
+        if order:
+            order_id = str(order.get('orderId') or order.get('id', ''))
+            if self._is_virtual_order(order_id):
+                # 尝试从 info 中获取 entry_price
+                info = order.get('info', {})
+                entry_price = info.get('entry_price')
+                
+                # 如果 info 中没有，尝试直接从 price 字段获取（虚拟订单的 price 就是 entry_price）
+                if not entry_price and order.get('price'):
+                    entry_price = float(order['price'])
+                
+                if entry_price:
+                    print(f"{self._get_log_prefix()} 📍 虚拟订单 {order_id}，直接使用入场价作为估算买入价: {entry_price}")
+                    return float(entry_price)
+
+        # 2. 如果不是虚拟订单：优先从当前持仓获取开仓价（entryPrice）
+        try:
+            positions = self.get_position()
+            if positions:
+                pos = positions[0]
+                entry_price = float(pos.get('entryPrice', 0) or pos.get('info', {}).get('entryPrice', 0))
+                if entry_price:
+                    entry_price = round(float(entry_price), price_decimals)
+                    print(f"{self._get_log_prefix()} 📍 非虚拟订单，使用当前持仓开仓价作为估算买入价: {entry_price}")
+                    return float(entry_price)
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ⚠️ 非虚拟订单查询持仓开仓价失败，回退默认反推逻辑: {e}")
+
+        # 3. 回退：调用父类的默认反推逻辑
+        return super().calculate_estimated_buy_price(sell_price, sell_offset_percent, tick_size, price_decimals, order)
+
     def _get_price_precision(self, symbol_info: Dict) -> Tuple[float, int]:
         """从合约交易对信息中提取价格精度（内部使用）"""
         prec = (symbol_info or {}).get("precision", {})
