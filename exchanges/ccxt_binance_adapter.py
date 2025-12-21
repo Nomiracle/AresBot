@@ -357,28 +357,8 @@ class CcxtBinanceSpot(BaseExchange):
                     },
                 }
             except Exception as e:
-                print(f"{self._get_log_prefix()} ⚠️ editOrderWs 失败，回退到取消+新建: {e}")
-        
-        # 回退：先取消旧订单，再创建新订单
-        try:
-            self.cancel_order(cancel_order_id)
-            print(f"{self._get_log_prefix()} ✅ 旧订单已取消")
-        except Exception as e:
-            # 订单可能已成交或已取消，忽略
-            print(f"{self._get_log_prefix()} ⚠️ 取消旧订单失败（可能已成交）: {e}")
-
-        # 创建新订单
-        if str(side).upper() == "BUY":
-            new_order = self.order_limit_buy(quantity=quantity, price=price, **kwargs)
-        else:
-            new_order = self.order_limit_sell(quantity=quantity, price=price, **kwargs)
-
-        print(f"{self._get_log_prefix()} ✅ 新订单已创建: {new_order.get('orderId')}")
-        return {
-            "cancelResult": "SUCCESS",
-            "newOrderResult": "SUCCESS",
-            "newOrderResponse": new_order,
-        }
+                print(f"{self._get_log_prefix()} ❌ editOrderWs 失败 (order_id={cancel_order_id}): {e}")
+                raise
 
     def _get_price_precision(self, symbol_info: Dict) -> Tuple[float, int]:
         """从现货交易对信息中提取价格精度（内部使用）"""
