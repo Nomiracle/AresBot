@@ -163,3 +163,57 @@ class BaseExchange(ABC):
         target_price = round(target_price, price_decimals)
         
         return target_price
+
+    @staticmethod
+    def calculate_atr(ohlcv: List, period: int = 14) -> float:
+        """
+        计算 ATR (Average True Range)
+        
+        Args:
+            ohlcv: K线数据列表，每条 [timestamp, open, high, low, close, volume]
+            period: ATR 周期（默认14）
+        
+        Returns:
+            float: ATR 值
+        """
+        if len(ohlcv) < period + 1:
+            raise ValueError(f"K线数据不足，需要至少 {period + 1} 条")
+        
+        true_ranges = []
+        for i in range(1, len(ohlcv)):
+            high = ohlcv[i][2]
+            low = ohlcv[i][3]
+            prev_close = ohlcv[i-1][4]
+            
+            tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+            true_ranges.append(tr)
+        
+        return sum(true_ranges[-period:]) / period
+
+    @staticmethod
+    def get_atr_recommendation(atr: float, current_price: float) -> Dict:
+        """
+        根据 ATR 计算推荐参数
+        
+        Args:
+            atr: ATR 绝对值
+            current_price: 当前价格
+        
+        Returns:
+            dict: 推荐参数
+        """
+        atr_percent = (atr / current_price) * 100
+        
+        # 推荐参数计算
+        # offset: ATR% 的 15%，作为买单偏移（负值）
+        # sell_offset: ATR% 的 40%，最低 0.2%（覆盖手续费）
+        suggested_offset = -round(atr_percent * 0.15, 3)
+        suggested_sell_offset = max(0.2, round(atr_percent * 0.4, 3))
+        
+        return {
+            'atr': round(atr, 8),
+            'atr_percent': round(atr_percent, 4),
+            'current_price': current_price,
+            'suggested_offset': suggested_offset,
+            'suggested_sell_offset': suggested_sell_offset
+        }

@@ -450,11 +450,54 @@
       </div>
 
       <div id="trading-tab" class="tab-content active">
-        <div class="info-box">
-          <h3>当前市场信息</h3>
-          <div>交易对: <strong id="currentSymbol">-</strong></div>
-          <div>当前价格: <span class="price" id="currentPrice">-</span></div>
-          <div>计划挂单价: <strong id="targetPrice">-</strong></div>
+        <div class="info-box" id="marketInfoBox">
+          <h3>📊 当前市场信息 <span id="atrLoading" style="font-size: 12px; color: #666; font-weight: normal;">加载中...</span></h3>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 10px;">
+            <div style="background: #f8f9fa; padding: 10px; border-radius: 6px;">
+              <div style="color: #666; font-size: 12px;">交易对</div>
+              <strong id="currentSymbol" style="font-size: 16px; color: #333;">-</strong>
+            </div>
+            <div style="background: #f8f9fa; padding: 10px; border-radius: 6px;">
+              <div style="color: #666; font-size: 12px;">当前价格</div>
+              <span class="price" id="currentPrice" style="font-size: 16px; font-weight: 600; color: #28a745;">-</span>
+            </div>
+            <div style="background: #f8f9fa; padding: 10px; border-radius: 6px;">
+              <div style="color: #666; font-size: 12px;">计划挂单价</div>
+              <strong id="targetPrice" style="font-size: 16px; color: #007bff;">-</strong>
+            </div>
+            <div style="background: #f8f9fa; padding: 10px; border-radius: 6px;">
+              <div style="color: #666; font-size: 12px;">1h ATR</div>
+              <strong id="atrValue" style="font-size: 16px; color: #6f42c1;">-</strong>
+            </div>
+          </div>
+          <div id="atrContent" style="display: none;">
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 10px; background: linear-gradient(135deg, #e8f4fd 0%, #f0f7ff 100%); border-radius: 6px; border-left: 3px solid #007bff;">
+              <div>
+                <span style="color: #666; font-size: 12px;">建议偏移</span>
+                <div style="font-weight: 600; color: #dc3545;" id="atrOffset">-</div>
+                <button class="btn btn-sm" style="padding: 2px 8px; font-size: 11px; margin-top: 4px;" onclick="applyAtrOffset()">应用</button>
+              </div>
+              <div>
+                <span style="color: #666; font-size: 12px;">建议卖加价</span>
+                <div style="font-weight: 600; color: #28a745;" id="atrSellOffset">-</div>
+                <button class="btn btn-sm" style="padding: 2px 8px; font-size: 11px; margin-top: 4px;" onclick="applyAtrSellOffset()">应用</button>
+              </div>
+            </div>
+            <details style="font-size: 12px; color: #666; margin-top: 8px;">
+              <summary style="cursor: pointer; color: #007bff;">💡 ATR 推荐原理</summary>
+              <div style="margin-top: 8px; padding: 10px; background: #f8f9fa; border-radius: 6px; line-height: 1.6;">
+                <p><strong>ATR (Average True Range)</strong> 是衡量价格波动幅度的技术指标。</p>
+                <ul style="margin: 8px 0 8px 20px;">
+                  <li><strong>偏移 = -ATR% × 0.15</strong>：买单低于现价，在 ATR 范围内有较高成交概率</li>
+                  <li><strong>卖加价 = ATR% × 0.4</strong>：卖单高于买价，最低 0.2% 覆盖双向手续费</li>
+                </ul>
+                <p style="color: #856404; background: #fff3cd; padding: 6px 10px; border-radius: 4px; margin: 0;">
+                  ⚠️ ATR 是基于历史数据的统计参考，不是预测。
+                </p>
+              </div>
+            </details>
+          </div>
+          <div id="atrError" style="display: none; color: #dc3545; font-size: 13px; margin-top: 8px;"></div>
         </div>
 
         <h3>
@@ -483,7 +526,7 @@
           </div>
           <div class="input-group">
             <label>交易对</label>
-            <select id="symbol">
+            <select id="symbol" onchange="onSymbolChange()">
               <option value="BTCUSDT">BTC/USDT</option>
               <option value="ETHUSDT">ETH/USDT</option>
               <option value="BNBUSDT">BNB/USDT</option>
@@ -893,6 +936,106 @@
         loadTradingPairs();
         // 更新密钥选择器
         updateCredentialSelect();
+        // 清除 ATR 缓存并重新获取（交易所切换后需要重新计算）
+        const symbol = document.getElementById("symbol").value;
+        if (symbol) {
+          const cacheKey = `${exchange}:${symbol}`;
+          delete atrCache[cacheKey];
+        }
+        fetchAtrRecommendation();
+      }
+
+      // ATR 推荐参数缓存
+      let atrCache = {};
+
+      // 获取 ATR 推荐参数
+      function fetchAtrRecommendation() {
+        const exchange = document.getElementById("exchange").value;
+        const symbol = document.getElementById("symbol").value;
+        
+        if (!symbol) return;
+        
+        const cacheKey = `${exchange}:${symbol}`;
+        const loading = document.getElementById("atrLoading");
+        const content = document.getElementById("atrContent");
+        const error = document.getElementById("atrError");
+        
+        // 更新交易对显示（使用当前选择的交易所和交易对）
+        const exchangeDisplay = exchangeDisplayNames[exchange] || exchange.toUpperCase();
+        document.getElementById("currentSymbol").textContent = `${exchangeDisplay}:${symbol}`;
+        
+        // 显示加载状态
+        loading.style.display = "inline";
+        loading.textContent = "加载中...";
+        content.style.display = "none";
+        error.style.display = "none";
+        
+        // 检查缓存（5分钟有效）
+        if (atrCache[cacheKey] && Date.now() - atrCache[cacheKey].timestamp < 300000) {
+          displayAtrData(atrCache[cacheKey].data);
+          return;
+        }
+        
+        fetch(`/api/atr?symbol=${symbol}&exchange=${exchange}&timeframe=1h`)
+          .then(r => r.json())
+          .then(data => {
+            loading.style.display = "none";
+            if (data.success) {
+              atrCache[cacheKey] = { data, timestamp: Date.now() };
+              displayAtrData(data);
+            } else {
+              error.textContent = "❌ " + (data.message || "获取失败");
+              error.style.display = "block";
+            }
+          })
+          .catch(e => {
+            loading.style.display = "none";
+            error.textContent = "❌ 网络错误: " + e.message;
+            error.style.display = "block";
+          });
+      }
+
+      // 显示 ATR 数据
+      function displayAtrData(data) {
+        document.getElementById("atrLoading").style.display = "none";
+        document.getElementById("atrContent").style.display = "block";
+        
+        // 更新当前价格显示
+        document.getElementById("currentPrice").textContent = "$" + Number(data.current_price).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 6});
+        document.getElementById("atrValue").textContent = data.atr_percent.toFixed(4) + "%";
+        document.getElementById("atrOffset").textContent = data.suggested_offset + "%";
+        document.getElementById("atrSellOffset").textContent = data.suggested_sell_offset + "%";
+        
+        // 计算并显示计划挂单价（当前价格 × (1 + offset/100)）
+        const offsetPercent = parseFloat(document.getElementById("offsetPercent").value) || data.suggested_offset;
+        const targetPrice = data.current_price * (1 + offsetPercent / 100);
+        document.getElementById("targetPrice").textContent = "$" + targetPrice.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 6});
+        
+        // 保存推荐值供应用按钮使用
+        window.atrSuggestedOffset = data.suggested_offset;
+        window.atrSuggestedSellOffset = data.suggested_sell_offset;
+        window.atrCurrentPrice = data.current_price;
+      }
+
+      // 应用 ATR 推荐的偏移值
+      function applyAtrOffset() {
+        if (window.atrSuggestedOffset !== undefined) {
+          document.getElementById("offsetPercent").value = window.atrSuggestedOffset;
+          showToast("已应用推荐偏移值: " + window.atrSuggestedOffset + "%", "success");
+        }
+      }
+
+      // 应用 ATR 推荐的卖加价值
+      function applyAtrSellOffset() {
+        if (window.atrSuggestedSellOffset !== undefined) {
+          document.getElementById("sellOffsetPercent").value = window.atrSuggestedSellOffset;
+          showToast("已应用推荐卖加价: " + window.atrSuggestedSellOffset + "%", "success");
+        }
+      }
+
+      // 交易对切换时获取 ATR
+      function onSymbolChange() {
+        fetchAtrRecommendation();
       }
 
       // 更新密钥选择器
@@ -1183,6 +1326,8 @@
       // 页面加载时初始化
       loadExchanges().then(() => {
         updateConfigSelect(true); // 初始化配置下拉框并自动加载配置
+        // 初始加载 ATR 推荐参数
+        setTimeout(fetchAtrRecommendation, 500);
       });
       setInterval(updateStatus, 2000);
       updateStatus();

@@ -846,6 +846,71 @@ def register_routes(app):
         else:
             return jsonify({'success': False, 'message': '更新失败或别名已存在'})
 
+    @app.route('/api/atr')
+    def api_atr():
+        """获取交易对的 ATR 数据和推荐参数"""
+        import ccxt
+        from exchanges.base import BaseExchange
+        
+        symbol = request.args.get('symbol', 'BTCUSDT')
+        exchange_id = request.args.get('exchange', 'binance').lower()
+        timeframe = request.args.get('timeframe', '1h')
+        
+        try:
+            # 转换交易对格式 (BTCUSDT -> BTC/USDT)
+            if '/' not in symbol and len(symbol) > 4:
+                if symbol.endswith('USDT'):
+                    symbol = symbol[:-4] + '/USDT'
+                elif symbol.endswith('USD'):
+                    symbol = symbol[:-3] + '/USD'
+            
+            # 映射交易所名称到 ccxt 交易所 ID
+            # 需要包含 ExchangeFactory.SUPPORTED_EXCHANGES 中所有交易所
+            ccxt_exchange_map = {
+                # Binance 现货
+                'binance': 'binance',
+                'native_binance_spot': 'binance',
+                'ccxt_binance_spot': 'binance',
+                'ccxt_binance': 'binance',
+                # Binance 合约
+                'binance_futures': 'binanceusdm',
+                'native_binance_futures': 'binanceusdm',
+                'ccxt_binance_futures': 'binanceusdm',
+                'ccxt_binance_futures_short': 'binanceusdm',
+                'ccxt_futures': 'binanceusdm',
+                # Backpack
+                'backpack': 'backpack',
+                'native_backpack_spot': 'backpack',
+                'bpx': 'backpack',
+            }
+            ccxt_id = ccxt_exchange_map.get(exchange_id, exchange_id)
+            
+            # 创建 ccxt 交易所实例
+            exchange_class = getattr(ccxt, ccxt_id)
+            exchange = exchange_class({'enableRateLimit': True})
+            
+            # 获取 K 线数据
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=64)
+            
+            if not ohlcv or len(ohlcv) < 15:
+                return jsonify({'success': False, 'message': 'K线数据不足'})
+            
+            # 计算 ATR
+            current_price = ohlcv[-1][4]
+            atr = BaseExchange.calculate_atr(ohlcv, period=14)
+            recommendation = BaseExchange.get_atr_recommendation(atr, current_price)
+            
+            return jsonify({
+                'success': True,
+                'symbol': symbol,
+                'exchange': exchange_id,
+                'timeframe': timeframe,
+                **recommendation
+            })
+            
+        except Exception as e:
+            return jsonify({'success': False, 'message': str(e)})
+
     @app.route('/api/exchanges')
     def api_exchanges():
         """获取支持的交易所列表"""
