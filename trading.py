@@ -125,7 +125,9 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
     try:
         sell_order = exchange.order_limit_sell(
             quantity=aligned_qty,
-            price=f"{sell_price}"
+            price=f"{sell_price}",
+            current_price=bot_data.get('current_price'),
+            entry_price=buy_price
         )
         sell_order_id = str(sell_order.get('orderId') or sell_order.get('id'))
         print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单已挂 {sell_order_id}: 价格={sell_price}")
@@ -281,7 +283,8 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
                 quantity=aligned_quantity,
                 price=f"{target_price}",
                 cancel_order_id=str(order['orderId']),
-                timeInForce='GTC'
+                timeInForce='GTC',
+                current_price=bot_data.get('current_price')
             )
             
             # 提取新订单ID
@@ -374,7 +377,9 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
                 quantity=aligned_qty,
                 price=f"{target_sell_price}",
                 cancel_order_id=sell_order_id,
-                timeInForce='GTC'
+                timeInForce='GTC',
+                current_price=bot_data.get('current_price'),
+                entry_price=buy_price
             )
             
             # 提取新订单ID
@@ -698,7 +703,8 @@ def trading_loop(username, bot_key):
                     try:
                         order = exchange.order_limit_buy(
                             quantity=aligned_quantity,
-                            price=f"{target_price}"
+                            price=f"{target_price}",
+                            current_price=current_price
                         )
                         order_id = str(order.get('orderId') or order.get('id'))
                         print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 新买单 {order_id}: 价格={target_price}, 数量={aligned_quantity}")

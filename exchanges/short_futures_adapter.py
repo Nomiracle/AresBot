@@ -7,6 +7,7 @@ Short Futures Adapter - 做空适配器
 
 使用方式与 CcxtFuturesAdapter 完全相同，只是交易方向相反。
 """
+import asyncio
 import math
 from datetime import datetime
 from typing import Dict, List, Callable
@@ -29,22 +30,215 @@ class CcxtBinanceFuturesShort(CcxtBinanceFutures):
     # ====================== 核心：反转买卖方向 ======================
     
     def order_limit_buy(self, quantity: float, price: str, **kwargs) -> Dict:
-        """限价买单 → 实际执行卖出开仓（做空）"""
-        print(f"{self._get_log_prefix()} 📤 做空开仓: 数量={quantity}, 价格={price}")
-        # 调用父类的 sell 方法
-        result = super().order_limit_sell(quantity=quantity, price=price, **kwargs)
-        print(f"{self._get_log_prefix()} ✅ 做空开仓成功: 订单ID={result.get('orderId')}")
-        return result
-    
+        """合约限价买单（做空开仓）
+        
+        Args:
+            quantity: 下单数量
+            price: 目标价格
+            **kwargs: 
+                current_price: 当前价格（可选，用于价格方向检查）
+                timeInForce: 订单有效期
+        
+        方向检查：做空开仓 = 卖出，目标价应该 >= 当前价（挂高价等待反弹）
+        """
+        try:
+            target_price = float(price)
+            
+            # 价格方向检查（如果传入了 current_price）
+            current_price = kwargs.get('current_price')
+            if current_price is not None:
+                try:
+                    current_price = float(current_price)
+                    # 做空开仓：卖出应该挂高价（>= 当前价），等待价格上涨到目标价时成交
+                    if target_price < current_price: 
+                        raise ValueError(
+                            f"做空开仓价格方向错误: 目标价={target_price:.6f} 明显低于当前价={current_price:.6f}，"
+                            f"做空开仓应该挂高价等待反弹（目标价 >= 当前价）"
+                        )
+                except ValueError:
+                    raise  # 重新抛出价格方向错误
+                except Exception as check_e:
+                    print(f"{self._get_log_prefix()} ⚠️ 价格检查失败（继续下单）: {check_e}")
+            
+            o = self.client.create_limit_sell_order(
+                self._market_symbol,
+                quantity,
+                target_price,
+                params={"timeInForce": kwargs.get("timeInForce", "GTC")}
+            )
+            return {"orderId": str(o.get("id")), "id": str(o.get("id")), **(o or {})}
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ❌ 下买单失败: {e}")
+            raise
+
     def order_limit_sell(self, quantity: float, price: str, **kwargs) -> Dict:
-        """限价卖单 → 实际执行买入平仓"""
-        print(f"{self._get_log_prefix()} 📥 做空平仓: 数量={quantity}, 价格={price}")
-        # 调用父类的 buy 方法
-        result = super().order_limit_buy(quantity=quantity, price=price, **kwargs)
-        print(f"{self._get_log_prefix()} ✅ 做空平仓成功: 订单ID={result.get('orderId')}")
-        return result
+        """合约限价卖单（做空平仓）
+        
+        Args:
+            quantity: 下单数量
+            price: 目标价格
+            **kwargs:
+                current_price: 当前价格（可选，用于价格方向检查）
+                entry_price: 开仓价格（可选，用于盈利检查）
+                timeInForce: 订单有效期
+        
+        方向检查：
+        1. 做空平仓 = 买入，目标价应该 <= 当前价（挂低价等待回落）
+        2. 平仓价应该 < 开仓价（确保盈利）
+        """
+        try:
+            target_price = float(price)
+            
+            # 价格方向检查（如果传入了 current_price 或 entry_price）
+            current_price = kwargs.get('current_price')
+            entry_price = kwargs.get('entry_price')
+            
+            if current_price is not None or entry_price is not None:
+                try:
+                    # 检查1：做空平仓应该挂低价（<= 当前价）
+                    if current_price is not None:
+                        current_price = float(current_price)
+                        if target_price > current_price:
+                            raise ValueError(
+                                f"做空平仓价格方向错误: 目标价={target_price:.6f} 明显高于当前价={current_price:.6f}，"
+                                f"做空平仓应该挂低价等待回落（目标价 <= 当前价）"
+                            )
+                    
+                    # 检查2：平仓价应该 < 开仓价（确保盈利）
+                    if entry_price is not None:
+                        entry_price = float(entry_price)
+                        if target_price >= entry_price:  # 0.1%容差（扣除手续费）
+                            raise ValueError(
+                                f"做空平仓价格风险: 平仓价={target_price:.6f} >= 开仓价={entry_price:.6f}，"
+                                f"做空盈利需要平仓价 < 开仓价（高卖低买）"
+                            )
+                except ValueError:
+                    raise  # 重新抛出价格方向错误
+                except Exception as check_e:
+                    print(f"{self._get_log_prefix()} ⚠️ 价格检查失败（继续下单）: {check_e}")
+            
+            o = self.client.create_limit_buy_order(
+                self._market_symbol,
+                quantity,
+                target_price,
+                params={"timeInForce": kwargs.get("timeInForce", "GTC")}
+            )
+            return {"orderId": str(o.get("id")), "id": str(o.get("id")), **(o or {})}
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ❌ 下卖单失败: {e}")
+            raise
+
+
+    def cancel_replace_order(
+        self,
+        side: str,
+        order_type: str,
+        quantity: float,
+        price: str,
+        cancel_order_id: str,
+        **kwargs,
+    ) -> Dict:
+        """取消并替换订单（优先使用 editOrderWs 原子操作，失败则回退到取消+新建）"""
+        
+        # 虚拟订单（持仓映射）：跳过取消，直接下新单
+        if self._is_virtual_order(cancel_order_id):
+            print(f"{self._get_log_prefix()} 📍 虚拟订单 {cancel_order_id}，直接下新单")
+            
+            # 虚拟订单价格方向检查（如果传入了 current_price）
+            current_price = kwargs.get('current_price')
+            if current_price is not None:
+                try:
+                    target_price = float(price)
+                    current_price = float(current_price)
+                    
+                    if str(side).upper() == "BUY":
+                        # BUY = 做空开仓，应该挂高价
+                        if target_price < current_price:
+                            raise ValueError(
+                                f"虚拟订单开仓价格错误: 目标价={target_price:.6f} < 当前价={current_price:.6f}，"
+                                f"做空开仓应该挂高价（>= 当前价）"
+                            )
+                    else:
+                        # SELL = 做空平仓，应该挂低价
+                        if target_price > current_price:
+                            raise ValueError(
+                                f"虚拟订单平仓价格错误: 目标价={target_price:.6f} > 当前价={current_price:.6f}，"
+                                f"做空平仓应该挂低价（<= 当前价）"
+                            )
+                except ValueError:
+                    raise  # 重新抛出价格方向错误
+                except Exception as check_e:
+                    print(f"{self._get_log_prefix()} ⚠️ 虚拟订单价格检查失败（继续下单）: {check_e}")
+            
+            if str(side).upper() == "BUY":
+                new_order = self.order_limit_buy(quantity=quantity, price=price, **kwargs)
+            else:
+                new_order = self.order_limit_sell(quantity=quantity, price=price, **kwargs)
+            return {
+                "cancelResult": "SUCCESS",
+                "newOrderResult": "SUCCESS",
+                "newOrderResponse": new_order,
+            }
+        
+        # 尝试使用 editOrderWs（WebSocket 原子改单）
+        if self._ws_client and self._event_loop and self._event_loop.is_running():
+            try:
+
+                original_side = side
+                if original_side == "BUY":
+                    side = "sell"  # 小写，父类会转大写
+                elif original_side == "SELL":
+                    side = "buy"
+
+                future = asyncio.run_coroutine_threadsafe(
+                    self._ws_client.edit_order_ws(
+                        id=cancel_order_id,
+                        symbol=self._market_symbol,
+                        type='limit',
+                        side=side.lower(),
+                        amount=quantity,
+                        price=float(price)
+                    ),
+                    self._event_loop
+                )
+                result = future.result(timeout=10)  # 10秒超时
+                new_order_id = str(result.get('id') or result.get('orderId'))
+                print(f"{self._get_log_prefix()} ✅ editOrderWs 改单成功: {cancel_order_id} → {new_order_id}")
+                return {
+                    "cancelResult": "SUCCESS",
+                    "newOrderResult": "SUCCESS",
+                    "newOrderResponse": {
+                        "orderId": new_order_id,
+                        "id": new_order_id,
+                        **result
+                    },
+                }
+            except Exception as e:
+                print(f"{self._get_log_prefix()} ❌ editOrderWs 失败 (order_id={cancel_order_id}): {e}")
+                raise
     
     # ====================== 订单相关：反转 side ======================
+    
+    def get_open_orders(self) -> List[Dict]:
+        """获取未完成订单（反转 side，使 trading.py 逻辑兼容做空）
+        
+        做空策略中：
+        - 实际 SELL 订单（开仓）→ 返回为 BUY（对应 trading.py 的 open_buy_orders）
+        - 实际 BUY 订单（平仓）→ 返回为 SELL（对应 trading.py 的 open_sell_orders）
+        - 虚拟订单也需要反转：父类生成的是做多语义，需要转换为做空语义
+          空单持仓 → 父类生成 BUY → 反转为 SELL（平仓单）
+        """
+        orders = super().get_open_orders()
+        
+        # 反转每个订单的 side（包括虚拟订单）
+        for order in orders:
+            original_side = str(order.get('side', '')).upper()
+            if original_side == 'BUY':
+                order['side'] = 'SELL'
+            elif original_side == 'SELL':
+                order['side'] = 'BUY'
+        
+        return orders
     
     def _process_order_event(self, o: Dict, on_order_update):
         """处理订单事件（反转 side，使 trading.py 逻辑兼容做空）
@@ -62,64 +256,6 @@ class CcxtBinanceFuturesShort(CcxtBinanceFutures):
         
         super()._process_order_event(o, on_order_update)
     
-    def get_open_orders(self) -> List[Dict]:
-        """获取未完成订单（反转 side，使 trading.py 逻辑兼容做空）
-        
-        做空策略中：
-        - 实际 SELL 订单（开仓）→ 返回为 BUY（对应 trading.py 的 open_buy_orders）
-        - 实际 BUY 订单（平仓）→ 返回为 SELL（对应 trading.py 的 open_sell_orders）
-        """
-        orders = super().get_open_orders()
-        
-        # 反转每个订单的 side
-        for order in orders:
-            original_side = str(order.get('side', '')).upper()
-            if original_side == 'BUY':
-                order['side'] = 'SELL'
-            elif original_side == 'SELL':
-                order['side'] = 'BUY'
-        
-        return orders
-    
-    def cancel_replace_order(
-        self,
-        side: str,
-        order_type: str,
-        quantity: float,
-        price: str,
-        cancel_order_id: str,
-        **kwargs,
-    ) -> Dict:
-        """取消并替换订单（反转 side 后调用父类）
-        
-        trading.py 传入的 side 是逻辑 side（已被 get_open_orders 反转），
-        需要再次反转回实际 side 给父类处理。
-        """
-        # 反转 side
-        actual_side = side.upper()
-        if actual_side == "BUY":
-            actual_side = "SELL"
-        elif actual_side == "SELL":
-            actual_side = "BUY"
-        
-        return super().cancel_replace_order(
-            side=actual_side,
-            order_type=order_type,
-            quantity=quantity,
-            price=price,
-            cancel_order_id=cancel_order_id,
-            **kwargs
-        )
-    
-    def get_order(self, order_id: str) -> Dict:
-        """查询订单状态（反转 side）"""
-        order = super().get_order(order_id)
-        original_side = str(order.get('side', '')).upper()
-        if original_side == 'BUY':
-            order['side'] = 'SELL'
-        elif original_side == 'SELL':
-            order['side'] = 'BUY'
-        return order
     
     # _position_to_virtual_orders 不需要重写
     # 父类生成的虚拟订单 side 已经正确（空单→BUY平仓，多单→SELL平仓）
