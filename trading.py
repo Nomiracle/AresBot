@@ -67,12 +67,15 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
         bot_data.get('processed_filled_orders', set()).discard(order_id)
         return
     
+    current_price = bot_data.get('current_price')
+
     # 计算卖出价格
     sell_price = exchange.calculate_sell_price(
         buy_price, 
         config.get('sell_offset_percent', 0.5),
         tick_size, 
-        price_decimals
+        price_decimals,
+        current_price=current_price
     )
     
     # 获取成交数量
@@ -126,7 +129,7 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
         sell_order = exchange.order_limit_sell(
             quantity=aligned_qty,
             price=f"{sell_price}",
-            current_price=bot_data.get('current_price'),
+            current_price=current_price,
             entry_price=buy_price
         )
         sell_order_id = str(sell_order.get('orderId') or sell_order.get('id'))

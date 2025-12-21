@@ -716,29 +716,6 @@ class CcxtBinanceSpot(BaseExchange):
         print(f"{self._get_log_prefix()} 💰 {symbol} 现货费率: maker={maker_fee*100}%, taker={taker_fee*100}%")
         return fee_data
 
-    def calculate_sell_price(self, buy_price, sell_offset_percent, tick_size, price_decimals, current_price=None):
-        """计算卖出价格（基于实际账户费率）"""
-        print(f"{self._get_log_prefix()} 🔍 计算卖出价格: buy_price={buy_price}, offset={sell_offset_percent}%, tick={tick_size}, decimals={price_decimals}, current={current_price}")
-        
-        sell_offset = sell_offset_percent / 100.0
-        raw_sell_price = (current_price or buy_price) * (1 + sell_offset)
-
-        fee_data = self._get_trade_fee(self.symbol)
-        total_fee_rate = fee_data["maker_fee"] * 2  # 买卖双边
-
-        min_price = buy_price * (1 + total_fee_rate)
-        min_price = math.ceil(min_price / tick_size) * tick_size if tick_size else min_price
-        min_price = round(min_price, price_decimals)
-
-        sell_price = max(raw_sell_price, min_price)
-        sell_price = math.ceil(sell_price / tick_size) * tick_size if tick_size else sell_price
-        sell_price = round(sell_price, price_decimals)
-
-        if sell_price <= buy_price and tick_size:
-            sell_price = round(buy_price + tick_size, price_decimals)
-
-        print(f"{self._get_log_prefix()} ✅ 计算结果: raw={raw_sell_price}, min={min_price}, final={sell_price}")
-        return sell_price
 
     def get_fee_rate(self) -> float:
         """获取交易对的手续费率（重写基类方法）"""

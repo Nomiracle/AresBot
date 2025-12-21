@@ -161,7 +161,11 @@ class BaseExchange(ABC):
         # 最终卖价
         sell_price = max(raw_sell_price, min_price)
         sell_price = math.floor(sell_price / tick_size) * tick_size if tick_size else sell_price
-        return round(sell_price, price_decimals)
+        
+        if sell_price <= buy_price and tick_size:
+            sell_price = round(buy_price + tick_size, price_decimals)
+
+        return sell_price
 
     def get_fee_rate(self) -> float:
         """获取交易对的手续费率
