@@ -121,21 +121,9 @@ class CcxtBinanceFuturesShort(CcxtBinanceFutures):
             order['side'] = 'BUY'
         return order
     
-    def _position_to_virtual_orders(self) -> List[Dict]:
-        """将持仓映射为虚拟订单（反转 side）
-        
-        做空策略中：
-        - 空单持仓 → 虚拟卖单（对应 trading.py 的平仓单）
-        """
-        orders = super()._position_to_virtual_orders()
-        # 反转每个虚拟订单的 side
-        for order in orders:
-            original_side = str(order.get('side', '')).upper()
-            if original_side == 'BUY':
-                order['side'] = 'SELL'
-            elif original_side == 'SELL':
-                order['side'] = 'BUY'
-        return orders
+    # _position_to_virtual_orders 不需要重写
+    # 父类生成的虚拟订单 side 已经正确（空单→BUY平仓，多单→SELL平仓）
+    # 会在 get_open_orders 中统一反转，避免双重反转导致抵消
     
     # ====================== 价格计算反转 ======================
     
