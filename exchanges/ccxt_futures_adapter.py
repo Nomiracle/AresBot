@@ -522,6 +522,11 @@ class CcxtBinanceFutures(BaseExchange):
                     "status": status,
                 })
         elif status == "FILLED":
+            # 订单成交后，清空持仓缓存，强制下次查询使用 REST API 获取最新持仓
+            with self._positions_lock:
+                self._positions_cache = []
+            print(f"{self._get_log_prefix()} 🔄 订单成交，已清空持仓缓存，下次查询将获取最新持仓")
+            
             if on_order_update:
                 on_order_update({
                     "event_type": "order_filled",
@@ -628,6 +633,10 @@ class CcxtBinanceFutures(BaseExchange):
                 while self._monitor_running:
                     try:
                         positions = await self._ws_client.watch_positions([self._market_symbol])
+                        
+                        # 打印原始报文
+                        print(f"{self._get_log_prefix()} 📦 [WS] 持仓原始报文: {positions}")
+                        
                         # 过滤当前交易对且有持仓的
                         filtered = [p for p in positions if float(p.get('contracts', 0)) != 0]
                         with self._positions_lock:
