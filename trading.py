@@ -557,10 +557,11 @@ def trading_loop(username, bot_key):
                             
                             # 更新数据库订单状态
                             try:
-                                # 尝试从事件中获取手续费
+                                # 尝试从事件中获取手续费和成交价格
                                 fee = event.get('fee') or event.get('commission')
-                                update_order_status(order_id, 'FILLED', fee=fee)
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} 📝 卖单状态已更新: FILLED")
+                                filled_price = float(event.get('price', 0)) if event.get('price') else None
+                                update_order_status(order_id, 'FILLED', fee=fee, price=filled_price)
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} 📝 卖单状态已更新: FILLED, 成交价格={filled_price}")
                             except Exception as db_e:
                                 print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 更新卖单状态失败: {db_e}")
                     except Exception as e:

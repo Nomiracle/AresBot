@@ -512,11 +512,17 @@ def insert_order(user_id, symbol, price, quantity, side, status, order_id, buy_p
                    datetime.now().isoformat(), datetime.now().isoformat()))
 
 
-def update_order_status(order_id, status, fee=None):
+def update_order_status(order_id, status, fee=None, price=None):
     with db_pool.get_cursor() as (conn, c):
-        if fee is not None:
+        if fee is not None and price is not None:
+            c.execute("""UPDATE orders SET status=?, fee=?, price=?, updated_at=? WHERE order_id=?""", 
+                      (status, fee, str(price), datetime.now().isoformat(), order_id))
+        elif fee is not None:
             c.execute("""UPDATE orders SET status=?, fee=?, updated_at=? WHERE order_id=?""", 
                       (status, fee, datetime.now().isoformat(), order_id))
+        elif price is not None:
+            c.execute("""UPDATE orders SET status=?, price=?, updated_at=? WHERE order_id=?""", 
+                      (status, str(price), datetime.now().isoformat(), order_id))
         else:
             c.execute("""UPDATE orders SET status=?, updated_at=? WHERE order_id=?""", 
                       (status, datetime.now().isoformat(), order_id))
