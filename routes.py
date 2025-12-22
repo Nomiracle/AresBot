@@ -850,7 +850,6 @@ def register_routes(app):
     def api_atr():
         """获取交易对的 ATR 数据和推荐参数"""
         import ccxt
-        from exchanges.base import BaseExchange
         
         symbol = request.args.get('symbol', 'BTCUSDT')
         exchange_id = request.args.get('exchange', 'binance').lower()
@@ -858,7 +857,6 @@ def register_routes(app):
         
         try:
             # 映射交易所名称到 ccxt 交易所 ID
-            # 需要包含 ExchangeFactory.SUPPORTED_EXCHANGES 中所有交易所
             ccxt_exchange_map = {
                 # Binance 现货
                 'binance': 'binance',
@@ -900,17 +898,38 @@ def register_routes(app):
             if not ohlcv or len(ohlcv) < 15:
                 return jsonify({'success': False, 'message': 'K线数据不足'})
             
-            # 计算 ATR
-            current_price = ohlcv[-1][4]
-            atr = BaseExchange.calculate_atr(ohlcv, period=14)
-            recommendation = BaseExchange.get_atr_recommendation(atr, current_price)
+            # 计算 ATR (Average True Range)
+            period = 14
+            true_ranges = []
+            for i in range(1, len(ohlcv)):
+                high = ohlcv[i][2]
+                low = ohlcv[i][3]
+                prev_close = ohlcv[i-1][4]
+                
+                tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+                true_ranges.append(tr)
+            
+            atr = sum(true_ranges[-period:]) / period
+            current_price = float(ohlcv[-1][4])
+            
+            # 根据 ATR 计算推荐参数
+            atr_percent = (atr / current_price) * 100
+            
+            # offset: ATR% 的 15%，作为买单偏移（负值）
+            # sell_offset: ATR% 的 40%，最低 0.2%（覆盖手续费）
+            suggested_offset = -round(atr_percent * 0.15, 3)
+            suggested_sell_offset = max(0.2, round(atr_percent * 0.4, 3))
             
             return jsonify({
                 'success': True,
                 'symbol': symbol,
                 'exchange': exchange_id,
                 'timeframe': timeframe,
-                **recommendation
+                'atr': round(atr, 8),
+                'atr_percent': round(atr_percent, 4),
+                'current_price': current_price,
+                'suggested_offset': suggested_offset,
+                'suggested_sell_offset': suggested_sell_offset
             })
             
         except Exception as e:

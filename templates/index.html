@@ -947,8 +947,10 @@
 
       // ATR 推荐参数缓存
       let atrCache = {};
+      let atrFetchTimer = null;
+      let atrCurrentRequest = null;
 
-      // 获取 ATR 推荐参数
+      // 获取 ATR 推荐参数（带防抖）
       function fetchAtrRecommendation() {
         const exchange = document.getElementById("exchange").value;
         const symbol = document.getElementById("symbol").value;
@@ -956,6 +958,17 @@
         if (!symbol) return;
         
         const cacheKey = `${exchange}:${symbol}`;
+        
+        // 取消之前的定时器
+        if (atrFetchTimer) {
+          clearTimeout(atrFetchTimer);
+        }
+        
+        // 取消正在进行的请求
+        if (atrCurrentRequest) {
+          atrCurrentRequest.aborted = true;
+        }
+        
         const loading = document.getElementById("atrLoading");
         const content = document.getElementById("atrContent");
         const error = document.getElementById("atrError");
@@ -976,23 +989,51 @@
           return;
         }
         
-        fetch(`/api/atr?symbol=${symbol}&exchange=${exchange}&timeframe=1h`)
-          .then(r => r.json())
-          .then(data => {
-            loading.style.display = "none";
-            if (data.success) {
-              atrCache[cacheKey] = { data, timestamp: Date.now() };
-              displayAtrData(data);
-            } else {
-              error.textContent = "❌ " + (data.message || "获取失败");
+        // 防抖：延迟300ms执行请求
+        atrFetchTimer = setTimeout(() => {
+          const requestContext = { aborted: false };
+          atrCurrentRequest = requestContext;
+          
+          fetch(`/api/atr?symbol=${symbol}&exchange=${exchange}&timeframe=1h`)
+            .then(r => r.json())
+            .then(data => {
+              // 检查请求是否已被取消
+              if (requestContext.aborted) {
+                console.log('[ATR] 请求已取消，忽略响应');
+                return;
+              }
+              
+              loading.style.display = "none";
+              if (data.success) {
+                atrCache[cacheKey] = { data, timestamp: Date.now() };
+                displayAtrData(data);
+              } else {
+                error.textContent = "❌ " + (data.message || "获取失败");
+                error.style.display = "block";
+              }
+              
+              // 清除当前请求标记
+              if (atrCurrentRequest === requestContext) {
+                atrCurrentRequest = null;
+              }
+            })
+            .catch(e => {
+              // 检查请求是否已被取消
+              if (requestContext.aborted) {
+                console.log('[ATR] 请求已取消，忽略错误');
+                return;
+              }
+              
+              loading.style.display = "none";
+              error.textContent = "❌ 网络错误: " + e.message;
               error.style.display = "block";
-            }
-          })
-          .catch(e => {
-            loading.style.display = "none";
-            error.textContent = "❌ 网络错误: " + e.message;
-            error.style.display = "block";
-          });
+              
+              // 清除当前请求标记
+              if (atrCurrentRequest === requestContext) {
+                atrCurrentRequest = null;
+              }
+            });
+        }, 300);
       }
 
       // 显示 ATR 数据
