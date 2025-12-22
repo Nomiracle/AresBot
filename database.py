@@ -470,10 +470,19 @@ def get_user_profits(username):
         updated_at = o[7] or timestamp
         order_id = o[8] or ''
 
-        # 计算盈利 = (卖出价 - 买入价) * 数量 - 手续费
+        # 计算盈利
+        # 做空交易所：盈利 = (开仓价 - 平仓价) * 数量 = (buy_price - sell_price) * quantity
+        # 做多交易所：盈利 = (卖出价 - 买入价) * 数量 = (sell_price - buy_price) * quantity
         if buy_price > 0:
-            profit = (sell_price - buy_price) * quantity - fee
-            profit_percent = ((sell_price - buy_price) / buy_price) * 100
+            is_short = 'short' in exchange.lower()
+            if is_short:
+                # 做空：开仓价(buy_price) > 平仓价(sell_price) 时盈利
+                profit = (buy_price - sell_price) * quantity - fee
+                profit_percent = ((buy_price - sell_price) / buy_price) * 100
+            else:
+                # 做多：卖出价 > 买入价 时盈利
+                profit = (sell_price - buy_price) * quantity - fee
+                profit_percent = ((sell_price - buy_price) / buy_price) * 100
         else:
             profit = 0
             profit_percent = 0
