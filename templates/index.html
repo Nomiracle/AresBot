@@ -1268,6 +1268,9 @@
                 data.config.simulate_trading;
               
               console.log(`[加载配置] 配置加载完成`);
+              
+              // 配置加载完成后,刷新 ATR 数据
+              fetchAtrRecommendation();
             } else {
               console.error(`[加载配置] 加载失败: ${data.message}`);
               showResponseToast(data);

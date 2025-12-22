@@ -857,13 +857,6 @@ def register_routes(app):
         timeframe = request.args.get('timeframe', '1h')
         
         try:
-            # 转换交易对格式 (BTCUSDT -> BTC/USDT)
-            if '/' not in symbol and len(symbol) > 4:
-                if symbol.endswith('USDT'):
-                    symbol = symbol[:-4] + '/USDT'
-                elif symbol.endswith('USD'):
-                    symbol = symbol[:-3] + '/USD'
-            
             # 映射交易所名称到 ccxt 交易所 ID
             # 需要包含 ExchangeFactory.SUPPORTED_EXCHANGES 中所有交易所
             ccxt_exchange_map = {
@@ -884,6 +877,18 @@ def register_routes(app):
                 'bpx': 'backpack',
             }
             ccxt_id = ccxt_exchange_map.get(exchange_id, exchange_id)
+            
+            # 转换交易对格式 (BTCUSDT -> BTC/USDT 或 BTC/USDT:USDT)
+            if '/' not in symbol and len(symbol) > 4:
+                if symbol.endswith('USDT'):
+                    base_symbol = symbol[:-4] + '/USDT'
+                    # 合约交易所需要添加 :USDT 后缀
+                    if ccxt_id == 'binanceusdm':
+                        symbol = base_symbol + ':USDT'
+                    else:
+                        symbol = base_symbol
+                elif symbol.endswith('USD'):
+                    symbol = symbol[:-3] + '/USD'
             
             # 创建 ccxt 交易所实例
             exchange_class = getattr(ccxt, ccxt_id)
