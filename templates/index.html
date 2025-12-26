@@ -1303,11 +1303,32 @@
                   
                   // 机器人参数显示
                   let botParams = '';
-                  if (p.offset_percent !== null || p.sell_offset_percent !== null || p.interval !== null) {
+                  if (p.offset_percent !== null || p.sell_offset_percent !== null || p.interval !== null || 
+                      p.min_price_diff_percent !== null || p.max_price_diff_percent !== null || p.avg_price_diff_percent !== null ||
+                      p.sell_min_price_diff_percent !== null || p.sell_max_price_diff_percent !== null || p.sell_avg_price_diff_percent !== null) {
                     const params = [];
                     if (p.offset_percent !== null) params.push(`偏移: ${p.offset_percent}%`);
                     if (p.sell_offset_percent !== null) params.push(`卖加价: ${p.sell_offset_percent}%`);
                     if (p.interval !== null) params.push(`间隔: ${p.interval}s`);
+                    
+                    // 买单差值统计
+                    const buyDiffStats = [];
+                    if (p.min_price_diff_percent !== null) buyDiffStats.push(`最小 ${Number(p.min_price_diff_percent).toFixed(4)}%`);
+                    if (p.avg_price_diff_percent !== null) buyDiffStats.push(`平均 ${Number(p.avg_price_diff_percent).toFixed(4)}%`);
+                    if (p.max_price_diff_percent !== null) buyDiffStats.push(`最大 ${Number(p.max_price_diff_percent).toFixed(4)}%`);
+                    if (buyDiffStats.length > 0) {
+                      params.push(`<span style="color: #17a2b8; font-weight: 600;">买单: ${buyDiffStats.join(' | ')}</span>`);
+                    }
+                    
+                    // 卖单差值统计
+                    const sellDiffStats = [];
+                    if (p.sell_min_price_diff_percent !== null) sellDiffStats.push(`最小 ${Number(p.sell_min_price_diff_percent).toFixed(4)}%`);
+                    if (p.sell_avg_price_diff_percent !== null) sellDiffStats.push(`平均 ${Number(p.sell_avg_price_diff_percent).toFixed(4)}%`);
+                    if (p.sell_max_price_diff_percent !== null) sellDiffStats.push(`最大 ${Number(p.sell_max_price_diff_percent).toFixed(4)}%`);
+                    if (sellDiffStats.length > 0) {
+                      params.push(`<span style="color: #28a745; font-weight: 600;">卖单: ${sellDiffStats.join(' | ')}</span>`);
+                    }
+                    
                     botParams = `<div style="font-size: 11px; color: #6c757d; margin-top: 3px; padding: 4px 8px; background: #f8f9fa; border-radius: 3px; display: inline-block;">
                       📊 ${params.join(' | ')}
                     </div>`;
@@ -1695,6 +1716,22 @@
                       <div style="font-size: 12px; color: #888; margin-top: 5px;">
                         参数: 偏移 ${bot.config.offset_percent}% | 卖加价 ${bot.config.sell_offset_percent || 0.5}% | 数量 ${bot.config.quantity} | 间隔 ${bot.config.interval}s | 模式 ${mode}
                       </div>
+                      ${bot.buy_min_price_diff_percent != null || bot.buy_max_price_diff_percent != null || bot.buy_avg_price_diff_percent != null ? `
+                      <div style="font-size: 11px; color: #17a2b8; margin-top: 3px; padding: 4px 8px; background: #e7f5ff; border-radius: 3px; display: inline-block;">
+                        📊 买单差值: 
+                        ${bot.buy_min_price_diff_percent != null ? `最小 ${Number(bot.buy_min_price_diff_percent).toFixed(4)}%` : ''}
+                        ${bot.buy_avg_price_diff_percent != null ? ` | 平均 ${Number(bot.buy_avg_price_diff_percent).toFixed(4)}%` : ''}
+                        ${bot.buy_max_price_diff_percent != null ? ` | 最大 ${Number(bot.buy_max_price_diff_percent).toFixed(4)}%` : ''}
+                      </div>
+                      ` : ''}
+                      ${bot.sell_min_price_diff_percent != null || bot.sell_max_price_diff_percent != null || bot.sell_avg_price_diff_percent != null ? `
+                      <div style="font-size: 11px; color: #28a745; margin-top: 3px; padding: 4px 8px; background: #e8f5e9; border-radius: 3px; display: inline-block; margin-left: 5px;">
+                        📊 卖单差值: 
+                        ${bot.sell_min_price_diff_percent != null ? `最小 ${Number(bot.sell_min_price_diff_percent).toFixed(4)}%` : ''}
+                        ${bot.sell_avg_price_diff_percent != null ? ` | 平均 ${Number(bot.sell_avg_price_diff_percent).toFixed(4)}%` : ''}
+                        ${bot.sell_max_price_diff_percent != null ? ` | 最大 ${Number(bot.sell_max_price_diff_percent).toFixed(4)}%` : ''}
+                      </div>
+                      ` : ''}
                       ${errorDisplay}
                       ${warningDisplay}
                       ${rateLimitDisplay}

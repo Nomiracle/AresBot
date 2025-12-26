@@ -202,6 +202,43 @@ def init_db(recreate=False):
         print(f"[{datetime.now().isoformat()}] orders 表已添加 interval 列")
     except sqlite3.OperationalError:
         pass
+    
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN min_price_diff_percent TEXT")
+        print(f"[{datetime.now().isoformat()}] orders 表已添加 min_price_diff_percent 列")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN max_price_diff_percent TEXT")
+        print(f"[{datetime.now().isoformat()}] orders 表已添加 max_price_diff_percent 列")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN avg_price_diff_percent TEXT")
+        print(f"[{datetime.now().isoformat()}] orders 表已添加 avg_price_diff_percent 列")
+    except sqlite3.OperationalError:
+        pass
+    
+    # 添加卖单阶段的价格差值统计字段
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN sell_min_price_diff_percent TEXT")
+        print(f"[{datetime.now().isoformat()}] orders 表已添加 sell_min_price_diff_percent 列")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN sell_max_price_diff_percent TEXT")
+        print(f"[{datetime.now().isoformat()}] orders 表已添加 sell_max_price_diff_percent 列")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN sell_avg_price_diff_percent TEXT")
+        print(f"[{datetime.now().isoformat()}] orders 表已添加 sell_avg_price_diff_percent 列")
+    except sqlite3.OperationalError:
+        pass
 
     # 新增：API凭证管理表
     c.execute('''CREATE TABLE IF NOT EXISTS api_credentials
@@ -471,7 +508,9 @@ def get_user_profits(username):
     with db_pool.get_cursor() as (conn, c):
         c.execute("""
             SELECT symbol, price, quantity, buy_price, fee, exchange, timestamp, updated_at, order_id,
-                   offset_percent, sell_offset_percent, interval
+                   offset_percent, sell_offset_percent, interval, 
+                   min_price_diff_percent, max_price_diff_percent, avg_price_diff_percent,
+                   sell_min_price_diff_percent, sell_max_price_diff_percent, sell_avg_price_diff_percent
             FROM orders 
             WHERE user_id=? AND side='SELL' AND status IN ('FILLED', 'order_filled')
             ORDER BY id DESC LIMIT 100
@@ -492,6 +531,14 @@ def get_user_profits(username):
         offset_percent = o[9] if len(o) > 9 else None
         sell_offset_percent = o[10] if len(o) > 10 else None
         interval = o[11] if len(o) > 11 else None
+        # 买单阶段差值统计
+        min_price_diff_percent = o[12] if len(o) > 12 else None
+        max_price_diff_percent = o[13] if len(o) > 13 else None
+        avg_price_diff_percent = o[14] if len(o) > 14 else None
+        # 卖单阶段差值统计
+        sell_min_price_diff_percent = o[15] if len(o) > 15 else None
+        sell_max_price_diff_percent = o[16] if len(o) > 16 else None
+        sell_avg_price_diff_percent = o[17] if len(o) > 17 else None
 
         # 计算盈利
         # 做空交易所：盈利 = (开仓价 - 平仓价) * 数量 = (buy_price - sell_price) * quantity
@@ -524,37 +571,72 @@ def get_user_profits(username):
             'order_id': order_id,
             'offset_percent': offset_percent,
             'sell_offset_percent': sell_offset_percent,
-            'interval': interval
+            'interval': interval,
+            'min_price_diff_percent': min_price_diff_percent,
+            'max_price_diff_percent': max_price_diff_percent,
+            'avg_price_diff_percent': avg_price_diff_percent,
+            'sell_min_price_diff_percent': sell_min_price_diff_percent,
+            'sell_max_price_diff_percent': sell_max_price_diff_percent,
+            'sell_avg_price_diff_percent': sell_avg_price_diff_percent
         })
 
     return profits
 
 
 def insert_order(user_id, symbol, price, quantity, side, status, order_id, buy_price=None, exchange=None, fee=None, 
-                 offset_percent=None, sell_offset_percent=None, interval=None):
+                 offset_percent=None, sell_offset_percent=None, interval=None, min_price_diff_percent=None,
+                 max_price_diff_percent=None, avg_price_diff_percent=None):
     with db_pool.get_cursor() as (conn, c):
         c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, buy_price, exchange, fee, 
-                     offset_percent, sell_offset_percent, interval, timestamp, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     offset_percent, sell_offset_percent, interval, min_price_diff_percent, max_price_diff_percent, avg_price_diff_percent, 
+                     timestamp, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                   (user_id, symbol, price, quantity, side, status, order_id, buy_price, exchange, fee, 
-                   offset_percent, sell_offset_percent, interval,
+                   offset_percent, sell_offset_percent, interval, min_price_diff_percent, max_price_diff_percent, avg_price_diff_percent,
                    datetime.now().isoformat(), datetime.now().isoformat()))
 
 
-def update_order_status(order_id, status, fee=None, price=None):
+def update_order_status(order_id, status, fee=None, price=None, sell_min_diff=None, sell_max_diff=None, sell_avg_diff=None):
+    """更新订单状态
+    
+    Args:
+        order_id: 订单ID
+        status: 订单状态
+        fee: 手续费(可选)
+        price: 价格(可选)
+        sell_min_diff: 卖单最小差值(可选)
+        sell_max_diff: 卖单最大差值(可选)
+        sell_avg_diff: 卖单平均差值(可选)
+    """
     with db_pool.get_cursor() as (conn, c):
-        if fee is not None and price is not None:
-            c.execute("""UPDATE orders SET status=?, fee=?, price=?, updated_at=? WHERE order_id=?""", 
-                      (status, fee, str(price), datetime.now().isoformat(), order_id))
-        elif fee is not None:
-            c.execute("""UPDATE orders SET status=?, fee=?, updated_at=? WHERE order_id=?""", 
-                      (status, fee, datetime.now().isoformat(), order_id))
-        elif price is not None:
-            c.execute("""UPDATE orders SET status=?, price=?, updated_at=? WHERE order_id=?""", 
-                      (status, str(price), datetime.now().isoformat(), order_id))
-        else:
-            c.execute("""UPDATE orders SET status=?, updated_at=? WHERE order_id=?""", 
-                      (status, datetime.now().isoformat(), order_id))
+        # 构建更新字段
+        update_fields = ["status=?", "updated_at=?"]
+        update_values = [status, datetime.now().isoformat()]
+        
+        if fee is not None:
+            update_fields.append("fee=?")
+            update_values.append(fee)
+        
+        if price is not None:
+            update_fields.append("price=?")
+            update_values.append(str(price))
+        
+        if sell_min_diff is not None:
+            update_fields.append("sell_min_price_diff_percent=?")
+            update_values.append(sell_min_diff)
+        
+        if sell_max_diff is not None:
+            update_fields.append("sell_max_price_diff_percent=?")
+            update_values.append(sell_max_diff)
+        
+        if sell_avg_diff is not None:
+            update_fields.append("sell_avg_price_diff_percent=?")
+            update_values.append(sell_avg_diff)
+        
+        update_values.append(order_id)
+        
+        sql = f"UPDATE orders SET {', '.join(update_fields)} WHERE order_id=?"
+        c.execute(sql, tuple(update_values))
 
 
 def get_order_buy_price(order_id):

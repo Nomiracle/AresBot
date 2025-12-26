@@ -576,7 +576,13 @@ def register_routes(app):
                     'last_warning': last_warning,
                     'warning_count': warning_count,
                     'start_timestamp': start_timestamp,
-                    'rate_limit_status': rate_limit_status
+                    'rate_limit_status': rate_limit_status,
+                    'buy_min_price_diff_percent': b.get('buy_min_price_diff_percent'),
+                    'buy_max_price_diff_percent': b.get('buy_max_price_diff_percent'),
+                    'buy_avg_price_diff_percent': b.get('buy_avg_price_diff_percent'),
+                    'sell_min_price_diff_percent': b.get('sell_min_price_diff_percent'),
+                    'sell_max_price_diff_percent': b.get('sell_max_price_diff_percent'),
+                    'sell_avg_price_diff_percent': b.get('sell_avg_price_diff_percent')
                 })
         return jsonify({'success': True, 'bots': bots})
 

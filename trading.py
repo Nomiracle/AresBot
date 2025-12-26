@@ -151,6 +151,15 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
         user_id = bot_data.get('user_id')
         if user_id:
             try:
+                # 获取买单阶段的价格差值统计数据
+                buy_min_diff = bot_data.get('buy_min_price_diff_percent')
+                buy_max_diff = bot_data.get('buy_max_price_diff_percent')
+                buy_avg_diff = bot_data.get('buy_avg_price_diff_percent')
+                
+                buy_min_diff_str = str(round(buy_min_diff, 4)) if buy_min_diff is not None else None
+                buy_max_diff_str = str(round(buy_max_diff, 4)) if buy_max_diff is not None else None
+                buy_avg_diff_str = str(round(buy_avg_diff, 4)) if buy_avg_diff is not None else None
+                
                 insert_order(
                     user_id=user_id,
                     symbol=config['symbol'],
@@ -164,9 +173,17 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
                     fee=None,  # 成交后更新
                     offset_percent=str(config.get('offset_percent', 0)),
                     sell_offset_percent=str(config.get('sell_offset_percent', 0)),
-                    interval=str(config.get('interval', 0))
+                    interval=str(config.get('interval', 0)),
+                    min_price_diff_percent=buy_min_diff_str,
+                    max_price_diff_percent=buy_max_diff_str,
+                    avg_price_diff_percent=buy_avg_diff_str
                 )
-                print(f"[{datetime.now().isoformat()}] {log_prefix} 📝 卖单已记录到数据库")
+                print(f"[{datetime.now().isoformat()}] {log_prefix} 📝 卖单已记录到数据库 (买单差值: 最小={buy_min_diff_str}%, 最大={buy_max_diff_str}%, 平均={buy_avg_diff_str}%)")
+                
+                # 重置买单差值统计数据,为下一次交易做准备
+                bot_data['buy_min_price_diff_percent'] = None
+                bot_data['buy_max_price_diff_percent'] = None
+                bot_data['buy_avg_price_diff_percent'] = None
             except Exception as db_e:
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 卖单记录失败: {db_e}")
         
@@ -493,6 +510,41 @@ def trading_loop(username, bot_key):
                     # print(f"[{datetime.now().isoformat()}] {log_prefix} 💰 价格更新回调被调用: {price}")
                     bot_data['current_price'] = price
                     # print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ bot_data['current_price'] 已更新为: {bot_data['current_price']}")
+                    
+                    # 使用交易所适配器的方法计算价格差值统计(买卖分开)
+                    target_price = bot_data.get('target_price')
+                    if target_price and price > 0:
+                        # 判断当前是买单还是卖单阶段
+                        # 如果有待成交的买单,说明是买单阶段;否则是卖单阶段
+                        pending_buys = bot_data.get('pending_buys', [])
+                        is_buy_phase = len(pending_buys) > 0
+                        
+                        if is_buy_phase:
+                            # 买单阶段统计
+                            min_diff = bot_data.get('buy_min_price_diff_percent')
+                            max_diff = bot_data.get('buy_max_price_diff_percent')
+                            avg_diff = bot_data.get('buy_avg_price_diff_percent')
+                            
+                            new_min, new_avg, new_max = exchange.calculate_price_diff_stats(
+                                price, target_price, min_diff, max_diff, avg_diff
+                            )
+                            
+                            bot_data['buy_min_price_diff_percent'] = new_min
+                            bot_data['buy_avg_price_diff_percent'] = new_avg
+                            bot_data['buy_max_price_diff_percent'] = new_max
+                        else:
+                            # 卖单阶段统计
+                            min_diff = bot_data.get('sell_min_price_diff_percent')
+                            max_diff = bot_data.get('sell_max_price_diff_percent')
+                            avg_diff = bot_data.get('sell_avg_price_diff_percent')
+                            
+                            new_min, new_avg, new_max = exchange.calculate_price_diff_stats(
+                                price, target_price, min_diff, max_diff, avg_diff
+                            )
+                            
+                            bot_data['sell_min_price_diff_percent'] = new_min
+                            bot_data['sell_avg_price_diff_percent'] = new_avg
+                            bot_data['sell_max_price_diff_percent'] = new_max
 
                 def _on_order_update(event: dict):
                     try:
@@ -563,8 +615,30 @@ def trading_loop(username, bot_key):
                                 # 尝试从事件中获取手续费和成交价格
                                 fee = event.get('fee') or event.get('commission')
                                 filled_price = float(event.get('price', 0)) if event.get('price') else None
-                                update_order_status(order_id, 'FILLED', fee=fee, price=filled_price)
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} 📝 卖单状态已更新: FILLED, 成交价格={filled_price}")
+                                
+                                # 获取卖单阶段的价格差值统计数据
+                                sell_min_diff = bot_data.get('sell_min_price_diff_percent')
+                                sell_max_diff = bot_data.get('sell_max_price_diff_percent')
+                                sell_avg_diff = bot_data.get('sell_avg_price_diff_percent')
+                                
+                                sell_min_diff_str = str(round(sell_min_diff, 4)) if sell_min_diff is not None else None
+                                sell_max_diff_str = str(round(sell_max_diff, 4)) if sell_max_diff is not None else None
+                                sell_avg_diff_str = str(round(sell_avg_diff, 4)) if sell_avg_diff is not None else None
+                                
+                                update_order_status(
+                                    order_id, 'FILLED', 
+                                    fee=fee, 
+                                    price=filled_price,
+                                    sell_min_diff=sell_min_diff_str,
+                                    sell_max_diff=sell_max_diff_str,
+                                    sell_avg_diff=sell_avg_diff_str
+                                )
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} 📝 卖单状态已更新: FILLED, 成交价格={filled_price}, 卖单差值: 最小={sell_min_diff_str}%, 最大={sell_max_diff_str}%, 平均={sell_avg_diff_str}%")
+                                
+                                # 重置卖单差值统计数据,为下一次交易做准备
+                                bot_data['sell_min_price_diff_percent'] = None
+                                bot_data['sell_max_price_diff_percent'] = None
+                                bot_data['sell_avg_price_diff_percent'] = None
                             except Exception as db_e:
                                 print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 更新卖单状态失败: {db_e}")
                     except Exception as e:

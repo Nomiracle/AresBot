@@ -292,3 +292,49 @@ class CcxtBinanceFuturesShort(CcxtBinanceFutures):
         
         target_price = round(target_price, price_decimals)
         return target_price
+    
+    def calculate_price_diff_stats(self, current_price: float, target_price: float, 
+                                   min_diff: float, max_diff: float, 
+                                   avg_diff: float) -> list:
+        """计算价格差值统计 (做空逻辑)
+        
+        做空交易所的差值计算与做多相反:
+        - 差值 = (目标价 - 现价) / 现价 * 100
+        - 开仓(卖出): 目标价 > 现价, diff > 0, 越小越接近成交
+        - 平仓(买入): 目标价 < 现价, diff < 0, 绝对值越小越接近成交
+        
+        Args:
+            current_price: 当前市场价格
+            target_price: 目标挂单价格
+            min_diff: 当前最小差值 (可为 None)
+            max_diff: 当前最大差值 (可为 None)
+            avg_diff: 当前平均差值 (可为 None)
+        
+        Returns:
+            [新最小差值, 新平均差值, 新最大差值]
+        """
+        if not target_price or current_price <= 0:
+            return [min_diff, avg_diff, max_diff]
+        
+        # 做空计算差值百分比: (目标价 - 现价) / 现价 * 100 (与做多相反)
+        price_diff_percent = ((target_price - current_price) / current_price) * 100
+        
+        # 更新最小差值(绝对值最小)
+        if min_diff is None:
+            new_min = price_diff_percent
+        else:
+            new_min = price_diff_percent if abs(price_diff_percent) < abs(min_diff) else min_diff
+        
+        # 更新最大差值(绝对值最大)
+        if max_diff is None:
+            new_max = price_diff_percent
+        else:
+            new_max = price_diff_percent if abs(price_diff_percent) > abs(max_diff) else max_diff
+        
+        # 更新平均差值(移动平均)
+        if avg_diff is None:
+            new_avg = price_diff_percent
+        else:
+            new_avg = (avg_diff + price_diff_percent) / 2
+        
+        return [new_min, new_avg, new_max]
