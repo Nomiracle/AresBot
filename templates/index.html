@@ -433,11 +433,6 @@
         >自动交易存在风险，请谨慎设置参数。建议先在测试网络或模拟模式下测试。
       </div>
 
-      <div id="status" class="status stopped">
-        <span id="statusText">机器人已停止</span>
-        <span id="statusIndicator">●</span>
-      </div>
-
       <div class="tabs">
         <button class="tab active" onclick="switchTab('trading')">
           交易配置
@@ -460,10 +455,6 @@
             <div style="background: #f8f9fa; padding: 10px; border-radius: 6px;">
               <div style="color: #666; font-size: 12px;">当前价格</div>
               <span class="price" id="currentPrice" style="font-size: 16px; font-weight: 600; color: #28a745;">-</span>
-            </div>
-            <div style="background: #f8f9fa; padding: 10px; border-radius: 6px;">
-              <div style="color: #666; font-size: 12px;">计划挂单价</div>
-              <strong id="targetPrice" style="font-size: 16px; color: #007bff;">-</strong>
             </div>
             <div style="background: #f8f9fa; padding: 10px; border-radius: 6px;">
               <div style="color: #666; font-size: 12px;">1h ATR</div>
@@ -1047,11 +1038,6 @@
         document.getElementById("atrOffset").textContent = data.suggested_offset + "%";
         document.getElementById("atrSellOffset").textContent = data.suggested_sell_offset + "%";
         
-        // 计算并显示计划挂单价（当前价格 × (1 + offset/100)）
-        const offsetPercent = parseFloat(document.getElementById("offsetPercent").value) || data.suggested_offset;
-        const targetPrice = data.current_price * (1 + offsetPercent / 100);
-        document.getElementById("targetPrice").textContent = "$" + targetPrice.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 6});
-        
         // 保存推荐值供应用按钮使用
         window.atrSuggestedOffset = data.suggested_offset;
         window.atrSuggestedSellOffset = data.suggested_sell_offset;
@@ -1133,32 +1119,6 @@
         }
       }
 
-      function updateStatus() {
-        fetch("/api/status")
-          .then((r) => r.json())
-          .then((data) => {
-            const status = document.getElementById("status");
-            const statusText = document.getElementById("statusText");
-
-            if (data.running) {
-              status.className = "status running";
-              statusText.textContent = "机器人运行中 (配置已加密保存)";
-            } else {
-              status.className = "status stopped";
-              statusText.textContent = "机器人已停止";
-            }
-
-            if (data.price) {
-              document.getElementById("currentSymbol").textContent =
-                data.symbol;
-              document.getElementById("currentPrice").textContent =
-                "$" + parseFloat(data.price);
-              document.getElementById("targetPrice").textContent =
-                "$" + parseFloat(data.target_price);
-            }
-          });
-      }
-
       function startBot() {
         const credId = document.getElementById("credentialSelect").value;
         
@@ -1199,7 +1159,6 @@
           .then((r) => r.json())
           .then((data) => {
             showResponseToast(data);
-            if (data.success) updateStatus();
           });
       }
 
@@ -1208,7 +1167,6 @@
           .then((r) => r.json())
           .then((data) => {
             showResponseToast(data);
-            updateStatus();
           });
       }
 
@@ -1373,8 +1331,6 @@
         // 初始加载 ATR 推荐参数
         setTimeout(fetchAtrRecommendation, 500);
       });
-      setInterval(updateStatus, 2000);
-      updateStatus();
 
       function loadTradingPairs() {
         fetch("/api/trading_pairs")

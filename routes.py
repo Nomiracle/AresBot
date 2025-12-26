@@ -168,31 +168,6 @@ def register_routes(app):
         session.pop('user', None)
         return redirect(url_for('login'))
 
-    @app.route('/api/status')
-    def api_status():
-        if 'user' not in session:
-            return jsonify({'running': False})
-        username = session['user']
-        user_data = user_bots.get(username, {})
-        running = False
-        symbol = '-'
-        price = None
-        target_price = '-'
-        start_timestamp = None
-        if isinstance(user_data, dict):
-            for sym, b in user_data.get('bots', {}).items():
-                if b.get('running'):
-                    running = True
-                    symbol = sym
-                    price = b.get('current_price')
-                    target_price = b.get('target_price', '-')
-                    # 返回启动时间戳（毫秒）
-                    start_time = b.get('start_time')
-                    if start_time:
-                        start_timestamp = int(start_time.timestamp() * 1000)
-                    break
-        return jsonify({'running': running, 'symbol': symbol, 'price': price, 'target_price': target_price, 'start_timestamp': start_timestamp})
-
     @app.route('/api/start', methods=['POST'])
     def api_start():
         if 'user' not in session:
