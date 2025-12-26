@@ -184,6 +184,25 @@ def init_db(recreate=False):
     except sqlite3.OperationalError:
         pass
 
+    # 添加机器人参数字段
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN offset_percent TEXT")
+        print(f"[{datetime.now().isoformat()}] orders 表已添加 offset_percent 列")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN sell_offset_percent TEXT")
+        print(f"[{datetime.now().isoformat()}] orders 表已添加 sell_offset_percent 列")
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        c.execute("ALTER TABLE orders ADD COLUMN interval TEXT")
+        print(f"[{datetime.now().isoformat()}] orders 表已添加 interval 列")
+    except sqlite3.OperationalError:
+        pass
+
     # 新增：API凭证管理表
     c.execute('''CREATE TABLE IF NOT EXISTS api_credentials
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -451,7 +470,8 @@ def get_user_profits(username):
 
     with db_pool.get_cursor() as (conn, c):
         c.execute("""
-            SELECT symbol, price, quantity, buy_price, fee, exchange, timestamp, updated_at, order_id
+            SELECT symbol, price, quantity, buy_price, fee, exchange, timestamp, updated_at, order_id,
+                   offset_percent, sell_offset_percent, interval
             FROM orders 
             WHERE user_id=? AND side='SELL' AND status IN ('FILLED', 'order_filled')
             ORDER BY id DESC LIMIT 100
@@ -469,6 +489,9 @@ def get_user_profits(username):
         timestamp = o[6] or ''
         updated_at = o[7] or timestamp
         order_id = o[8] or ''
+        offset_percent = o[9] if len(o) > 9 else None
+        sell_offset_percent = o[10] if len(o) > 10 else None
+        interval = o[11] if len(o) > 11 else None
 
         # 计算盈利
         # 做空交易所：盈利 = (开仓价 - 平仓价) * 数量 = (buy_price - sell_price) * quantity
@@ -498,17 +521,23 @@ def get_user_profits(username):
             'profit_percent': round(profit_percent, 4),
             'timestamp': timestamp,
             'updated_at': updated_at,
-            'order_id': order_id
+            'order_id': order_id,
+            'offset_percent': offset_percent,
+            'sell_offset_percent': sell_offset_percent,
+            'interval': interval
         })
 
     return profits
 
 
-def insert_order(user_id, symbol, price, quantity, side, status, order_id, buy_price=None, exchange=None, fee=None):
+def insert_order(user_id, symbol, price, quantity, side, status, order_id, buy_price=None, exchange=None, fee=None, 
+                 offset_percent=None, sell_offset_percent=None, interval=None):
     with db_pool.get_cursor() as (conn, c):
-        c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, buy_price, exchange, fee, timestamp, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        c.execute("""INSERT INTO orders (user_id, symbol, price, quantity, side, status, order_id, buy_price, exchange, fee, 
+                     offset_percent, sell_offset_percent, interval, timestamp, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                   (user_id, symbol, price, quantity, side, status, order_id, buy_price, exchange, fee, 
+                   offset_percent, sell_offset_percent, interval,
                    datetime.now().isoformat(), datetime.now().isoformat()))
 
 

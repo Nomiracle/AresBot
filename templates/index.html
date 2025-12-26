@@ -1300,6 +1300,19 @@
                 .map((p) => {
                   const profitClass = p.profit >= 0 ? 'color: #28a745;' : 'color: #dc3545;';
                   const profitSign = p.profit >= 0 ? '+' : '';
+                  
+                  // 机器人参数显示
+                  let botParams = '';
+                  if (p.offset_percent !== null || p.sell_offset_percent !== null || p.interval !== null) {
+                    const params = [];
+                    if (p.offset_percent !== null) params.push(`偏移: ${p.offset_percent}%`);
+                    if (p.sell_offset_percent !== null) params.push(`卖加价: ${p.sell_offset_percent}%`);
+                    if (p.interval !== null) params.push(`间隔: ${p.interval}s`);
+                    botParams = `<div style="font-size: 11px; color: #6c757d; margin-top: 3px; padding: 4px 8px; background: #f8f9fa; border-radius: 3px; display: inline-block;">
+                      📊 ${params.join(' | ')}
+                    </div>`;
+                  }
+                  
                   return `
                     <div class="order-item" style="border-left: 3px solid ${p.profit >= 0 ? '#28a745' : '#dc3545'};">
                       <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -1317,6 +1330,7 @@
                       <div style="font-size: 12px; color: #888; margin-top: 3px;">
                         手续费: $${p.fee} | 下单: ${p.timestamp.substring(0, 19)} | 成交: ${p.updated_at.substring(0, 19)}
                       </div>
+                      ${botParams}
                     </div>
                   `;
                 })

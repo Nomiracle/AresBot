@@ -161,7 +161,10 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
                     order_id=sell_order_id,
                     buy_price=str(buy_price),
                     exchange=config.get('exchange', 'unknown'),
-                    fee=None  # 成交后更新
+                    fee=None,  # 成交后更新
+                    offset_percent=str(config.get('offset_percent', 0)),
+                    sell_offset_percent=str(config.get('sell_offset_percent', 0)),
+                    interval=str(config.get('interval', 0))
                 )
                 print(f"[{datetime.now().isoformat()}] {log_prefix} 📝 卖单已记录到数据库")
             except Exception as db_e:
