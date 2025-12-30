@@ -6,6 +6,7 @@
 
 - ✅ **Binance** (币安) - 完整支持，包括 WebSocket 实时数据
 - ✅ **Backpack (BPX)** - 完整支持，使用 REST 轮询
+- ✅ **Polymarket** - 完整支持，预测市场交易，使用 REST 轮询
 - 🔜 **OKX** - 计划中
 - 🔜 **Bybit** - 计划中
 
@@ -59,7 +60,7 @@ python app.py --recreate-db
 
 1. 使用默认账号登录控制台。
 2. 在"交易配置"中填写：
-   - **交易所选择**（Binance 或 Backpack）
+   - **交易所选择**（Binance、Backpack 或 Polymarket）
    - API Key / Secret（必填，用于连接交易所）
    - 交易对、偏移百分比、卖单加价百分比、下单数量、轮询间隔
    - 网络环境（测试网/生产）与交易模式（模拟/真实）
@@ -74,6 +75,17 @@ python app.py --recreate-db
 - 交易对格式会自动转换（如 SOLUSDC → SOL_USDC）
 - 暂不支持 WebSocket，系统会自动使用 REST 轮询
 - 详细说明请查看 `changelog/BACKPACK_QUICKSTART.md`
+
+### Polymarket 交易所使用
+
+如果使用 Polymarket 预测市场：
+- **API Key**: 填写你的钱包地址（0x开头，40位十六进制）
+- **API Secret**: 填写你的钱包私钥（0x开头，64位十六进制）
+- **交易对**: 填写市场的 token_id（可从 Polymarket API 获取）
+- **价格范围**: Polymarket 价格为概率值，范围 0-1（如 0.65 表示 65%）
+- **手续费**: Maker -0.02%（返佣），Taker 0.1%
+- 使用 REST 轮询模式监听价格和订单状态
+- 运行在 Polygon 主网（Chain ID: 137）
 
 ## 关于模拟与实盘
 
@@ -186,6 +198,7 @@ python app.py --recreate-db
 - [Flask](https://flask.palletsprojects.com/) - Web 框架
 - [python-binance](https://github.com/sammchardy/python-binance) - Binance API 客户端
 - [bpx-py](https://github.com/sndmndss/bpx-py) - Backpack API 客户端
+- [py-clob-client](https://github.com/Polymarket/py-clob-client) - Polymarket API 客户端
 - [cryptography](https://cryptography.io/) - 加密库
 
 ---

@@ -7,6 +7,7 @@ from .base import BaseExchange
 from .binance_adapterv2 import NativeBinanceSpot
 from .binance_futures_adapter import NativeBinanceFutures
 from .backpack_adapter import NativeBackpackSpot
+from .polymarket_adapter import NativePolymarketSpot
 from .ccxt_futures_adapter import CcxtBinanceFutures
 from .ccxt_binance_adapter import CcxtBinanceSpot
 from .short_futures_adapter import CcxtBinanceFuturesShort
@@ -23,6 +24,7 @@ class ExchangeFactory:
         'native_binance_spot': NativeBinanceSpot,
         'native_binance_futures': NativeBinanceFutures,
         'native_backpack_spot': NativeBackpackSpot,
+        'native_polymarket_spot': NativePolymarketSpot,
         # CCXT 实现
         'ccxt_binance_spot': CcxtBinanceSpot,
         'ccxt_binance_futures': CcxtBinanceFutures,
@@ -32,6 +34,7 @@ class ExchangeFactory:
         'binance_futures': NativeBinanceFutures,
         'backpack': NativeBackpackSpot,
         'bpx': NativeBackpackSpot,
+        'polymarket': NativePolymarketSpot,
         'ccxt_futures': CcxtBinanceFutures,
         'ccxt_binance': CcxtBinanceSpot,
     }

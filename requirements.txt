@@ -4,3 +4,4 @@ Werkzeug==3.0.1
 cryptography>=42.0.5,<44.0.0
 bpx-py==2.0.11
 ccxt==4.5.28
+py-clob-client==0.34.1
