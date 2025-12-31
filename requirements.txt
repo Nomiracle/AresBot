@@ -6,3 +6,4 @@ bpx-py==2.0.11
 ccxt==4.5.28
 py-clob-client==0.34.1
 pytz
+websocket-client

@@ -7,6 +7,8 @@ from typing import Dict, List, Optional, Callable
 import math
 import time
 import threading
+import json
+import websocket
 from .base import BaseExchange
 
 try:
@@ -55,10 +57,13 @@ class NativePolymarketSpot(BaseExchange):
         self.host = "https://clob.polymarket.com"
         self.chain_id = 137  # Polygon 主网
         
-        # 监听器状态
-        self._price_monitor_active = False
-        self._order_monitor_active = False
-        self._price_poll_thread = None
+        # WebSocket 状态
+        self._ws_market = None
+        self._ws_user = None
+        self._ws_market_thread = None
+        self._ws_user_thread = None
+        self._ws_market_active = False
+        self._ws_user_active = False
         try:
             # 初始化Polymarket客户端
             host = "https://clob.polymarket.com"
@@ -80,8 +85,8 @@ class NativePolymarketSpot(BaseExchange):
             
             # 设置 API 凭证用于 Level 2 认证
             try:
-                api_creds = self.client.create_or_derive_api_creds()
-                self.client.set_api_creds(api_creds)
+                self.api_creds = self.client.create_or_derive_api_creds()
+                self.client.set_api_creds(self.api_creds)
                 print(f"{self._get_log_prefix()} 🔐 API 凭证已设置")
             except Exception as cred_error:
                 print(f"{self._get_log_prefix()} ⚠️ API 凭证设置失败: {cred_error}")
@@ -389,139 +394,84 @@ class NativePolymarketSpot(BaseExchange):
     
     def start_ws(self, on_price_update: Callable[[float], None], 
                  on_order_update: Callable[[Dict], None]) -> bool:
-        """启动价格和订单监听 (HTTP轮询模式)"""
-        self._on_price_callback = on_price_update
-        self._on_order_callback = on_order_update
+        """启动价格和订单监听 (WebSocket 模式)"""
         
-        # 启动价格监听线程
-        if not self._price_monitor_active:
-            self._price_monitor_active = True
-            self._price_poll_thread = threading.Thread(
-                target=self._price_poll_loop,
-                daemon=True
-            )
-            self._price_poll_thread.start()
-            print(f"{self._get_log_prefix()} ✅ 价格监听已启动 (HTTP轮询)")
+        # 市场数据回调包装
+        def market_callback(data):
+            try:
+                # 检查事件类型
+                event_type = data.get('event_type')
+                
+                if event_type == 'price_change':
+                    # 解析 price_changes 数组
+                    price_changes = data.get('price_changes', [])
+                    
+                    for change in price_changes:
+                        asset_id = change.get('asset_id')
+                        
+                        # 只处理当前交易的 token
+                        if asset_id == self.symbol:
+                            # 使用 best_bid 和 best_ask 计算中间价
+                            best_bid = float(change.get('best_bid', 0))
+                            best_ask = float(change.get('best_ask', 0))
+                            
+                            if best_bid > 0 and best_ask > 0:
+                                mid_price = (best_bid + best_ask) / 2
+                            elif best_bid > 0:
+                                mid_price = best_bid
+                            elif best_ask > 0:
+                                mid_price = best_ask
+                            else:
+                                # 使用最新成交价
+                                mid_price = float(change.get('price', 0))
+                            
+                            if mid_price > 0 and on_price_update:
+                                # print(f"{self._get_log_prefix()} 💰 价格更新: {mid_price} (bid={best_bid}, ask={best_ask})")
+                                on_price_update(mid_price)
+                            break
+                # else:
+                    # 其他类型的市场事件
+                    # print(f"{self._get_log_prefix()} 📊 市场事件: {event_type}")
+                    
+            except Exception as e:
+                print(f"{self._get_log_prefix()} ❌ 处理价格更新失败: {e}")
+                import traceback
+                traceback.print_exc()
         
-        # 启动订单监听线程
-        if not self._order_monitor_active:
-            self._order_monitor_active = True
-            self._order_poll_thread = threading.Thread(
-                target=self._order_poll_loop,
-                daemon=True
-            )
-            self._order_poll_thread.start()
-            print(f"{self._get_log_prefix()} ✅ 订单监听已启动 (HTTP轮询)")
+        # 订单更新回调包装
+        def order_callback(event):
+            try:
+                if on_order_update:
+                    on_order_update(event)
+            except Exception as e:
+                print(f"{self._get_log_prefix()} ❌ 处理订单更新失败: {e}")
         
+        # 启动 WebSocket 订阅
+        self.subscribe_market_ws(callback=market_callback)
+        self.subscribe_user_ws(callback=order_callback)
+        
+        print(f"{self._get_log_prefix()} ✅ WebSocket 监听已启动")
         return True
     
     def stop_ws(self) -> None:
         """停止监听"""
-        self._price_monitor_active = False
-        self._order_monitor_active = False
-        
-        if self._price_poll_thread:
-            self._price_poll_thread.join(timeout=2)
-        if self._order_poll_thread:
-            self._order_poll_thread.join(timeout=2)
+        # 停止 WebSocket 连接
+        self.unsubscribe_market_ws()
+        self.unsubscribe_user_ws()
         
         print(f"{self._get_log_prefix()} 🔌 监听已停止")
     
-    def _price_poll_loop(self):
-        """价格轮询循环"""
-        last_price = None
-        
-        while self._price_monitor_active:
-            try:
-                ticker = self.get_symbol_ticker()
-                current_price = float(ticker.get('price', 0))
-                
-                if current_price > 0 and current_price != last_price:
-                    if self._on_price_callback:
-                        self._on_price_callback(current_price)
-                    last_price = current_price
-                
-                time.sleep(2)  # 每2秒轮询一次
-                
-            except Exception as e:
-                print(f"{self._get_log_prefix()} ❌ 价格轮询错误: {e}")
-                import traceback
-                traceback.print_exc()
-                time.sleep(5)
-    
-    def _order_poll_loop(self):
-        """订单轮询循环"""
-        known_orders = set()
-        
-        while self._order_monitor_active:
-            try:
-                orders = self.client.get_orders(OpenOrderParams())
-                
-                for order in orders:
-                    order_id = order.get('id')
-                    status = order.get('status', '').upper()
-                    
-                    # 检测订单状态变化
-                    if order_id not in known_orders:
-                        known_orders.add(order_id)
-                    
-                    # 如果订单已成交或取消,触发回调
-                    if status in ['MATCHED', 'CANCELLED', 'EXPIRED']:
-                        if self._on_order_callback:
-                            normalized = self._normalize_order(order)
-                            event = {
-                                'event_type': 'order_filled' if status == 'MATCHED' else 'order_update',
-                                'order_id': order_id,
-                                'symbol': self.symbol,
-                                'side': normalized['side'],
-                                'status': normalized['status'],
-                                'price': normalized['price'],
-                                'quantity': normalized['origQty']
-                            }
-                            self._on_order_callback(event)
-                        
-                        known_orders.discard(order_id)
-                
-                time.sleep(3)  # 每3秒轮询一次
-                
-            except Exception as e:
-                print(f"{self._get_log_prefix()} ❌ 订单轮询错误: {e}")
-                time.sleep(5)
-    
     def check_pending_orders(self, pending_orders: List[Dict]):
-        """检查待处理订单状态 (HTTP轮询模式)"""
-        if not pending_orders:
-            return
+        """检查待处理订单的状态
         
-        try:
-            # 获取所有开放订单
-            open_orders = self.client.get_orders(OpenOrderParams())
-            open_order_ids = {order.get('id') for order in open_orders}
-            
-            # 检查每个待处理订单
-            for pending in pending_orders:
-                order_id = pending.get('order_id')
-                if not order_id:
-                    continue
-                
-                # 如果订单不在开放列表中,可能已成交或取消
-                if order_id not in open_order_ids:
-                    order_info = self.get_order(order_id)
-                    
-                    if order_info['status'] == 'FILLED' and self._on_order_callback:
-                        event = {
-                            'event_type': 'order_filled',
-                            'order_id': order_id,
-                            'symbol': self.symbol,
-                            'side': order_info['side'],
-                            'status': 'FILLED',
-                            'price': order_info['price'],
-                            'quantity': order_info['executedQty']
-                        }
-                        self._on_order_callback(event)
-                        
-        except Exception as e:
-            print(f"{self._get_log_prefix()} ❌ 检查订单失败: {e}")
+        注意: 使用 WebSocket 模式时,订单更新会通过 WebSocket 实时推送,
+        不需要主动轮询检查。此方法保留用于兼容基类接口。
+        
+        Args:
+            pending_orders: 待检查的订单列表
+        """
+        # WebSocket 模式下订单更新会自动推送,无需主动检查
+        pass
     
     def get_fee_rate(self) -> float:
         """获取手续费率
@@ -534,3 +484,210 @@ class NativePolymarketSpot(BaseExchange):
             float: 手续费率 (使用Taker费率作为保守估计)
         """
         return 0.001  # 0.1% Taker费率
+    
+    def subscribe_market_ws(self, callback: Callable = None):
+        """订阅市场数据 WebSocket
+        
+        Args:
+            callback: 市场数据更新回调函数
+        """
+        if self._ws_market_active:
+            print(f"{self._get_log_prefix()} ⚠️ 市场 WebSocket 已在运行")
+            return
+        
+        self._ws_market_active = True
+        self._ws_market_callback = callback
+        
+        def on_message(ws, message):
+            try:
+                # 忽略 PONG 响应
+                if message == "PONG":
+                    return
+                    
+                data = json.loads(message)
+                # print(f"{self._get_log_prefix()} 📊 市场数据: {data}")
+                
+                if callback:
+                    callback(data)
+                    
+            except json.JSONDecodeError:
+                # 非 JSON 消息,可能是心跳响应
+                pass
+            except Exception as e:
+                print(f"{self._get_log_prefix()} ❌ 处理市场消息失败: {e}")
+        
+        def on_error(ws, error):
+            print(f"{self._get_log_prefix()} ❌ 市场 WebSocket 错误: {error}")
+            print(f"{self._get_log_prefix()} 错误类型: {type(error)}")
+            import traceback
+            traceback.print_exc()
+        
+        def on_close(ws, close_status_code, close_msg):
+            print(f"{self._get_log_prefix()} 🔌 市场 WebSocket 已关闭")
+            print(f"{self._get_log_prefix()} 状态码: {close_status_code}, 消息: {close_msg}")
+            self._ws_market_active = False
+        
+        def on_open(ws):
+            print(f"{self._get_log_prefix()} ✅ 市场 WebSocket 已连接")
+            # 订阅市场数据 - 市场频道不需要认证
+            subscribe_msg = {
+                "assets_ids": [self.symbol],
+                "type": "market"
+            }
+            print(f"{self._get_log_prefix()} 📡 发送订阅消息: {subscribe_msg}")
+            ws.send(json.dumps(subscribe_msg))
+            print(f"{self._get_log_prefix()} 📡 已订阅市场: {self.symbol}")
+            
+            # 启动心跳线程
+            def ping_loop():
+                while self._ws_market_active:
+                    try:
+                        ws.send("PING")
+                        time.sleep(10)
+                    except Exception as e:
+                        print(f"{self._get_log_prefix()} ❌ PING 失败: {e}")
+                        break
+            
+            ping_thread = threading.Thread(target=ping_loop, daemon=True)
+            ping_thread.start()
+        
+        def run_ws():
+            ws_url = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+            print(f"{self._get_log_prefix()} 🔗 正在连接到: {ws_url}")
+            self._ws_market = websocket.WebSocketApp(
+                ws_url,
+                on_message=on_message,
+                on_error=on_error,
+                on_close=on_close,
+                on_open=on_open
+            )
+            # 添加超时和重连配置
+            self._ws_market.run_forever(
+                ping_interval=10,
+                ping_timeout=5,
+                reconnect=3
+            )
+        
+        self._ws_market_thread = threading.Thread(target=run_ws, daemon=True)
+        self._ws_market_thread.start()
+        print(f"{self._get_log_prefix()} 🚀 市场 WebSocket 已启动")
+    
+    def subscribe_user_ws(self, callback: Callable = None):
+        """订阅用户订单 WebSocket
+        
+        Args:
+            callback: 订单更新回调函数
+        """
+        if self._ws_user_active:
+            print(f"{self._get_log_prefix()} ⚠️ 用户 WebSocket 已在运行")
+            return
+        
+        self._ws_user_active = True
+        self._ws_user_callback = callback
+        
+        
+        def on_message(ws, message):
+            try:
+                # 忽略 PONG 响应
+                if message == "PONG":
+                    return
+                    
+                data = json.loads(message)
+                print(f"{self._get_log_prefix()} 📬 订单更新: {data}")
+                
+                # 解析订单更新
+                if 'asset_id' in data:
+                    event = {
+                        'event_type': 'order_update',
+                        'order_id': data.get('id'),
+                        'symbol': data.get('asset_id'),
+                        'side': data.get('side', '').upper(),
+                        'status': data.get('status', '').upper(),
+                        'price': float(data.get('price', 0)),
+                        'size': float(data.get('size', 0)),
+                        'filled': float(data.get('size_matched', 0))
+                    }
+                    
+                    if callback:
+                        callback(event)
+                        
+            except json.JSONDecodeError:
+                # 非 JSON 消息,可能是心跳响应
+                pass
+            except Exception as e:
+                print(f"{self._get_log_prefix()} ❌ 处理订单消息失败: {e}")
+        
+        def on_error(ws, error):
+            print(f"{self._get_log_prefix()} ❌ 用户 WebSocket 错误: {error}")
+            print(f"{self._get_log_prefix()} 错误类型: {type(error)}")
+            import traceback
+            traceback.print_exc()
+        
+        def on_close(ws, close_status_code, close_msg):
+            print(f"{self._get_log_prefix()} 🔌 用户 WebSocket 已关闭")
+            print(f"{self._get_log_prefix()} 状态码: {close_status_code}, 消息: {close_msg}")
+            self._ws_user_active = False
+        
+        def on_open(ws):
+            print(f"{self._get_log_prefix()} ✅ 用户 WebSocket 已连接")
+            # 订阅用户订单 - markets 参数必须存在(可以为空数组)
+            subscribe_msg = {
+                "markets": [],
+                "type": "user",
+                "auth": {
+                    "apiKey": self.api_creds.api_key,
+                    "secret": self.api_creds.api_secret,
+                    "passphrase": self.api_creds.api_passphrase
+                }
+            }
+            print(f"{self._get_log_prefix()} 📡 发送订阅消息 (带认证)")
+            ws.send(json.dumps(subscribe_msg))
+            print(f"{self._get_log_prefix()} 📡 已订阅用户订单")
+            
+            # 启动心跳线程
+            def ping_loop():
+                while self._ws_user_active:
+                    try:
+                        ws.send("PING")
+                        time.sleep(10)
+                    except Exception as e:
+                        print(f"{self._get_log_prefix()} ❌ PING 失败: {e}")
+                        break
+            
+            ping_thread = threading.Thread(target=ping_loop, daemon=True)
+            ping_thread.start()
+        
+        def run_ws():
+            ws_url = "wss://ws-subscriptions-clob.polymarket.com/ws/user"
+            print(f"{self._get_log_prefix()} 🔗 正在连接到: {ws_url}")
+            self._ws_user = websocket.WebSocketApp(
+                ws_url,
+                on_message=on_message,
+                on_error=on_error,
+                on_close=on_close,
+                on_open=on_open
+            )
+            # 添加超时和重连配置
+            self._ws_user.run_forever(
+                ping_interval=10,
+                ping_timeout=5,
+                reconnect=3
+            )
+        
+        self._ws_user_thread = threading.Thread(target=run_ws, daemon=True)
+        self._ws_user_thread.start()
+        print(f"{self._get_log_prefix()} 🚀 用户 WebSocket 已启动")
+    
+    def unsubscribe_market_ws(self):
+        """取消订阅市场数据 WebSocket"""
+        self._ws_market_active = False
+        if self._ws_market:
+            self._ws_market.close()
+        print(f"{self._get_log_prefix()} 🔌 市场 WebSocket 已停止")
+    
+    def unsubscribe_user_ws(self):
+        """取消订阅用户订单 WebSocket"""
+        self._ws_user_active = False
+        if self._ws_user:
+            self._ws_user.close()
+        print(f"{self._get_log_prefix()} 🔌 用户 WebSocket 已停止")

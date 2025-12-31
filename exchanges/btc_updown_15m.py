@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 import requests
 from .polymarket_adapter import NativePolymarketSpot
 import pytz
+import time
+from typing import Dict, Callable
 
 
 class BtcUpDown15m(NativePolymarketSpot):
@@ -25,6 +27,7 @@ class BtcUpDown15m(NativePolymarketSpot):
         """
         self.outcome = outcome
         self.market_end_time = None  # 市场结束时间戳
+        self._ws_callbacks = None  # 保存 WebSocket 回调函数
         
         # 获取最新市场的 token_id
         token_id = self._get_latest_market_token()
@@ -182,6 +185,7 @@ class BtcUpDown15m(NativePolymarketSpot):
         """刷新到最新的市场
         
         当当前市场即将结束或已结束时,可以调用此方法切换到新市场
+        同时会自动关闭旧市场的 WebSocket 并开启新市场的 WebSocket
         
         Returns:
             bool: 是否成功刷新
@@ -190,15 +194,35 @@ class BtcUpDown15m(NativePolymarketSpot):
             print(f"[{datetime.now().isoformat()}] 🔄 [BTC Up/Down 15m] 刷新市场...")
             print(f"[{datetime.now().isoformat()}] 🔍 [BTC Up/Down 15m] 当前状态: slug={self.market_slug}, token_id={self.symbol}")
             
+            old_token_id = self.symbol
+            
             # 获取新的 token_id (这会同时更新 self.market_slug 和 self.market_end_time)
             new_token_id = self._get_latest_market_token()
             
-            if new_token_id and new_token_id != self.symbol:
+            if new_token_id and new_token_id != old_token_id:
+                # 关闭旧市场的 WebSocket
+                print(f"[{datetime.now().isoformat()}] 🔌 [BTC Up/Down 15m] 关闭旧市场 WebSocket...")
+                self.stop_ws()
+                
+                # 等待 WebSocket 完全关闭
+                time.sleep(1)
+                
+                # 更新 token_id
                 self.symbol = new_token_id
+                
+                # 如果之前有 WebSocket 回调,重新启动新市场的 WebSocket
+                if self._ws_callbacks:
+                    print(f"[{datetime.now().isoformat()}] 🚀 [BTC Up/Down 15m] 启动新市场 WebSocket...")
+                    self.start_ws(
+                        on_price_update=self._ws_callbacks['price'],
+                        on_order_update=self._ws_callbacks['order']
+                    )
+                
                 print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 市场已更新")
+                print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 旧市场: token_id={old_token_id}")
                 print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 新市场: slug={self.market_slug}, token_id={new_token_id}")
                 return True
-            elif new_token_id == self.symbol:
+            elif new_token_id == old_token_id:
                 print(f"[{datetime.now().isoformat()}] ℹ️ [BTC Up/Down 15m] 已是最新市场: slug={self.market_slug}, token_id={self.symbol}")
                 return True
             else:
@@ -207,6 +231,8 @@ class BtcUpDown15m(NativePolymarketSpot):
                 
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ [BTC Up/Down 15m] 刷新市场失败: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def get_market_info(self) -> dict:
@@ -216,7 +242,7 @@ class BtcUpDown15m(NativePolymarketSpot):
             dict: 市场信息
         """
         # 添加调试日志
-        print(f"{self._get_log_prefix()} 📊 市场信息: slug={self.market_slug}, token_id={self.symbol}, end_time={self.market_end_time}")
+        # print(f"{self._get_log_prefix()} 📊 市场信息: slug={self.market_slug}, token_id={self.symbol}, end_time={self.market_end_time}")
         
         return {
             'slug': self.market_slug,
@@ -372,3 +398,69 @@ class BtcUpDown15m(NativePolymarketSpot):
             import traceback
             traceback.print_exc()
             return result
+    
+    def start_ws(self, on_price_update: Callable[[float], None], 
+                 on_order_update: Callable[[Dict], None]) -> bool:
+        """启动 WebSocket 并保存回调函数
+        
+        重写父类方法以保存回调函数,用于市场切换时重新订阅
+        """
+        # 保存回调函数
+        self._ws_callbacks = {
+            'price': on_price_update,
+            'order': on_order_update
+        }
+        
+        # 调用父类方法
+        return super().start_ws(on_price_update, on_order_update)
+    
+    def _check_market_close_before_order(self) -> None:
+        """下单前检查市场是否即将关闭
+        
+        Raises:
+            RuntimeError: 如果市场已关闭或即将关闭(1分钟内)
+        """
+        if not self.market_end_time:
+            return
+        
+        seconds_left = self.get_seconds_until_market_close()
+        
+        # 市场已关闭
+        if seconds_left == 0:
+            error_msg = f"市场已关闭,无法下单"
+            print(f"{self._get_log_prefix()} ❌ {error_msg}")
+            raise RuntimeError(error_msg)
+        
+        # 市场即将关闭(1分钟内)
+        if seconds_left <= 60:
+            error_msg = f"市场将在 {seconds_left} 秒后关闭,拒绝下单"
+            print(f"{self._get_log_prefix()} ❌ {error_msg}")
+            raise RuntimeError(error_msg)
+    
+    def order_limit_buy(self, quantity: float, price: str, **kwargs) -> Dict:
+        """限价买单(带市场关闭检查)
+        
+        重写父类方法,添加市场关闭前1分钟的检查
+        
+        Raises:
+            RuntimeError: 如果市场即将关闭
+        """
+        # 检查市场是否即将关闭(会抛出异常)
+        self._check_market_close_before_order()
+        
+        # 调用父类方法
+        return super().order_limit_buy(quantity, price, **kwargs)
+    
+    def order_limit_sell(self, quantity: float, price: str, **kwargs) -> Dict:
+        """限价卖单(带市场关闭检查)
+        
+        重写父类方法,添加市场关闭前1分钟的检查
+        
+        Raises:
+            RuntimeError: 如果市场即将关闭
+        """
+        # 检查市场是否即将关闭(会抛出异常)
+        self._check_market_close_before_order()
+        
+        # 调用父类方法
+        return super().order_limit_sell(quantity, price, **kwargs)
