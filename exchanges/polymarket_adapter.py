@@ -32,15 +32,16 @@ class NativePolymarketSpot(BaseExchange):
         """初始化 Polymarket 客户端
         
         Args:
-            api_key: 钱包地址
+            api_key: Polymarket Proxy Wallet 地址 (网站右上角显示的地址)
             api_secret: 私钥 (Private Key, 0x开头的十六进制字符串)
             symbol: 交易对/市场ID (token_id)
             testnet: 是否使用测试网 (Polymarket主网为Polygon链)
         
         注意:
-        - api_key: 钱包地址 (0x开头)
-        - api_secret: 钱包私钥 (0x开头的十六进制字符串)
+        - api_key: Polymarket 网站显示的 Proxy Wallet 地址 (已完成授权)
+        - api_secret: 你的 MetaMask 私钥 (0x开头的十六进制字符串)
         - symbol: Polymarket的token_id (可从市场API获取)
+        - 使用 signature_type=2 (Proxy Wallet 模式)
         """
         if ClobClient is None:
             raise ImportError("请先安装 py-clob-client: pip install py-clob-client")
@@ -58,32 +59,68 @@ class NativePolymarketSpot(BaseExchange):
         self._price_monitor_active = False
         self._order_monitor_active = False
         self._price_poll_thread = None
-        self._order_poll_thread = None
-        self._on_price_callback = None
-        self._on_order_callback = None
-        
         try:
-            # 使用标准EOA模式
+            # 初始化Polymarket客户端
+            host = "https://clob.polymarket.com"
+            chain_id = 137  # Polygon主网
+            
+            # ClobClient 需要私钥来进行签名和认证
+            # key 参数应该是私钥(不带 0x 前缀)
+            private_key = api_secret
+            if private_key.startswith('0x'):
+                private_key = private_key[2:]  # 移除 0x 前缀
+            
             self.client = ClobClient(
-                self.host,
-                key=api_secret,  # 使用私钥
-                chain_id=self.chain_id,
-                signature_type=0  # 标准EOA签名
+                host=host,
+                key=private_key,
+                chain_id=chain_id,
+                signature_type=2,  # Proxy Wallet 模式 (使用 Polymarket 网站的 Proxy Wallet)
+                funder=api_key  # Polymarket 网站显示的 Proxy Wallet 地址
             )
             
-            # 设置API凭证
-            self.client.set_api_creds(self.client.create_or_derive_api_creds())
-            
-            # 缓存市场信息
-            self._markets_cache = None
-            self._trading_rules_cache = None
-            
+            # 设置 API 凭证用于 Level 2 认证
+            try:
+                api_creds = self.client.create_or_derive_api_creds()
+                self.client.set_api_creds(api_creds)
+                print(f"[{datetime.now().isoformat()}] 🔐 [Polymarket] API 凭证已设置")
+            except Exception as cred_error:
+                print(f"[{datetime.now().isoformat()}] ⚠️ [Polymarket] API 凭证设置失败: {cred_error}")
+                # 继续执行,某些操作可能不需要 Level 2 认证
             print(f"[{datetime.now().isoformat()}] ✅ [Polymarket] 客户端初始化成功")
+            print(f"[{datetime.now().isoformat()}] 📍 [Polymarket] 钱包地址: {api_key}")
+            
+            # 检查余额和授权
+            self._check_balance_and_allowance()
             
         except Exception as e:
-            raise ValueError(f"Polymarket 初始化失败: {str(e)}")
+            print(f"[{datetime.now().isoformat()}] ❌ [Polymarket] 初始化失败: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
         
         print(f"[{datetime.now().isoformat()}] ✅ [Polymarket] 适配器初始化成功")
+
+    def _check_balance_and_allowance(self):
+        """检查账户余额和授权状态"""
+        try:
+            # 获取余额信息
+            balance_allowance = self.client.get_balance_allowance()
+            
+            balance = float(balance_allowance.get('balance', 0))
+            allowance = float(balance_allowance.get('allowance', 0))
+            
+            print(f"[{datetime.now().isoformat()}] 💰 [Polymarket] 余额: ${balance:.2f} USDC")
+            print(f"[{datetime.now().isoformat()}] 🔓 [Polymarket] 授权额度: ${allowance:.2f} USDC")
+            
+            if balance < 1:
+                print(f"[{datetime.now().isoformat()}] ⚠️ [Polymarket] 余额不足 $1 USDC")
+            
+            if allowance < 1:
+                print(f"[{datetime.now().isoformat()}] ⚠️ [Polymarket] 未授权或授权额度不足")
+                print(f"[{datetime.now().isoformat()}] 💡 [Polymarket] 请访问 https://polymarket.com 完成 'Approve Tokens' 步骤")
+                
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ⚠️ [Polymarket] 无法检查余额/授权: {e}")
 
     def ping(self) -> bool:
         """测试连接"""
@@ -97,22 +134,32 @@ class NativePolymarketSpot(BaseExchange):
     def get_symbol_ticker(self) -> Dict:
         """获取交易对当前价格"""
         try:
-            # 获取中间价
-            midpoint = self.client.get_midpoint(self.symbol)
+            # 获取中间价 - 返回格式: {'mid': '0.51'}
+            midpoint_data = self.client.get_midpoint(self.symbol)
+            midpoint = float(midpoint_data.get('mid', 0))
             
-            # 获取买卖价
-            buy_price = self.client.get_price(self.symbol, side="BUY")
-            sell_price = self.client.get_price(self.symbol, side="SELL")
+            # 获取买卖价 - 返回格式: {'price': '0.5'}
+            buy_price_data = self.client.get_price(self.symbol, side="BUY")
+            buy_price = float(buy_price_data.get('price', 0))
             
-            return {
+            sell_price_data = self.client.get_price(self.symbol, side="SELL")
+            sell_price = float(sell_price_data.get('price', 0))
+            
+            result = {
                 'symbol': self.symbol,
                 'price': midpoint,
                 'bidPrice': buy_price,
                 'askPrice': sell_price,
                 'lastPrice': midpoint
             }
+            
+            print(f"[{datetime.now().isoformat()}] 📊 [Polymarket] 价格: mid={midpoint}, bid={buy_price}, ask={sell_price}")
+            return result
+            
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ [Polymarket] 获取价格失败: {e}")
+            import traceback
+            traceback.print_exc()
             raise
     
     def get_order(self, order_id: str) -> Dict:
@@ -153,6 +200,28 @@ class NativePolymarketSpot(BaseExchange):
             print(f"[{datetime.now().isoformat()}] ❌ [Polymarket] 查询订单失败: {e}")
             raise
     
+    def get_open_orders(self) -> list:
+        """获取所有未完成订单"""
+        try:
+            print(f"[{datetime.now().isoformat()}] 🔍 [Polymarket] 查询未完成订单...")
+            orders = self.client.get_orders(OpenOrderParams())
+            
+            open_orders = []
+            for order in orders:
+                status = order.get('status', '').upper()
+                if status == 'LIVE':  # 只返回活跃订单
+                    normalized = self._normalize_order(order)
+                    open_orders.append(normalized)
+            
+            print(f"[{datetime.now().isoformat()}] ✅ [Polymarket] 找到 {len(open_orders)} 个未完成订单")
+            return open_orders
+            
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ [Polymarket] 查询未完成订单失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
     def _normalize_order(self, order: Dict) -> Dict:
         """标准化订单格式"""
         status_map = {
@@ -175,6 +244,8 @@ class NativePolymarketSpot(BaseExchange):
     def order_limit_buy(self, quantity: float, price: str, **kwargs) -> Dict:
         """限价买单"""
         try:
+            print(f"[{datetime.now().isoformat()}] 📝 [Polymarket] 创建限价买单: price={price}, quantity={quantity}")
+            
             order = OrderArgs(
                 token_id=self.symbol,
                 price=float(price),
@@ -182,11 +253,17 @@ class NativePolymarketSpot(BaseExchange):
                 side=BUY
             )
             
+            print(f"[{datetime.now().isoformat()}] 🔏 [Polymarket] 签名订单...")
             signed = self.client.create_order(order)
+            
+            print(f"[{datetime.now().isoformat()}] 📤 [Polymarket] 提交订单...")
             resp = self.client.post_order(signed, OrderType.GTC)
             
+            order_id = resp.get('orderID')
+            print(f"[{datetime.now().isoformat()}] ✅ [Polymarket] 买单创建成功: orderID={order_id}")
+            
             return {
-                'orderId': resp.get('orderID'),
+                'orderId': order_id,
                 'status': 'NEW',
                 'side': 'BUY',
                 'price': float(price),
@@ -196,11 +273,15 @@ class NativePolymarketSpot(BaseExchange):
             
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ [Polymarket] 限价买单失败: {e}")
+            import traceback
+            traceback.print_exc()
             raise
     
     def order_limit_sell(self, quantity: float, price: str, **kwargs) -> Dict:
         """限价卖单"""
         try:
+            print(f"[{datetime.now().isoformat()}] 📝 [Polymarket] 创建限价卖单: price={price}, quantity={quantity}")
+            
             order = OrderArgs(
                 token_id=self.symbol,
                 price=float(price),
@@ -208,11 +289,17 @@ class NativePolymarketSpot(BaseExchange):
                 side=SELL
             )
             
+            print(f"[{datetime.now().isoformat()}] 🔏 [Polymarket] 签名订单...")
             signed = self.client.create_order(order)
+            
+            print(f"[{datetime.now().isoformat()}] 📤 [Polymarket] 提交订单...")
             resp = self.client.post_order(signed, OrderType.GTC)
             
+            order_id = resp.get('orderID')
+            print(f"[{datetime.now().isoformat()}] ✅ [Polymarket] 卖单创建成功: orderID={order_id}")
+            
             return {
-                'orderId': resp.get('orderID'),
+                'orderId': order_id,
                 'status': 'NEW',
                 'side': 'SELL',
                 'price': float(price),
@@ -222,12 +309,16 @@ class NativePolymarketSpot(BaseExchange):
             
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ [Polymarket] 限价卖单失败: {e}")
+            import traceback
+            traceback.print_exc()
             raise
     
     def cancel_order(self, order_id: str) -> Dict:
         """取消订单"""
         try:
+            print(f"[{datetime.now().isoformat()}] 🚫 [Polymarket] 取消订单: orderID={order_id}")
             resp = self.client.cancel(order_id)
+            print(f"[{datetime.now().isoformat()}] ✅ [Polymarket] 订单已取消: orderID={order_id}")
             return {
                 'orderId': order_id,
                 'status': 'CANCELED'
@@ -342,6 +433,8 @@ class NativePolymarketSpot(BaseExchange):
                 
             except Exception as e:
                 print(f"[{datetime.now().isoformat()}] ❌ [Polymarket] 价格轮询错误: {e}")
+                import traceback
+                traceback.print_exc()
                 time.sleep(5)
     
     def _order_poll_loop(self):

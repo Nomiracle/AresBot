@@ -928,6 +928,8 @@ def register_routes(app):
             'binance-futures': 'Binance (币安合约)',
             'backpack': 'Backpack (BPX)',
             'bpx': 'Backpack (BPX)',
+            'polymarket': 'Polymarket (预测市场)',
+            'btc_updown_15m': 'Polymarket - BTC 15分钟 (自动)',
         }
         
         # 去重并构建返回数据
@@ -945,6 +947,201 @@ def register_routes(app):
             'success': True,
             'exchanges': list(unique_exchanges.values())
         })
+    
+    @app.route('/api/polymarket/search', methods=['GET'])
+    def api_polymarket_search():
+        """搜索 Polymarket 市场"""
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未授权'}), 401
+        
+        keyword = request.args.get('keyword', '').strip()
+        include_closed = request.args.get('include_closed', 'false').lower() == 'true'
+        direct_slug = request.args.get('direct_slug', 'false').lower() == 'true'
+        
+        if not keyword:
+            return jsonify({'success': False, 'message': '请输入搜索关键词'})
+        
+        try:
+            import requests
+            import re
+            import datetime
+            
+            # 检查是否是 URL 或 slug
+            slug = None
+            
+            # 特殊处理: 如果包含 btc-updown-15m,自动生成最新时间戳的 slug
+            if 'btc-updown-15m' in keyword.lower():
+                # 计算下一个 15 分钟时间戳
+                now = datetime.datetime.now()
+                current_minute = now.minute
+                next_15min_mark = ((current_minute // 15) + 1) * 15
+                
+                if next_15min_mark >= 60:
+                    next_time = now.replace(hour=now.hour + 1, minute=0, second=0, microsecond=0)
+                else:
+                    next_time = now.replace(minute=next_15min_mark, second=0, microsecond=0)
+                
+                timestamp = int(next_time.timestamp())
+                slug = f"btc-updown-15m-{timestamp}"
+                print(f"Auto-generated slug for latest market: {slug}")
+            
+            # 如果用户勾选了"直接使用 Slug 搜索",强制将输入作为 slug 处理
+            elif direct_slug:
+                slug = keyword
+            else:
+                # 自动检测是否是 URL 或 slug
+                url_match = re.search(r'polymarket\.com/event/([a-z0-9\-]+)', keyword)
+                if url_match:
+                    slug = url_match.group(1)
+                elif re.match(r'^[a-z0-9\-]+$', keyword) and len(keyword) > 20:
+                    # 看起来像 slug
+                    slug = keyword
+            
+            # 如果是 slug,直接通过 Gamma API 查询
+            if slug:
+                try:
+                    slug_response = requests.get(f'https://gamma-api.polymarket.com/events?slug={slug}', timeout=10)
+                    if slug_response.status_code == 200:
+                        slug_events = slug_response.json()
+                        if slug_events:
+                            event = slug_events[0]
+                            markets = event.get('markets', [])
+                            
+                            results = []
+                            for market in markets:
+                                market_data = {
+                                    'question': market.get('question', event.get('title', 'N/A')),
+                                    'condition_id': market.get('conditionId', ''),
+                                    'description': event.get('description', ''),
+                                    'active': event.get('active', False),
+                                    'closed': event.get('closed', False),
+                                    'tokens': market.get('tokens', [])
+                                }
+                                results.append(market_data)
+                            
+                            if results:
+                                return jsonify({
+                                    'success': True,
+                                    'markets': results,
+                                    'count': len(results),
+                                    'total_searched': 1,
+                                    'source': 'direct_slug'
+                                })
+                except Exception as e:
+                    print(f"Slug search error: {e}")
+            
+            # 使用 Gamma API 获取市场数据(更全面)
+            all_markets = []
+            
+            try:
+                # 1. 从 Gamma API 获取事件数据(获取最多 500 个事件)
+                gamma_response = requests.get('https://gamma-api.polymarket.com/events', 
+                                             params={'limit': 1000}, 
+                                             timeout=30)
+                if gamma_response.status_code == 200:
+                    gamma_events = gamma_response.json()
+                    
+                    # 将 Gamma API 格式转换为统一格式
+                    for event in gamma_events:
+                        # Gamma API 的事件可能包含多个市场
+                        event_markets = event.get('markets', [])
+                        
+                        if event_markets:
+                            # 如果有子市场,添加每个市场
+                            for market in event_markets:
+                                all_markets.append({
+                                    'question': market.get('question', event.get('title', 'N/A')),
+                                    'condition_id': market.get('conditionId', ''),
+                                    'description': event.get('description', ''),
+                                    'active': event.get('active', False),
+                                    'closed': event.get('closed', False),
+                                    'tokens': market.get('tokens', [])
+                                })
+                        else:
+                            # 如果没有子市场,添加事件本身
+                            all_markets.append({
+                                'question': event.get('title', 'N/A'),
+                                'condition_id': event.get('id', ''),
+                                'description': event.get('description', ''),
+                                'active': event.get('active', False),
+                                'closed': event.get('closed', False),
+                                'tokens': []
+                            })
+            except Exception as e:
+                print(f"Gamma API error: {e}")
+            
+            # 2. 如果 Gamma API 返回的市场不够,补充 CLOB API 数据
+            if len(all_markets) < 1000:
+                try:
+                    from py_clob_client.client import ClobClient
+                    client = ClobClient("https://clob.polymarket.com")
+                    
+                    next_cursor = 'MA=='
+                    max_pages = 5
+                    
+                    for page in range(max_pages):
+                        response = client.get_markets(next_cursor=next_cursor)
+                        
+                        if isinstance(response, dict):
+                            markets = response.get('data', [])
+                            all_markets.extend(markets)
+                            next_cursor = response.get('next_cursor')
+                            
+                            if not next_cursor:
+                                break
+                        else:
+                            break
+                except Exception as e:
+                    print(f"CLOB API error: {e}")
+            
+            # 搜索匹配的市场
+            keyword_lower = keyword.lower()
+            results = []
+            
+            for market in all_markets:
+                # 根据参数决定是否过滤已关闭的市场
+                if not include_closed and market.get('closed', False):
+                    continue
+                
+                question = market.get('question', '').lower()
+                description = market.get('description', '').lower()
+                
+                if keyword_lower in question or keyword_lower in description:
+                    tokens = market.get('tokens', [])
+                    market_data = {
+                        'question': market.get('question', 'N/A'),
+                        'condition_id': market.get('condition_id', 'N/A'),
+                        'description': market.get('description', '')[:200],
+                        'active': market.get('active', False),
+                        'closed': market.get('closed', False),
+                        'tokens': []
+                    }
+                    
+                    for token in tokens:
+                        market_data['tokens'].append({
+                            'outcome': token.get('outcome', 'Unknown'),
+                            'token_id': token.get('token_id', 'N/A')
+                        })
+                    
+                    results.append(market_data)
+            
+            return jsonify({
+                'success': True,
+                'markets': results,
+                'count': len(results),
+                'total_searched': len(all_markets)
+            })
+            
+        except ImportError:
+            return jsonify({
+                'success': False,
+                'message': '请先安装 py-clob-client: pip install py-clob-client'
+            })
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'搜索失败: {str(e)}'
+            })
 
     @app.route('/system_settings', methods=['GET', 'POST'])
     def system_settings():

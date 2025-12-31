@@ -4,6 +4,7 @@ from .binance_adapterv2 import NativeBinanceSpot
 from .binance_futures_adapter import NativeBinanceFutures
 from .backpack_adapter import NativeBackpackSpot
 from .polymarket_adapter import NativePolymarketSpot
+from .btc_updown_15m import BtcUpDown15m
 from .ccxt_binance_adapter import CcxtBinanceSpot
 from .ccxt_futures_adapter import CcxtBinanceFutures
 from .short_futures_adapter import CcxtBinanceFuturesShort
