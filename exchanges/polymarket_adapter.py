@@ -593,29 +593,64 @@ class NativePolymarketSpot(BaseExchange):
                     return
                     
                 data = json.loads(message)
-                print(f"{self._get_log_prefix()} 📬 订单更新: {data}")
+                event_type = data.get('event_type')
                 
-                # 解析订单更新
-                if 'asset_id' in data:
+                # Order Message: PLACEMENT/UPDATE/CANCELLATION
+                if event_type == 'order':
+                    order_type = data.get('type')  # PLACEMENT/UPDATE/CANCELLATION
+                    print(f"{self._get_log_prefix()} � 订单事件: {order_type}")
+                    
                     event = {
-                        'event_type': 'order_update',
+                        'event_type': 'order',
+                        'type': order_type,
                         'order_id': data.get('id'),
                         'symbol': data.get('asset_id'),
+                        'market': data.get('market'),
                         'side': data.get('side', '').upper(),
-                        'status': data.get('status', '').upper(),
                         'price': float(data.get('price', 0)),
-                        'size': float(data.get('size', 0)),
-                        'filled': float(data.get('size_matched', 0))
+                        'original_size': float(data.get('original_size', 0)),
+                        'size_matched': float(data.get('size_matched', 0)),
+                        'outcome': data.get('outcome'),
+                        'timestamp': data.get('timestamp')
                     }
                     
                     if callback:
                         callback(event)
+                
+                # Trade Message: MATCHED/MINED/CONFIRMED/RETRYING/FAILED
+                elif event_type == 'trade':
+                    trade_status = data.get('status')
+                    print(f"{self._get_log_prefix()} 💱 交易事件: {trade_status}")
+                    
+                    event = {
+                        'event_type': 'trade',
+                        'trade_id': data.get('id'),
+                        'symbol': data.get('asset_id'),
+                        'market': data.get('market'),
+                        'side': data.get('side', '').upper(),
+                        'status': trade_status,
+                        'price': float(data.get('price', 0)),
+                        'size': float(data.get('size', 0)),
+                        'outcome': data.get('outcome'),
+                        'taker_order_id': data.get('taker_order_id'),
+                        'maker_orders': data.get('maker_orders', []),
+                        'matchtime': data.get('matchtime'),
+                        'timestamp': data.get('timestamp')
+                    }
+                    
+                    if callback:
+                        callback(event)
+                else:
+                    # 其他类型的消息
+                    print(f"{self._get_log_prefix()} 📬 用户消息: {event_type}")
                         
             except json.JSONDecodeError:
                 # 非 JSON 消息,可能是心跳响应
                 pass
             except Exception as e:
                 print(f"{self._get_log_prefix()} ❌ 处理订单消息失败: {e}")
+                import traceback
+                traceback.print_exc()
         
         def on_error(ws, error):
             print(f"{self._get_log_prefix()} ❌ 用户 WebSocket 错误: {error}")
@@ -632,7 +667,7 @@ class NativePolymarketSpot(BaseExchange):
             print(f"{self._get_log_prefix()} ✅ 用户 WebSocket 已连接")
             # 订阅用户订单 - markets 参数必须存在(可以为空数组)
             subscribe_msg = {
-                "markets": [],
+                "markets": [self.symbol],
                 "type": "user",
                 "auth": {
                     "apiKey": self.api_creds.api_key,
