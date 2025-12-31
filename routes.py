@@ -558,6 +558,22 @@ def register_routes(app):
                     except:
                         pass
                 
+                # 获取市场信息(适用于 BtcUpDown15m 等动态市场)
+                market_info = None
+                if exchange and hasattr(exchange, 'get_market_info'):
+                    try:
+                        market_info = exchange.get_market_info()
+                    except:
+                        pass
+                
+                # 获取市场剩余时间
+                seconds_until_close = None
+                if exchange and hasattr(exchange, 'get_seconds_until_market_close'):
+                    try:
+                        seconds_until_close = exchange.get_seconds_until_market_close()
+                    except:
+                        pass
+                
                 bots.append({
                     'symbol': sym,
                     'running': is_running,
@@ -577,6 +593,8 @@ def register_routes(app):
                     'warning_count': warning_count,
                     'start_timestamp': start_timestamp,
                     'rate_limit_status': rate_limit_status,
+                    'market_info': market_info,
+                    'seconds_until_close': seconds_until_close,
                     'buy_min_price_diff_percent': b.get('buy_min_price_diff_percent'),
                     'buy_max_price_diff_percent': b.get('buy_max_price_diff_percent'),
                     'buy_avg_price_diff_percent': b.get('buy_avg_price_diff_percent'),

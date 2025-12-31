@@ -2042,6 +2042,48 @@
                 // 交易所显示
                 const exchangeName = (bot.config && bot.config.exchange) ? bot.config.exchange.toUpperCase() : 'BINANCE';
                 
+                // 市场信息显示(适用于 Polymarket 和 BTC Up/Down 15m)
+                let marketInfoDisplay = '';
+                if (bot.market_info) {
+                  const mi = bot.market_info;
+                  let timeDisplay = '';
+                  
+                  // 显示剩余时间
+                  if (bot.seconds_until_close != null && bot.seconds_until_close > 0) {
+                    const seconds = bot.seconds_until_close;
+                    const minutes = Math.floor(seconds / 60);
+                    const hours = Math.floor(minutes / 60);
+                    const days = Math.floor(hours / 24);
+                    
+                    let timeStr = '';
+                    if (days > 0) {
+                      timeStr = `${days}天${hours % 24}小时`;
+                    } else if (hours > 0) {
+                      timeStr = `${hours}小时${minutes % 60}分钟`;
+                    } else if (minutes > 0) {
+                      timeStr = `${minutes}分钟${seconds % 60}秒`;
+                    } else {
+                      timeStr = `${seconds}秒`;
+                    }
+                    
+                    // 根据剩余时间设置颜色
+                    const timeColor = seconds <= 60 ? '#dc3545' : (seconds <= 300 ? '#ffc107' : '#28a745');
+                    timeDisplay = `<span style="color: ${timeColor}; font-weight: 600;">⏰ ${timeStr}</span>`;
+                  } else if (bot.seconds_until_close === 0) {
+                    timeDisplay = '<span style="color: #dc3545; font-weight: 600;">⏰ 已关闭</span>';
+                  }
+                  
+                  marketInfoDisplay = `
+                    <div style="font-size: 12px; margin-top: 6px; padding: 6px 10px; background: #f0f8ff; border-radius: 4px; border-left: 3px solid #007bff;">
+                      <div style="font-weight: 600; color: #0056b3; margin-bottom: 3px;">📍 市场信息</div>
+                      ${mi.slug ? `<div style="color: #495057; margin-bottom: 2px;"><strong>Slug:</strong> <a href="https://polymarket.com/event/${mi.slug}" target="_blank" style="color: #007bff; text-decoration: none; font-weight: 600;">${mi.slug} 🔗</a></div>` : ''}
+                      ${mi.outcome ? `<div style="color: #495057; margin-bottom: 2px;"><strong>方向:</strong> ${mi.outcome}</div>` : ''}
+                      ${mi.end_time ? `<div style="color: #495057; margin-bottom: 2px;"><strong>结束时间:</strong> ${new Date(mi.end_time).toLocaleString('zh-CN')}</div>` : ''}
+                      ${timeDisplay ? `<div style="margin-top: 4px;">${timeDisplay}</div>` : ''}
+                    </div>
+                  `;
+                }
+                
                 return `
                   <div class="pair-item" id="bot-${bot.config.exchange || 'binance'}-${bot.symbol}">
                     <div class="pair-info">
@@ -2051,6 +2093,7 @@
                         <span class="bot-status-badge" style="margin-left: 8px; background: #6f42c1; color: white;">${exchangeName}</span>
                         <span style="margin-left: 10px; color: ${statusColor}; font-weight: 600;">${bot.status_text}</span>
                       </div>
+                      ${marketInfoDisplay}
                       <div style="margin-bottom: 5px;">
                         当前价: <strong>${cp}</strong> | 目标价: <strong>${tp}</strong> | 仓位: <strong>${positionSize}</strong>
                       </div>
