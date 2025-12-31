@@ -1,24 +1,66 @@
 #!/usr/bin/env bash
 # start.sh
-# 用途：如果已有 app.py 运行则先停止；然后以 nohup 启动 app.py（python3.12）
+# 用途：如果已有 app.py 运行则先停止；然后以 nohup 启动 app.py（使用 conda ares 环境）
 # 生成 pid 文件： ./app.pid
 # 日志输出到 logs/ 目录（由 simple_logger 管理）
 
 APP="app.py"
-PY="python3.12"
+CONDA_ENV="ares"
 PIDFILE="app.pid"
 GRACE_PERIOD=10    # 等待优雅退出的秒数
 
 cd "$(dirname "$0")" || exit 1
 
+# 初始化 conda
+echo "初始化 conda..."
+if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+    source "$HOME/miniconda3/etc/profile.d/conda.sh"
+elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
+    source "$HOME/anaconda3/etc/profile.d/conda.sh"
+elif [ -f "/opt/conda/etc/profile.d/conda.sh" ]; then
+    source "/opt/conda/etc/profile.d/conda.sh"
+else
+    echo "错误: 未找到 conda 安装，请先安装 conda"
+    exit 1
+fi
 
-pip3.12 install -r requirements.txt --upgrade
+# 检查 ares 环境是否存在
+if conda env list | grep -q "^${CONDA_ENV} "; then
+    echo "conda 环境 '${CONDA_ENV}' 已存在"
+else
+    echo "创建 conda 环境 '${CONDA_ENV}' (Python 3.12)..."
+    conda create -n "${CONDA_ENV}" python=3.12 -y
+    if [ $? -ne 0 ]; then
+        echo "错误: 创建 conda 环境失败"
+        exit 1
+    fi
+    echo "conda 环境 '${CONDA_ENV}' 创建成功"
+fi
+
+# 激活 conda 环境
+echo "激活 conda 环境 '${CONDA_ENV}'..."
+conda activate "${CONDA_ENV}"
+if [ $? -ne 0 ]; then
+    echo "错误: 激活 conda 环境失败"
+    exit 1
+fi
+
+# 更新依赖
+echo "更新依赖包..."
+pip install -r requirements.txt --upgrade
+
+# 拉取最新代码
+echo "拉取最新代码..."
 git pull origin main
 
-# 查找与 app 关联的 pid（尽量精确匹配 python3.12 ... app.py）
+# 获取 Python 路径
+PY=$(which python)
+echo "使用 Python: ${PY}"
+
+# 查找与 app 关联的 pid（匹配 python ... app.py）
 get_pids() {
-    # 先尝试匹配 python3.12 + app.py 的组合；若没有，再尝试匹配 app.py（兼容不同启动方式）
-    pgrep -f "[p]ython3.12.*${APP}" || pgrep -f "[p]ython.*${APP}" || true
+    # 匹配 python + app.py 的组合
+    pgrep -f "[p]ython.*${APP}" || true
 }
 
 pids=$(get_pids)
@@ -64,7 +106,9 @@ else
 fi
 
 # 启动新进程（不生成 app.log，日志由 simple_logger 管理）
-echo "使用 ${PY} 启动 ${APP}，PID 写入 ${PIDFILE}"
+echo "使用 conda 环境 '${CONDA_ENV}' 启动 ${APP}"
+echo "Python 路径: ${PY}"
+echo "PID 写入 ${PIDFILE}"
 echo "日志将输出到 logs/ 目录"
 nohup "$PY" -u "$APP" > /dev/null 2>&1 &
 
