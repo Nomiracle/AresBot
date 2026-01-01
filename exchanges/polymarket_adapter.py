@@ -251,6 +251,12 @@ class NativePolymarketSpot(BaseExchange):
     def order_limit_buy(self, quantity: float, price: str, **kwargs) -> Dict:
         """限价买单"""
         try:
+            # 价格检查：低于 阈值 拒绝下单
+            if float(price) < 0.15:
+                error_msg = f"价格 {price} 低于最低限制 0.15，拒绝下单"
+                print(f"{self._get_log_prefix()} ⛔ {error_msg}")
+                raise ValueError(error_msg)
+            
             print(f"{self._get_log_prefix()} 📝 创建限价买单: token_id={self.symbol}, price={price}, quantity={quantity}")
             
             order = OrderArgs(
@@ -948,3 +954,52 @@ class NativePolymarketSpot(BaseExchange):
         if self._ws_user:
             self._ws_user.close()
         print(f"{self._get_log_prefix()} 🔌 用户 WebSocket 已停止")
+
+
+    def calculate_sell_price(self, buy_price, sell_offset_percent, tick_size, price_decimals, current_price=None):
+        """计算卖出价格（带手续费保护）"""
+        sell_offset = sell_offset_percent / 100.0
+        raw_sell_price = (current_price or buy_price) + sell_offset
+        
+        # 最低保护价（买入价 + 0.2% 手续费）
+        min_price = buy_price * (1 + 2 * self.get_fee_rate())  # 买入价 + 2倍手续费
+        
+        # 最终卖价
+        sell_price = max(raw_sell_price, min_price)
+        sell_price = math.floor(sell_price / tick_size) * tick_size if tick_size else sell_price
+        
+        if sell_price <= buy_price and tick_size:
+            sell_price = round(buy_price + tick_size, price_decimals)
+        
+        # 确保价格落在 0-1 区间（概率范围）
+        sell_price = max(0.01, min(0.99, sell_price))
+
+        return sell_price
+
+    def calculate_buy_target_price(self, current_price, offset_percent, tick_size, price_decimals):
+        """
+        计算买单目标价格
+        
+        Args:
+            current_price: 当前市场价格
+            offset_percent: 偏移百分比（通常为负数，如 -0.1）
+            tick_size: 价格步长
+            price_decimals: 价格小数位数
+        
+        Returns:
+            float: 对齐后的买单目标价格
+        """
+        offset = offset_percent / 100.0
+        target_price = current_price + offset
+        
+        # 按 tick_size 对齐（向下取整）
+        if tick_size and tick_size > 0:
+            target_price = math.floor(target_price / tick_size) * tick_size
+        
+        # 按小数位数对齐
+        target_price = round(target_price, price_decimals)
+        
+        # 确保价格落在 0-1 区间（概率范围）
+        target_price = max(0.01, min(0.99, target_price))
+        
+        return target_price
