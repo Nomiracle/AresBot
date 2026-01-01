@@ -573,6 +573,10 @@ class NativePolymarketSpot(BaseExchange):
             print(f"{self._get_log_prefix()} ⚠️ 市场 WebSocket 已在运行")
             return
         
+        # 生成唯一 ID 用于区分不同的 WebSocket 连接
+        import uuid
+        ws_id = str(uuid.uuid4())[:8]
+        
         self._ws_market_active = True
         self._ws_market_callback = callback
         
@@ -595,18 +599,18 @@ class NativePolymarketSpot(BaseExchange):
                 print(f"{self._get_log_prefix()} ❌ 处理市场消息失败: {e}")
         
         def on_error(ws, error):
-            print(f"{self._get_log_prefix()} ❌ 市场 WebSocket 错误: {error}")
+            print(f"{self._get_log_prefix()} ❌ 市场 WebSocket[{ws_id}] 错误: {error}")
             print(f"{self._get_log_prefix()} 错误类型: {type(error)}")
             import traceback
             traceback.print_exc()
         
         def on_close(ws, close_status_code, close_msg):
-            print(f"{self._get_log_prefix()} 🔌 市场 WebSocket 已关闭")
+            print(f"{self._get_log_prefix()} 🔌 市场 WebSocket[{ws_id}] 已关闭")
             print(f"{self._get_log_prefix()} 状态码: {close_status_code}, 消息: {close_msg}")
             self._ws_market_active = False
         
         def on_open(ws):
-            print(f"{self._get_log_prefix()} ✅ 市场 WebSocket 已连接")
+            print(f"{self._get_log_prefix()} ✅ 市场 WebSocket[{ws_id}] 已连接")
             # 订阅市场数据 - 市场频道不需要认证
             subscribe_msg = {
                 "assets_ids": [self.symbol],
@@ -615,23 +619,11 @@ class NativePolymarketSpot(BaseExchange):
             print(f"{self._get_log_prefix()} 📡 发送订阅消息: {subscribe_msg}")
             ws.send(json.dumps(subscribe_msg))
             print(f"{self._get_log_prefix()} 📡 已订阅市场: {self.symbol}")
-            
-            # 启动心跳线程
-            def ping_loop():
-                while self._ws_market_active:
-                    try:
-                        ws.send("PING")
-                        time.sleep(10)
-                    except Exception as e:
-                        print(f"{self._get_log_prefix()} ❌ PING 失败: {e}")
-                        break
-            
-            ping_thread = threading.Thread(target=ping_loop, daemon=True)
-            ping_thread.start()
+            # 心跳由 run_forever(ping_interval=10) 自动处理，无需自定义 ping_loop
         
         def run_ws():
             ws_url = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
-            print(f"{self._get_log_prefix()} 🔗 正在连接到: {ws_url}")
+            print(f"{self._get_log_prefix()} 🔗 市场 WebSocket[{ws_id}] 正在连接到: {ws_url}")
             self._ws_market = websocket.WebSocketApp(
                 ws_url,
                 on_message=on_message,
@@ -648,7 +640,7 @@ class NativePolymarketSpot(BaseExchange):
         
         self._ws_market_thread = threading.Thread(target=run_ws, daemon=True)
         self._ws_market_thread.start()
-        print(f"{self._get_log_prefix()} 🚀 市场 WebSocket 已启动")
+        print(f"{self._get_log_prefix()} 🚀 市场 WebSocket[{ws_id}] 已启动")
     
     def _process_order_event(self, data: dict, symbol: str = None) -> dict:
         """处理订单事件
@@ -725,13 +717,17 @@ class NativePolymarketSpot(BaseExchange):
             print(f"{self._get_log_prefix()} ⚠️ 用户 WebSocket 已在运行")
             return
         
+        # 生成唯一 ID 用于区分不同的 WebSocket 连接
+        import uuid
+        ws_id = str(uuid.uuid4())[:8]
+        
         self._ws_user_active = True
         self._ws_user_callback = callback
         
         
         def on_message(ws, message):
             try:
-                print(f"{self._get_log_prefix()} 📡 收到用户消息: {message}")
+                print(f"{self._get_log_prefix()} 📡 用户WS[{ws_id}] 收到消息: {message}")
                 # 忽略 PONG 响应
                 if message == "PONG":
                     return
@@ -762,13 +758,13 @@ class NativePolymarketSpot(BaseExchange):
                 traceback.print_exc()
         
         def on_error(ws, error):
-            print(f"{self._get_log_prefix()} ❌ 用户 WebSocket 错误: {error}")
+            print(f"{self._get_log_prefix()} ❌ 用户WS[{ws_id}] 错误: {error}")
             print(f"{self._get_log_prefix()} 错误类型: {type(error)}")
             import traceback
             traceback.print_exc()
         
         def on_close(ws, close_status_code, close_msg):
-            print(f"{self._get_log_prefix()} 🔌 用户 WebSocket 已关闭")
+            print(f"{self._get_log_prefix()} 🔌 用户WS[{ws_id}] 已关闭")
             print(f"{self._get_log_prefix()} 状态码: {close_status_code}, 消息: {close_msg}")
             self._ws_user_active = False
         
@@ -778,9 +774,9 @@ class NativePolymarketSpot(BaseExchange):
             self._ws_user_connected_once = True
             
             if is_reconnect:
-                print(f"{self._get_log_prefix()} 🔄 用户 WebSocket 重连成功")
+                print(f"{self._get_log_prefix()} 🔄 用户WS[{ws_id}] 重连成功")
             else:
-                print(f"{self._get_log_prefix()} ✅ 用户 WebSocket 已连接")
+                print(f"{self._get_log_prefix()} ✅ 用户WS[{ws_id}] 已连接")
             
             # 获取 condition_id (如果有的话)
             markets_to_subscribe = []
@@ -815,7 +811,7 @@ class NativePolymarketSpot(BaseExchange):
         
         def run_ws():
             ws_url = "wss://ws-subscriptions-clob.polymarket.com/ws/user"
-            print(f"{self._get_log_prefix()} 🔗 正在连接到: {ws_url}")
+            print(f"{self._get_log_prefix()} 🔗 用户WS[{ws_id}] 正在连接到: {ws_url}")
             self._ws_user = websocket.WebSocketApp(
                 ws_url,
                 on_message=on_message,
@@ -832,7 +828,7 @@ class NativePolymarketSpot(BaseExchange):
         
         self._ws_user_thread = threading.Thread(target=run_ws, daemon=True)
         self._ws_user_thread.start()
-        print(f"{self._get_log_prefix()} 🚀 用户 WebSocket 已启动")
+        print(f"{self._get_log_prefix()} 🚀 用户WS[{ws_id}] 已启动")
     
     def unsubscribe_market_ws(self):
         """取消订阅市场数据 WebSocket"""
