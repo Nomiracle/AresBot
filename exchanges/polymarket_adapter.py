@@ -431,10 +431,10 @@ class NativePolymarketSpot(BaseExchange):
             # Polymarket的价格范围是0-1 (概率)
             # 最小价格单位通常是0.001 (0.1%)
             rules = {
-                'tick_size': 0.001,      # 价格步长 0.1%
-                'price_decimals': 3,     # 价格小数位数
-                'step_size': 0.01,       # 数量步长
-                'qty_decimals': 2        # 数量小数位数
+                'tick_size': 0.01,
+                'price_decimals': 2,
+                'step_size': 0.01,
+                'qty_decimals': 2
             }
             
             self._trading_rules_cache = rules
@@ -442,13 +442,7 @@ class NativePolymarketSpot(BaseExchange):
             
         except Exception as e:
             print(f"{self._get_log_prefix()} ❌ 获取交易规则失败: {e}")
-            # 返回默认值
-            return {
-                'tick_size': 0.01,
-                'price_decimals': 2,
-                'step_size': 0.01,
-                'qty_decimals': 2
-            }
+            
     
     def start_ws(self, on_price_update: Callable[[float], None], 
                  on_order_update: Callable[[Dict], None]) -> bool:
@@ -707,6 +701,116 @@ class NativePolymarketSpot(BaseExchange):
             print(f"{self._get_log_prefix()} ❓ 未知订单类型: {order_type}")
             return None
     
+    def _process_trade_event(self, data: dict, symbol: str = None) -> dict:
+        """处理交易事件
+        
+        Trade 事件在以下情况触发:
+        - 市价单被匹配 ("MATCHED")
+        - 用户的限价单被包含在交易中 ("MATCHED")
+        - 交易状态变更 ("MINED", "CONFIRMED", "RETRYING", "FAILED")
+        
+        Args:
+            data: 交易事件数据
+            symbol: 用于事件的 symbol 字段,如果为 None 则使用 self.symbol
+        
+        Returns:
+            dict: 处理后的事件字典,如果不需要回调则返回 None
+        """
+        trade_id = data.get('id')
+        status = data.get('status')  # MATCHED/MINED/CONFIRMED/RETRYING/FAILED
+        taker_order_id = data.get('taker_order_id')
+        asset_id = str(data.get('asset_id', ''))
+        side = data.get('side', '').upper()
+        price = float(data.get('price', 0))
+        size = float(data.get('size', 0))
+        outcome = data.get('outcome')
+        market = data.get('market')  # condition_id
+        trader_side = data.get('trader_side')  # TAKER/MAKER
+        match_time = data.get('match_time')
+        transaction_hash = data.get('transaction_hash')
+        maker_orders = data.get('maker_orders', [])
+        
+        # 使用传入的 symbol 或默认使用 self.symbol
+        event_symbol = symbol if symbol is not None else self.symbol
+        
+        print(f"{self._get_log_prefix()} 💱 Trade事件: status={status}, side={side}, size={size}, price={price}, outcome={outcome}")
+        print(f"{self._get_log_prefix()} 💱 Trade详情: trade_id={trade_id}, taker_order_id={taker_order_id[:16] if taker_order_id else None}...")
+        
+        if status == 'MATCHED':
+            # 交易已匹配 - 这是最重要的状态，表示订单已成交
+            event = {
+                'event_type': 'order_filled',
+                'trade_id': trade_id,
+                'order_id': taker_order_id,
+                'taker_order_id': taker_order_id,
+                'symbol': event_symbol,
+                'side': side,
+                'price': price,
+                'quantity': size,
+                'size': size,
+                'executedQty': size,
+                'outcome': outcome,
+                'market': market,
+                'trader_side': trader_side,
+                'match_time': match_time,
+                'maker_orders': maker_orders
+            }
+            print(f"{self._get_log_prefix()} ✅ 订单成交(Trade): {trade_id}, {side} {size}@{price}")
+            return event
+        
+        elif status == 'MINED':
+            # 交易已上链
+            event = {
+                'event_type': 'trade_mined',
+                'trade_id': trade_id,
+                'taker_order_id': taker_order_id,
+                'symbol': event_symbol,
+                'transaction_hash': transaction_hash
+            }
+            print(f"{self._get_log_prefix()} ⛏️ 交易已上链: {trade_id}, tx={transaction_hash[:16] if transaction_hash else None}...")
+            return event
+        
+        elif status == 'CONFIRMED':
+            # 交易已确认
+            event = {
+                'event_type': 'trade_confirmed',
+                'trade_id': trade_id,
+                'taker_order_id': taker_order_id,
+                'symbol': event_symbol,
+                'transaction_hash': transaction_hash
+            }
+            print(f"{self._get_log_prefix()} ✅ 交易已确认: {trade_id}")
+            return event
+        
+        elif status == 'RETRYING':
+            # 交易重试中
+            event = {
+                'event_type': 'trade_retrying',
+                'trade_id': trade_id,
+                'taker_order_id': taker_order_id,
+                'symbol': event_symbol
+            }
+            print(f"{self._get_log_prefix()} 🔄 交易重试中: {trade_id}")
+            return event
+        
+        elif status == 'FAILED':
+            # 交易失败
+            event = {
+                'event_type': 'trade_failed',
+                'trade_id': trade_id,
+                'taker_order_id': taker_order_id,
+                'symbol': event_symbol,
+                'side': side,
+                'price': price,
+                'size': size
+            }
+            print(f"{self._get_log_prefix()} ❌ 交易失败: {trade_id}")
+            return event
+        
+        else:
+            print(f"{self._get_log_prefix()} ❓ 未知交易状态: {status}")
+            return None
+    
     def subscribe_user_ws(self, callback: Callable = None):
         """订阅用户订单 WebSocket
         
@@ -743,8 +847,9 @@ class NativePolymarketSpot(BaseExchange):
                 
                 # Trade Message: MATCHED/MINED/CONFIRMED/RETRYING/FAILED
                 elif event_type == 'trade':
-                    trade_status = data.get('status')
-                    print(f"{self._get_log_prefix()} 💱 交易事件: {trade_status}")
+                    event = self._process_trade_event(data)
+                    if event and callback:
+                        callback(event)
                 else:
                     # 其他类型的消息
                     print(f"{self._get_log_prefix()} 📬 用户消息: {event_type}")
