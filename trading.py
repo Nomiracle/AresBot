@@ -593,6 +593,19 @@ def trading_loop(username, bot_key):
                             handle_reconnected(bot_data, exchange, log_prefix, _on_order_update)
                             return
                         
+                        # 市场刷新事件（BtcUpDown15m 市场切换）
+                        if event_type == 'refresh_market':
+                            old_slug = event.get('old_slug')
+                            new_slug = event.get('new_slug')
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 市场已切换: {old_slug} → {new_slug}")
+                            # 清除旧市场的缓存订单
+                            old_buys = len(bot_data.get('pending_buys', []))
+                            old_sells = len(bot_data.get('pending_sells', []))
+                            bot_data['pending_buys'] = []
+                            bot_data['pending_sells'] = []
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} 🧹 已清除缓存订单: {old_buys} 笔买单, {old_sells} 笔卖单")
+                            return
+                        
                         # 错误事件
                         if event_type == 'error':
                             print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ {event.get('error_message')}")

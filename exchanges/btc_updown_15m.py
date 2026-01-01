@@ -321,9 +321,11 @@ class BtcUpDown15m(NativePolymarketSpot):
             print(f"[{datetime.now().isoformat()}] 🔍 [BTC Up/Down 15m] 当前状态: slug={self.market_slug}, token_id={self.symbol}")
             
             old_token_id = self.symbol
+            old_slug = self.market_slug
             
             # 获取下一个市场的 token_id (这会同时更新 self.market_slug 和 self.market_end_time)
             new_token_id = self._get_next_market_token()
+            new_slug = self.market_slug
             
             if new_token_id and new_token_id != old_token_id:
                 # 关闭旧市场的 WebSocket
@@ -351,6 +353,18 @@ class BtcUpDown15m(NativePolymarketSpot):
                 # 重置市场切换标志，允许下单和改价
                 self._is_switching_market = False
                 print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 市场切换完成，允许下单和改价")
+                
+                # 发送 refresh_market 事件给 trading.py，清除旧市场的缓存订单
+                if self._ws_callbacks and self._ws_callbacks.get('order'):
+                    refresh_event = {
+                        'event_type': 'refresh_market',
+                        'symbol': self.outcome,
+                        'old_slug': old_slug,
+                        'new_slug': new_slug
+                    }
+                    self._ws_callbacks['order'](refresh_event)
+                    print(f"[{datetime.now().isoformat()}] 📤 [BTC Up/Down 15m] 已发送 refresh_market 事件")
+                
                 return True
             elif new_token_id == old_token_id:
                 print(f"[{datetime.now().isoformat()}] ℹ️ [BTC Up/Down 15m] 已是最新市场: slug={self.market_slug}, token_id={self.symbol}")
