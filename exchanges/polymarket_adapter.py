@@ -612,6 +612,7 @@ class NativePolymarketSpot(BaseExchange):
         
         def on_message(ws, message):
             try:
+                print(f"{self._get_log_prefix()} 📡 收到用户消息: {message}")
                 # 忽略 PONG 响应
                 if message == "PONG":
                     return
@@ -622,21 +623,53 @@ class NativePolymarketSpot(BaseExchange):
                 # Order Message: PLACEMENT/UPDATE/CANCELLATION
                 if event_type == 'order':
                     order_type = data.get('type')  # PLACEMENT/UPDATE/CANCELLATION
-                    print(f"{self._get_log_prefix()} � 订单事件: {order_type}")
+                    print(f"{self._get_log_prefix()} 📋 订单事件: {order_type}")
                     
-                    event = {
-                        'event_type': 'order',
-                        'type': order_type,
-                        'order_id': data.get('id'),
-                        'symbol': data.get('asset_id'),
-                        'market': data.get('market'),
-                        'side': data.get('side', '').upper(),
-                        'price': float(data.get('price', 0)),
-                        'original_size': float(data.get('original_size', 0)),
-                        'size_matched': float(data.get('size_matched', 0)),
-                        'outcome': data.get('outcome'),
-                        'timestamp': data.get('timestamp')
-                    }
+                    order_id = data.get('id')
+                    asset_id = data.get('asset_id')
+                    side = data.get('side', '').upper()
+                    price = float(data.get('price', 0))
+                    original_size = float(data.get('original_size', 0))
+                    size_matched = float(data.get('size_matched', 0))
+                    
+                    # 转换为 trading.py 期望的格式
+                    if order_type == 'CANCELLATION':
+                        # 订单取消事件
+                        event = {
+                            'event_type': 'order_cancelled',
+                            'order_id': order_id,
+                            'symbol': asset_id,
+                            'side': side
+                        }
+                        print(f"{self._get_log_prefix()} ❌ 订单取消: {order_id}")
+                    
+                    elif order_type == 'PLACEMENT':
+                        # 订单创建事件 - 暂不处理,等待成交或取消
+                        print(f"{self._get_log_prefix()} ➕ 订单创建: {order_id}")
+                        return
+                    
+                    elif order_type == 'UPDATE':
+                        # 订单更新事件 - 检查是否完全成交
+                        if size_matched >= original_size and original_size > 0:
+                            # 完全成交
+                            event = {
+                                'event_type': 'order_filled',
+                                'order_id': order_id,
+                                'symbol': asset_id,
+                                'side': side,
+                                'price': price,
+                                'quantity': original_size,
+                                'executedQty': size_matched
+                            }
+                            print(f"{self._get_log_prefix()} ✅ 订单成交: {order_id}, 数量: {size_matched}/{original_size}")
+                        else:
+                            # 部分成交或其他更新 - 暂不处理
+                            print(f"{self._get_log_prefix()} 🔄 订单更新: {order_id}, 已成交: {size_matched}/{original_size}")
+                            return
+                    
+                    else:
+                        print(f"{self._get_log_prefix()} ❓ 未知订单类型: {order_type}")
+                        return
                     
                     if callback:
                         callback(event)
@@ -689,17 +722,26 @@ class NativePolymarketSpot(BaseExchange):
         
         def on_open(ws):
             print(f"{self._get_log_prefix()} ✅ 用户 WebSocket 已连接")
-            # 订阅用户订单 - markets 参数必须存在(可以为空数组)
+            
+            # 获取 condition_id (如果有的话)
+            markets_to_subscribe = []
+            if hasattr(self, 'condition_id') and self.condition_id:
+                markets_to_subscribe = [self.condition_id]
+                print(f"{self._get_log_prefix()} 📋 订阅市场: {self.condition_id}")
+            else:
+                print(f"{self._get_log_prefix()} 📋 订阅所有市场 (无 condition_id)")
+            
+            # 订阅用户订单 - markets 参数为条件 ID 数组
             subscribe_msg = {
-                "markets": [self.symbol],
-                "type": "user",
                 "auth": {
                     "apiKey": self.api_creds.api_key,
                     "secret": self.api_creds.api_secret,
                     "passphrase": self.api_creds.api_passphrase
-                }
+                },
+                "markets": markets_to_subscribe,
+                "type": "user"
             }
-            print(f"{self._get_log_prefix()} 📡 发送订阅消息 (带认证)")
+            print(f"{self._get_log_prefix()} 📡 发送用户订阅消息 (带认证)，subscribe_msg：{subscribe_msg}")
             ws.send(json.dumps(subscribe_msg))
             print(f"{self._get_log_prefix()} 📡 已订阅用户订单")
             

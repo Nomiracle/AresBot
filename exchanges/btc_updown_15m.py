@@ -31,6 +31,7 @@ class BtcUpDown15m(NativePolymarketSpot):
         """
         self.outcome = outcome
         self.market_end_time = None  # 市场结束时间戳
+        self.condition_id = None  # 市场的条件 ID (用于 WebSocket 订阅)
         self._ws_callbacks = None  # 保存 WebSocket 回调函数
         self._refresh_timer = None  # 市场刷新定时器
         self._timer_lock = threading.Lock()  # 定时器锁
@@ -92,102 +93,133 @@ class BtcUpDown15m(NativePolymarketSpot):
         
         return int(current_time.timestamp())
     
-    def _get_latest_market_token(self) -> str:
-        """获取最新市场的 token_id
+    def _get_market_token_by_timestamp(self, timestamp: int, update_state: bool = True) -> str:
+        """根据时间戳获取市场的 token_id
         
-        尝试顺序:
-        1. 下一个 15 分钟市场
-        2. 当前 15 分钟市场
-        3. 前一个 15 分钟市场
+        Args:
+            timestamp: 市场开始时间戳
+            update_state: 是否更新实例状态(market_slug, market_end_time)
         
         Returns:
             str: Token ID,如果获取失败返回 None
         """
-        # 尝试多个时间戳
-        # slug 中的时间戳是市场开始时间
-        # 例如: 现在是 02:28, 当前市场是 btc-updown-15m-1767165300 (02:15 开始, 02:30 结束)
-        timestamps_to_try = [
-            self._calculate_current_timestamp(),   # 当前 15 分钟区间的开始时间
-        ]
-        
-        for timestamp in timestamps_to_try:
-            try:
-                slug = f"btc-updown-15m-{timestamp}"
-                
-                print(f"[{datetime.now().isoformat()}] 🔍 [BTC Up/Down 15m] 查询市场: {slug}")
-                
-                # 通过 Gamma API 查询市场
-                response = requests.get(
-                    f'https://gamma-api.polymarket.com/events?slug={slug}',
-                    timeout=10
-                )
-                
-                if response.status_code == 200:
-                    events = response.json()
-                    if events and len(events) > 0:
-                        event = events[0]
-                        markets = event.get('markets', [])
+        try:
+            slug = f"btc-updown-15m-{timestamp}"
+            
+            print(f"[{datetime.now().isoformat()}] 🔍 [BTC Up/Down 15m] 查询市场: {slug}")
+            
+            # 通过 Gamma API 查询市场
+            response = requests.get(
+                f'https://gamma-api.polymarket.com/events?slug={slug}',
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                events = response.json()
+                if events and len(events) > 0:
+                    event = events[0]
+                    markets = event.get('markets', [])
+                    
+                    if markets and len(markets) > 0:
+                        market = markets[0]
                         
-                        if markets and len(markets) > 0:
-                            market = markets[0]
-                            
-                            # 尝试从 tokens 字段获取
-                            tokens = market.get('tokens', [])
-                            
-                            # 如果 tokens 为空,尝试从 clobTokenIds 获取
-                            if not tokens:
-                                import json
-                                clob_token_ids_str = market.get('clobTokenIds', '[]')
-                                try:
-                                    clob_token_ids = json.loads(clob_token_ids_str)
-                                    outcomes_str = market.get('outcomes', '[]')
-                                    outcomes = json.loads(outcomes_str)
-                                    
-                                    # 构建 tokens 列表
-                                    tokens = []
-                                    for i, token_id in enumerate(clob_token_ids):
-                                        if i < len(outcomes):
-                                            tokens.append({
-                                                'token_id': token_id,
-                                                'outcome': outcomes[i]
-                                            })
-                                except (json.JSONDecodeError, Exception) as e:
-                                    print(f"[{datetime.now().isoformat()}] ⚠️ [BTC Up/Down 15m] 解析 clobTokenIds 失败: {e}")
-                            
-                            # 查找对应方向的 token
-                            print(f"[{datetime.now().isoformat()}] 🔍 [BTC Up/Down 15m] 市场 {slug} 有 {len(tokens)} 个 token")
-                            for token in tokens:
-                                print(f"[{datetime.now().isoformat()}] 🔍 [BTC Up/Down 15m]   - {token.get('outcome')}: {token.get('token_id')}")
-                                if token.get('outcome', '').lower() == self.outcome.lower():
-                                    token_id = token.get('token_id')
+                        # 保存 condition_id (用于 WebSocket 订阅)
+                        if update_state:
+                            condition_id = market.get('conditionId') or market.get('condition_id')
+                            if condition_id:
+                                self.condition_id = condition_id
+                                print(f"[{datetime.now().isoformat()}] 🔑 [BTC Up/Down 15m] Condition ID: {condition_id}")
+                        
+                        # 尝试从 tokens 字段获取
+                        tokens = market.get('tokens', [])
+                        
+                        # 如果 tokens 为空,尝试从 clobTokenIds 获取
+                        if not tokens:
+                            import json
+                            clob_token_ids_str = market.get('clobTokenIds', '[]')
+                            try:
+                                clob_token_ids = json.loads(clob_token_ids_str)
+                                outcomes_str = market.get('outcomes', '[]')
+                                outcomes = json.loads(outcomes_str)
+                                
+                                # 构建 tokens 列表
+                                tokens = []
+                                for i, token_id in enumerate(clob_token_ids):
+                                    if i < len(outcomes):
+                                        tokens.append({
+                                            'token_id': token_id,
+                                            'outcome': outcomes[i]
+                                        })
+                            except (json.JSONDecodeError, Exception) as e:
+                                print(f"[{datetime.now().isoformat()}] ⚠️ [BTC Up/Down 15m] 解析 clobTokenIds 失败: {e}")
+                        
+                        # 查找对应方向的 token
+                        print(f"[{datetime.now().isoformat()}] 🔍 [BTC Up/Down 15m] 市场 {slug} 有 {len(tokens)} 个 token")
+                        for token in tokens:
+                            print(f"[{datetime.now().isoformat()}] 🔍 [BTC Up/Down 15m]   - {token.get('outcome')}: {token.get('token_id')}")
+                            if token.get('outcome', '').lower() == self.outcome.lower():
+                                token_id = token.get('token_id')
+                                
+                                if update_state:
                                     self.market_slug = slug
-                                    # slug 中的时间戳是开始时间,结束时间 = 开始时间 + 15 分钟
                                     self.market_end_time = timestamp + 900  # 900秒 = 15分钟
-                                    print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 找到 {self.outcome} token")
-                                    print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] Slug: {slug} (开始: {datetime.fromtimestamp(timestamp, tz=pytz.UTC).strftime('%H:%M')} UTC)")
-                                    print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] Token ID: {token_id}")
-                                    print(f"[{datetime.now().isoformat()}] ⏰ [BTC Up/Down 15m] 市场结束时间: {datetime.fromtimestamp(self.market_end_time, tz=pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
-                                    return token_id
-                            
-                            # 如果没有找到指定方向,使用第一个 token
-                            if tokens:
-                                token_id = tokens[0].get('token_id')
-                                actual_outcome = tokens[0].get('outcome', 'Unknown')
-                                self.market_slug = slug
-                                # slug 中的时间戳是开始时间,结束时间 = 开始时间 + 15 分钟
-                                self.market_end_time = timestamp + 900  # 900秒 = 15分钟
-                                print(f"[{datetime.now().isoformat()}] ⚠️ [BTC Up/Down 15m] 未找到 {self.outcome},使用 {actual_outcome}: {token_id}")
-                                print(f"[{datetime.now().isoformat()}] ⏰ [BTC Up/Down 15m] 市场结束时间: {datetime.fromtimestamp(self.market_end_time, tz=pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
+                                
+                                print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 找到 {self.outcome} token")
+                                print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] Slug: {slug} (开始: {datetime.fromtimestamp(timestamp, tz=pytz.UTC).strftime('%H:%M')} UTC)")
+                                print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] Token ID: {token_id}")
+                                print(f"[{datetime.now().isoformat()}] ⏰ [BTC Up/Down 15m] 市场结束时间: {datetime.fromtimestamp(timestamp + 900, tz=pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
                                 return token_id
-                
-                print(f"[{datetime.now().isoformat()}] ⏭️ [BTC Up/Down 15m] 市场 {slug} 不存在,尝试下一个...")
-                
-            except Exception as e:
-                print(f"[{datetime.now().isoformat()}] ❌ [BTC Up/Down 15m] 查询失败: {e}")
-                continue
+                        
+                        # 如果没有找到指定方向,使用第一个 token
+                        if tokens:
+                            token_id = tokens[0].get('token_id')
+                            actual_outcome = tokens[0].get('outcome', 'Unknown')
+                            
+                            if update_state:
+                                self.market_slug = slug
+                                self.market_end_time = timestamp + 900  # 900秒 = 15分钟
+                            
+                            print(f"[{datetime.now().isoformat()}] ⚠️ [BTC Up/Down 15m] 未找到 {self.outcome},使用 {actual_outcome}: {token_id}")
+                            print(f"[{datetime.now().isoformat()}] ⏰ [BTC Up/Down 15m] 市场结束时间: {datetime.fromtimestamp(timestamp + 900, tz=pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
+                            return token_id
+            
+            print(f"[{datetime.now().isoformat()}] ⏭️ [BTC Up/Down 15m] 市场 {slug} 不存在")
+            
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ [BTC Up/Down 15m] 查询失败: {e}")
         
-        print(f"[{datetime.now().isoformat()}] ❌ [BTC Up/Down 15m] 所有时间戳都无可用市场")
         return None
+    
+    def _get_latest_market_token(self) -> str:
+        """获取最新市场的 token_id
+        
+        尝试顺序:
+        1. 当前 15 分钟市场
+        
+        Returns:
+            str: Token ID,如果获取失败返回 None
+        """
+        current_timestamp = self._calculate_current_timestamp()
+        token_id = self._get_market_token_by_timestamp(current_timestamp, update_state=True)
+        
+        if not token_id:
+            print(f"[{datetime.now().isoformat()}] ❌ [BTC Up/Down 15m] 无法获取最新市场")
+        
+        return token_id
+    
+    def _get_next_market_token(self) -> str:
+        """获取下一个 15 分钟市场的 token_id
+        
+        Returns:
+            str: Token ID,如果获取失败返回 None
+        """
+        next_timestamp = self._calculate_next_timestamp()
+        token_id = self._get_market_token_by_timestamp(next_timestamp, update_state=True)
+        
+        if not token_id:
+            print(f"[{datetime.now().isoformat()}] ❌ [BTC Up/Down 15m] 无法获取下一个市场")
+        
+        return token_id
     
     def _check_and_schedule_refresh(self) -> None:
         """检查市场状态并设置定时器
@@ -265,7 +297,7 @@ class BtcUpDown15m(NativePolymarketSpot):
             traceback.print_exc()
     
     def refresh_market(self) -> bool:
-        """刷新到最新的市场
+        """刷新到下一个市场
         
         当当前市场即将结束或已结束时,可以调用此方法切换到新市场
         同时会自动关闭旧市场的 WebSocket 并开启新市场的 WebSocket
@@ -279,8 +311,8 @@ class BtcUpDown15m(NativePolymarketSpot):
             
             old_token_id = self.symbol
             
-            # 获取新的 token_id (这会同时更新 self.market_slug 和 self.market_end_time)
-            new_token_id = self._get_latest_market_token()
+            # 获取下一个市场的 token_id (这会同时更新 self.market_slug 和 self.market_end_time)
+            new_token_id = self._get_next_market_token()
             
             if new_token_id and new_token_id != old_token_id:
                 # 关闭旧市场的 WebSocket
