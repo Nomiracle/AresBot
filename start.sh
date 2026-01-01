@@ -13,16 +13,49 @@ cd "$(dirname "$0")" || exit 1
 
 # 初始化 conda
 echo "初始化 conda..."
-if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
-    source "$HOME/miniconda3/etc/profile.d/conda.sh"
-elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
-    source "$HOME/anaconda3/etc/profile.d/conda.sh"
-elif [ -f "/opt/conda/etc/profile.d/conda.sh" ]; then
-    source "/opt/conda/etc/profile.d/conda.sh"
+
+# 查找 conda 安装路径
+CONDA_BASE=""
+for base_path in \
+    "$HOME/miniforge3" \
+    "$HOME/miniconda3" \
+    "$HOME/anaconda3" \
+    "$HOME/.conda" \
+    "/opt/conda" \
+    "/opt/miniforge3" \
+    "/opt/miniconda3" \
+    "/opt/anaconda3" \
+    "/usr/local/miniforge3" \
+    "/usr/local/miniconda3" \
+    "/usr/local/anaconda3"
+do
+    if [ -d "$base_path" ] && [ -f "$base_path/etc/profile.d/conda.sh" ]; then
+        CONDA_BASE="$base_path"
+        break
+    fi
+done
+
+# 如果找到 conda 安装路径,执行初始化
+if [ -n "$CONDA_BASE" ]; then
+    echo "找到 conda 安装: $CONDA_BASE"
+    source "$CONDA_BASE/etc/profile.d/conda.sh"
 else
-    echo "错误: 未找到 conda 安装，请先安装 conda"
+    echo "错误: 未找到 conda 安装"
+    echo "请确保 conda 已正确安装在以下位置之一:"
+    echo "  - $HOME/miniconda3"
+    echo "  - $HOME/anaconda3"
+    echo "  - /opt/conda"
     exit 1
 fi
+
+# 验证 conda 是否可用
+if ! type conda &> /dev/null; then
+    echo "错误: conda 初始化失败"
+    exit 1
+fi
+
+CONDA_VERSION=$(conda --version 2>/dev/null)
+echo "conda 初始化成功: $CONDA_VERSION"
 
 # 检查 ares 环境是否存在
 if conda env list | grep -q "^${CONDA_ENV} "; then
