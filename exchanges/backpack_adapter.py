@@ -13,7 +13,7 @@ try:
     from bpx.account import Account
     from bpx.public import Public
 except ImportError:
-    print("⚠️ 请安装 bpx-py: pip install bpx-py")
+    print("WARNING: Please install bpx-py: pip install bpx-py")
     Account = None
     Public = None
 

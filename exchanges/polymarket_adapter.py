@@ -399,44 +399,64 @@ class NativePolymarketSpot(BaseExchange):
         # 市场数据回调包装
         def market_callback(data):
             try:
-                # 检查事件类型
-                event_type = data.get('event_type')
-                
-                if event_type == 'price_change':
-                    # 解析 price_changes 数组
-                    price_changes = data.get('price_changes', [])
-                    
-                    for change in price_changes:
-                        asset_id = change.get('asset_id')
-                        
-                        # 只处理当前交易的 token
-                        if asset_id == self.symbol:
-                            # 使用 best_bid 和 best_ask 计算中间价
-                            best_bid = float(change.get('best_bid', 0))
-                            best_ask = float(change.get('best_ask', 0))
-                            
-                            if best_bid > 0 and best_ask > 0:
-                                mid_price = (best_bid + best_ask) / 2
-                            elif best_bid > 0:
-                                mid_price = best_bid
-                            elif best_ask > 0:
-                                mid_price = best_ask
-                            else:
-                                # 使用最新成交价
-                                mid_price = float(change.get('price', 0))
-                            
-                            if mid_price > 0 and on_price_update:
-                                # print(f"{self._get_log_prefix()} 💰 价格更新: {mid_price} (bid={best_bid}, ask={best_ask})")
-                                on_price_update(mid_price)
-                            break
-                # else:
-                    # 其他类型的市场事件
-                    # print(f"{self._get_log_prefix()} 📊 市场事件: {event_type}")
+                # 处理列表格式的数据
+                if isinstance(data, list):
+                    # 如果是列表，遍历每个元素
+                    for item in data:
+                        if isinstance(item, dict):
+                            process_market_data(item)
+                elif isinstance(data, dict):
+                    # 如果是字典，直接处理
+                    process_market_data(data)
                     
             except Exception as e:
                 print(f"{self._get_log_prefix()} ❌ 处理价格更新失败: {e}")
                 import traceback
                 traceback.print_exc()
+        
+        def process_market_data(data):
+            """处理单个市场数据项"""
+            # 只处理 price_change 事件
+            event_type = data.get('event_type')
+            
+            if event_type == 'price_change':
+                # 解析 price_changes 数组
+                price_changes = data.get('price_changes', [])
+                
+                for change in price_changes:
+                    asset_id = change.get('asset_id')
+                    
+                    # 只处理当前交易的 token
+                    if asset_id == self.symbol:
+                        # 使用 best_bid 和 best_ask 计算中间价
+                        best_bid_str = change.get('best_bid', '0')
+                        best_ask_str = change.get('best_ask', '0')
+                        
+                        # 转换为浮点数
+                        try:
+                            best_bid = float(best_bid_str) if best_bid_str else 0
+                            best_ask = float(best_ask_str) if best_ask_str else 0
+                        except (ValueError, TypeError):
+                            best_bid = 0
+                            best_ask = 0
+                        
+                        if best_bid > 0 and best_ask > 0:
+                            mid_price = (best_bid + best_ask) / 2
+                        elif best_bid > 0:
+                            mid_price = best_bid
+                        elif best_ask > 0:
+                            mid_price = best_ask
+                        else:
+                            # 使用价格字段作为后备
+                            try:
+                                mid_price = float(change.get('price', 0))
+                            except (ValueError, TypeError):
+                                mid_price = 0
+                        
+                        if mid_price > 0 and on_price_update:
+                            # print(f"{self._get_log_prefix()} 💰 价格更新: {mid_price} (bid={best_bid}, ask={best_ask})")
+                            on_price_update(mid_price)
+                        break
         
         # 订单更新回调包装
         def order_callback(event):
