@@ -287,6 +287,10 @@ class NativePolymarketSpot(BaseExchange):
     def order_limit_sell(self, quantity: float, price: str, **kwargs) -> Dict:
         """限价卖单"""
         try:
+            # 在下卖单前检查 token 余额
+            print(f"{self._get_log_prefix()} 🔍 检查 Conditional Token 余额...")
+            self._check_token_balance_before_sell(quantity)
+            
             print(f"{self._get_log_prefix()} 📝 创建限价卖单: token_id={self.symbol}, price={price}, quantity={quantity}")
             
             order = OrderArgs(
@@ -319,6 +323,59 @@ class NativePolymarketSpot(BaseExchange):
             import traceback
             traceback.print_exc()
             raise
+    
+    def _check_token_balance_before_sell(self, required_quantity: float, max_wait: int = 30):
+        """在下卖单前检查 token 余额
+        
+        Args:
+            required_quantity: 需要的 token 数量
+            max_wait: 最多等待时间（秒）
+        """
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        import time
+        
+        start_time = time.time()
+        token_balance = 0.0
+        
+        while time.time() - start_time < max_wait:
+            try:
+                # 检查 Conditional Token 余额
+                params = BalanceAllowanceParams(
+                    asset_type=AssetType.CONDITIONAL,
+                    token_id=self.symbol
+                )
+                balance_result = self.client.get_balance_allowance(params)
+                token_balance_raw = float(balance_result.get('balance', 0))
+                
+                # Token 余额需要除以 10^6 转换为实际数量
+                token_balance = token_balance_raw / 1_000_000
+                
+                print(f"{self._get_log_prefix()} 📊 Token 余额: {token_balance:.2f}/{required_quantity} (原始: {token_balance_raw})")
+                
+                # 如果余额足够，退出循环
+                if token_balance >= required_quantity:
+                    print(f"{self._get_log_prefix()} ✅ Token 余额充足!")
+                    return
+                
+                # 如果没有余额，调用 update_balance_allowance 刷新缓存
+                if token_balance == 0:
+                    print(f"{self._get_log_prefix()} 🔄 刷新余额缓存...")
+                    try:
+                        self.client.update_balance_allowance(params)
+                    except Exception as update_e:
+                        print(f"{self._get_log_prefix()} ⚠️ 刷新失败: {update_e}")
+                
+                time.sleep(1)
+                
+            except Exception as e:
+                print(f"{self._get_log_prefix()} ⚠️ 查询余额失败: {e}")
+                time.sleep(1)
+        
+        # 超时后检查余额是否足够
+        if token_balance < required_quantity:
+            error_msg = f"Token 余额不足: {token_balance:.2f}/{required_quantity}"
+            print(f"{self._get_log_prefix()} ❌ {error_msg}")
+            raise ValueError(error_msg)
     
     def cancel_order(self, order_id: str) -> Dict:
         """取消订单"""
@@ -387,8 +444,8 @@ class NativePolymarketSpot(BaseExchange):
             print(f"{self._get_log_prefix()} ❌ 获取交易规则失败: {e}")
             # 返回默认值
             return {
-                'tick_size': 0.001,
-                'price_decimals': 3,
+                'tick_size': 0.01,
+                'price_decimals': 2,
                 'step_size': 0.01,
                 'qty_decimals': 2
             }
@@ -504,7 +561,7 @@ class NativePolymarketSpot(BaseExchange):
         Returns:
             float: 手续费率 (使用Taker费率作为保守估计)
         """
-        return 0.001  # 0.1% Taker费率
+        return 0.0  # 0.1% Taker费率
     
     def subscribe_market_ws(self, callback: Callable = None):
         """订阅市场数据 WebSocket

@@ -35,6 +35,7 @@ class BtcUpDown15m(NativePolymarketSpot):
         self._ws_callbacks = None  # 保存 WebSocket 回调函数
         self._refresh_timer = None  # 市场刷新定时器
         self._timer_lock = threading.Lock()  # 定时器锁
+        self._is_switching_market = False  # 市场切换中标志
         
         # 获取最新市场的 token_id
         token_id = self._get_latest_market_token()
@@ -259,6 +260,13 @@ class BtcUpDown15m(NativePolymarketSpot):
         try:
             print(f"{self._get_log_prefix()} 🔄 开始刷新市场流程...")
             
+            # 设置市场切换中标志，禁止下单和改价
+            self._is_switching_market = True
+            print(f"{self._get_log_prefix()} 🚫 市场切换中，禁止下单和改价")
+            
+            # 等待1秒，确保正在进行的操作完成
+            time.sleep(1)
+            
             # 1. 取消所有未完成的买单
             print(f"{self._get_log_prefix()} 🚫 取消旧市场的所有买单...")
             try:
@@ -285,6 +293,9 @@ class BtcUpDown15m(NativePolymarketSpot):
             success = self.refresh_market()
             
             if success:
+                # 等待1秒，确保新市场 WebSocket 连接稳定
+                time.sleep(1)
+                
                 # 3. 为新市场设置定时器
                 print(f"{self._get_log_prefix()} ⏲️ 为新市场设置定时器...")
                 self._check_and_schedule_refresh()
@@ -336,19 +347,53 @@ class BtcUpDown15m(NativePolymarketSpot):
                 print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 市场已更新")
                 print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 旧市场: token_id={old_token_id}")
                 print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 新市场: slug={self.market_slug}, token_id={new_token_id}")
+                
+                # 重置市场切换标志，允许下单和改价
+                self._is_switching_market = False
+                print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 市场切换完成，允许下单和改价")
                 return True
             elif new_token_id == old_token_id:
                 print(f"[{datetime.now().isoformat()}] ℹ️ [BTC Up/Down 15m] 已是最新市场: slug={self.market_slug}, token_id={self.symbol}")
+                # 重置市场切换标志
+                self._is_switching_market = False
                 return True
             else:
                 print(f"[{datetime.now().isoformat()}] ❌ [BTC Up/Down 15m] 刷新失败")
+                # 刷新失败也要重置标志，否则会永久禁止下单
+                self._is_switching_market = False
                 return False
                 
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ [BTC Up/Down 15m] 刷新市场失败: {e}")
             import traceback
             traceback.print_exc()
+            # 异常时也要重置标志
+            self._is_switching_market = False
             return False
+    
+    def order_limit_buy(self, quantity: float, price: str, **kwargs) -> Dict:
+        """限价买单 - 重写父类方法，检查市场切换状态"""
+        if self._is_switching_market:
+            error_msg = "市场切换中，禁止下单"
+            print(f"{self._get_log_prefix()} 🚫 {error_msg}")
+            raise RuntimeError(error_msg)
+        return super().order_limit_buy(quantity, price, **kwargs)
+    
+    def order_limit_sell(self, quantity: float, price: str, **kwargs) -> Dict:
+        """限价卖单 - 重写父类方法，检查市场切换状态"""
+        if self._is_switching_market:
+            error_msg = "市场切换中，禁止下单"
+            print(f"{self._get_log_prefix()} 🚫 {error_msg}")
+            raise RuntimeError(error_msg)
+        return super().order_limit_sell(quantity, price, **kwargs)
+    
+    def modify_order(self, cancel_order_id: str, new_price: str, new_quantity: float = None, side: str = None) -> Dict:
+        """改价 - 重写父类方法，检查市场切换状态"""
+        if self._is_switching_market:
+            error_msg = "市场切换中，禁止改价"
+            print(f"{self._get_log_prefix()} 🚫 {error_msg}")
+            raise RuntimeError(error_msg)
+        return super().modify_order(cancel_order_id, new_price, new_quantity, side)
     
     def _process_order_event(self, data: dict, symbol: str = None) -> dict:
         """处理订单事件 - 重写父类方法,使用 outcome 作为 symbol
