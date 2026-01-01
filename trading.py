@@ -582,7 +582,7 @@ def trading_loop(username, bot_key):
                     try:
                         # 过滤其他交易对的订单事件
                         if event.get('symbol') != config['symbol']:
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} 🔇 忽略其他交易对事件: {event.get('symbol')}")
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} 🔇 忽略其他交易对事件: {event.get('symbol')}/{config['symbol']}")
                             return
 
                         event_type = event.get('event_type')
@@ -853,9 +853,9 @@ def trading_loop(username, bot_key):
                 if open_orders:
                     skip_reasons.append(f"有未完成订单({len(open_orders)}笔)")
                 if has_pending_buys:
-                    skip_reasons.append(f"有待处理买单({len(bot_data.get('pending_buys', []))}笔)")
+                    skip_reasons.append(f"有待处理买单({len(bot_data.get('pending_buys', []))}笔),{bot_data.get('pending_buys', [])}")
                 if has_pending_sells:
-                    skip_reasons.append(f"有待处理卖单({len(bot_data.get('pending_sells', []))}笔)")
+                    skip_reasons.append(f"有待处理卖单({len(bot_data.get('pending_sells', []))}笔),{bot_data.get('pending_sells', [])}")
                 if is_placing_order:
                     skip_reasons.append("正在下单中")
                 if skip_reasons:

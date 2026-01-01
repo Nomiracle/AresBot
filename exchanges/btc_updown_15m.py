@@ -350,6 +350,19 @@ class BtcUpDown15m(NativePolymarketSpot):
             traceback.print_exc()
             return False
     
+    def _process_order_event(self, data: dict, symbol: str = None) -> dict:
+        """处理订单事件 - 重写父类方法,使用 outcome 作为 symbol
+        
+        Args:
+            data: 订单事件数据
+            symbol: 用于事件的 symbol 字段,如果为 None 则使用 self.outcome
+        
+        Returns:
+            dict: 处理后的事件字典,如果不需要回调则返回 None
+        """
+        # 使用 outcome 作为 symbol,因为 config['symbol'] 存储的是 "Up" 或 "Down"
+        return super()._process_order_event(data, symbol=self.outcome)
+    
     def get_market_info(self) -> dict:
         """获取当前市场信息
         

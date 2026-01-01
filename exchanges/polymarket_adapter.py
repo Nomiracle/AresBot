@@ -596,6 +596,71 @@ class NativePolymarketSpot(BaseExchange):
         self._ws_market_thread.start()
         print(f"{self._get_log_prefix()} 🚀 市场 WebSocket 已启动")
     
+    def _process_order_event(self, data: dict, symbol: str = None) -> dict:
+        """处理订单事件
+        
+        Args:
+            data: 订单事件数据
+            symbol: 用于事件的 symbol 字段,如果为 None 则使用 self.symbol
+        
+        Returns:
+            dict: 处理后的事件字典,如果不需要回调则返回 None
+        """
+        order_type = data.get('type')  # PLACEMENT/UPDATE/CANCELLATION
+        print(f"{self._get_log_prefix()} 📋 订单事件: {order_type}")
+        
+        order_id = data.get('id')
+        asset_id = str(data.get('asset_id'))  # 确保是字符串格式
+        side = data.get('side', '').upper()
+        price = float(data.get('price', 0))
+        original_size = float(data.get('original_size', 0))
+        size_matched = float(data.get('size_matched', 0))
+        
+        # 使用传入的 symbol 或默认使用 self.symbol
+        event_symbol = symbol if symbol is not None else self.symbol
+        print(f"{self._get_log_prefix()} {asset_id}/{self.symbol}/{symbol}，event_symbol: {event_symbol}")
+        
+        # 转换为 trading.py 期望的格式
+        if order_type == 'CANCELLATION':
+            # 订单取消事件
+            event = {
+                'event_type': 'order_cancelled',
+                'order_id': order_id,
+                'symbol': event_symbol,
+                'side': side
+            }
+            print(f"{self._get_log_prefix()} ❌ 订单取消: {order_id}")
+            return event
+        
+        elif order_type == 'PLACEMENT':
+            # 订单创建事件 - 暂不处理,等待成交或取消
+            print(f"{self._get_log_prefix()} ➕ 订单创建: {order_id}")
+            return None
+        
+        elif order_type == 'UPDATE':
+            # 订单更新事件 - 检查是否完全成交
+            if size_matched >= original_size and original_size > 0:
+                # 完全成交
+                event = {
+                    'event_type': 'order_filled',
+                    'order_id': order_id,
+                    'symbol': event_symbol,
+                    'side': side,
+                    'price': price,
+                    'quantity': original_size,
+                    'executedQty': size_matched
+                }
+                print(f"{self._get_log_prefix()} ✅ 订单成交: {order_id}, 数量: {size_matched}/{original_size}")
+                return event
+            else:
+                # 部分成交或其他更新 - 暂不处理
+                print(f"{self._get_log_prefix()} 🔄 订单更新: {order_id}, 已成交: {size_matched}/{original_size}")
+                return None
+        
+        else:
+            print(f"{self._get_log_prefix()} ❓ 未知订单类型: {order_type}")
+            return None
+    
     def subscribe_user_ws(self, callback: Callable = None):
         """订阅用户订单 WebSocket
         
@@ -622,81 +687,14 @@ class NativePolymarketSpot(BaseExchange):
                 
                 # Order Message: PLACEMENT/UPDATE/CANCELLATION
                 if event_type == 'order':
-                    order_type = data.get('type')  # PLACEMENT/UPDATE/CANCELLATION
-                    print(f"{self._get_log_prefix()} 📋 订单事件: {order_type}")
-                    
-                    order_id = data.get('id')
-                    asset_id = data.get('asset_id')
-                    side = data.get('side', '').upper()
-                    price = float(data.get('price', 0))
-                    original_size = float(data.get('original_size', 0))
-                    size_matched = float(data.get('size_matched', 0))
-                    
-                    # 转换为 trading.py 期望的格式
-                    if order_type == 'CANCELLATION':
-                        # 订单取消事件
-                        event = {
-                            'event_type': 'order_cancelled',
-                            'order_id': order_id,
-                            'symbol': asset_id,
-                            'side': side
-                        }
-                        print(f"{self._get_log_prefix()} ❌ 订单取消: {order_id}")
-                    
-                    elif order_type == 'PLACEMENT':
-                        # 订单创建事件 - 暂不处理,等待成交或取消
-                        print(f"{self._get_log_prefix()} ➕ 订单创建: {order_id}")
-                        return
-                    
-                    elif order_type == 'UPDATE':
-                        # 订单更新事件 - 检查是否完全成交
-                        if size_matched >= original_size and original_size > 0:
-                            # 完全成交
-                            event = {
-                                'event_type': 'order_filled',
-                                'order_id': order_id,
-                                'symbol': asset_id,
-                                'side': side,
-                                'price': price,
-                                'quantity': original_size,
-                                'executedQty': size_matched
-                            }
-                            print(f"{self._get_log_prefix()} ✅ 订单成交: {order_id}, 数量: {size_matched}/{original_size}")
-                        else:
-                            # 部分成交或其他更新 - 暂不处理
-                            print(f"{self._get_log_prefix()} 🔄 订单更新: {order_id}, 已成交: {size_matched}/{original_size}")
-                            return
-                    
-                    else:
-                        print(f"{self._get_log_prefix()} ❓ 未知订单类型: {order_type}")
-                        return
-                    
-                    if callback:
+                    event = self._process_order_event(data)
+                    if event and callback:
                         callback(event)
                 
                 # Trade Message: MATCHED/MINED/CONFIRMED/RETRYING/FAILED
                 elif event_type == 'trade':
                     trade_status = data.get('status')
                     print(f"{self._get_log_prefix()} 💱 交易事件: {trade_status}")
-                    
-                    event = {
-                        'event_type': 'trade',
-                        'trade_id': data.get('id'),
-                        'symbol': data.get('asset_id'),
-                        'market': data.get('market'),
-                        'side': data.get('side', '').upper(),
-                        'status': trade_status,
-                        'price': float(data.get('price', 0)),
-                        'size': float(data.get('size', 0)),
-                        'outcome': data.get('outcome'),
-                        'taker_order_id': data.get('taker_order_id'),
-                        'maker_orders': data.get('maker_orders', []),
-                        'matchtime': data.get('matchtime'),
-                        'timestamp': data.get('timestamp')
-                    }
-                    
-                    if callback:
-                        callback(event)
                 else:
                     # 其他类型的消息
                     print(f"{self._get_log_prefix()} 📬 用户消息: {event_type}")
