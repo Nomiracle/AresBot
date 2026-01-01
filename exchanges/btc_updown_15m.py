@@ -7,6 +7,7 @@ import requests
 from .polymarket_adapter import NativePolymarketSpot
 import pytz
 import time
+import threading
 from typing import Dict, Callable
 
 
@@ -15,6 +16,9 @@ class BtcUpDown15m(NativePolymarketSpot):
     
     自动计算下一个 15 分钟时间戳,并使用对应的市场进行交易
     """
+    
+    # 市场关闭前的阈值时间(秒) - 用于取消订单和刷新市场
+    MARKET_CLOSE_THRESHOLD_SECONDS = 60
     
     def __init__(self, api_key: str, api_secret: str, outcome: str = "Up", testnet: bool = True):
         """初始化 BTC Up/Down 15分钟市场适配器
@@ -28,6 +32,8 @@ class BtcUpDown15m(NativePolymarketSpot):
         self.outcome = outcome
         self.market_end_time = None  # 市场结束时间戳
         self._ws_callbacks = None  # 保存 WebSocket 回调函数
+        self._refresh_timer = None  # 市场刷新定时器
+        self._timer_lock = threading.Lock()  # 定时器锁
         
         # 获取最新市场的 token_id
         token_id = self._get_latest_market_token()
@@ -41,6 +47,8 @@ class BtcUpDown15m(NativePolymarketSpot):
         print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 使用市场: {self.market_slug}")
         print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 交易方向: {outcome}")
         print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] Token ID: {token_id}")
+        
+        # 注意: 定时器将在 start_ws() 中设置,确保客户端已完成认证
     
     
     def _get_log_prefix(self) -> str:
@@ -181,6 +189,81 @@ class BtcUpDown15m(NativePolymarketSpot):
         print(f"[{datetime.now().isoformat()}] ❌ [BTC Up/Down 15m] 所有时间戳都无可用市场")
         return None
     
+    def _check_and_schedule_refresh(self) -> None:
+        """检查市场状态并设置定时器
+        
+        如果距离市场关闭小于阈值时间,立即切换到新市场
+        否则设置定时器在结束前阈值时间触发刷新
+        """
+        if not self.market_end_time:
+            print(f"{self._get_log_prefix()} ⚠️ 未设置市场结束时间,跳过定时器设置")
+            return
+        
+        seconds_left = self.get_seconds_until_market_close()
+        
+        print(f"{self._get_log_prefix()} ⏰ 距离市场关闭还有 {seconds_left} 秒")
+        
+        # 如果市场已关闭或即将关闭(小于阈值),立即切换到新市场
+        if seconds_left <= self.MARKET_CLOSE_THRESHOLD_SECONDS:
+            print(f"{self._get_log_prefix()} 🔄 市场即将关闭,立即切换到新市场...")
+            self._refresh_market_and_cancel_orders()
+        else:
+            # 设置定时器,在结束前阈值时间触发
+            delay = seconds_left - self.MARKET_CLOSE_THRESHOLD_SECONDS
+            print(f"{self._get_log_prefix()} ⏲️ 设置定时器: {delay} 秒后触发市场刷新")
+            
+            with self._timer_lock:
+                # 取消旧定时器
+                if self._refresh_timer:
+                    self._refresh_timer.cancel()
+                
+                # 创建新定时器
+                self._refresh_timer = threading.Timer(delay, self._refresh_market_and_cancel_orders)
+                self._refresh_timer.daemon = True
+                self._refresh_timer.start()
+    
+    def _refresh_market_and_cancel_orders(self) -> None:
+        """刷新市场并取消旧市场的买单"""
+        try:
+            print(f"{self._get_log_prefix()} 🔄 开始刷新市场流程...")
+            
+            # 1. 取消所有未完成的买单
+            print(f"{self._get_log_prefix()} 🚫 取消旧市场的所有买单...")
+            try:
+                open_orders = self.get_open_orders()
+                buy_orders = [o for o in open_orders if o.get('side') == 'BUY']
+                
+                if buy_orders:
+                    for order in buy_orders:
+                        try:
+                            order_id = order.get('orderId')
+                            if order_id:
+                                self.cancel_order(order_id)
+                                print(f"{self._get_log_prefix()} ✅ 已取消买单: {order_id}")
+                        except Exception as e:
+                            print(f"{self._get_log_prefix()} ⚠️ 取消买单失败: {e}")
+                    print(f"{self._get_log_prefix()} ✅ 共取消 {len(buy_orders)} 个买单")
+                else:
+                    print(f"{self._get_log_prefix()} ℹ️ 没有待取消的买单")
+            except Exception as e:
+                print(f"{self._get_log_prefix()} ⚠️ 查询或取消订单失败: {e}")
+            
+            # 2. 刷新到新市场
+            print(f"{self._get_log_prefix()} 🔄 切换到新市场...")
+            success = self.refresh_market()
+            
+            if success:
+                # 3. 为新市场设置定时器
+                print(f"{self._get_log_prefix()} ⏲️ 为新市场设置定时器...")
+                self._check_and_schedule_refresh()
+            else:
+                print(f"{self._get_log_prefix()} ❌ 市场刷新失败")
+                
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ❌ 刷新市场流程失败: {e}")
+            import traceback
+            traceback.print_exc()
+    
     def refresh_market(self) -> bool:
         """刷新到最新的市场
         
@@ -266,23 +349,25 @@ class BtcUpDown15m(NativePolymarketSpot):
         seconds_left = int(self.market_end_time - now)
         return max(0, seconds_left)
     
-    def is_market_closing_soon(self, threshold_seconds: int = 60) -> bool:
+    def is_market_closing_soon(self, threshold_seconds: int = None) -> bool:
         """检查市场是否即将关闭
         
         Args:
-            threshold_seconds: 阈值秒数,默认60秒(1分钟)
+            threshold_seconds: 阈值秒数,默认使用 MARKET_CLOSE_THRESHOLD_SECONDS
         
         Returns:
             bool: 如果距离关闭时间小于等于阈值返回True
         """
+        if threshold_seconds is None:
+            threshold_seconds = self.MARKET_CLOSE_THRESHOLD_SECONDS
         seconds_left = self.get_seconds_until_market_close()
         return 0 < seconds_left <= threshold_seconds
     
-    def check_and_cancel_orders_before_close(self, threshold_seconds: int = 60) -> bool:
+    def check_and_cancel_orders_before_close(self, threshold_seconds: int = None) -> bool:
         """检查市场关闭时间,如果即将关闭则取消所有订单
         
         Args:
-            threshold_seconds: 距离关闭的阈值秒数,默认60秒(1分钟)
+            threshold_seconds: 距离关闭的阈值秒数,默认使用 MARKET_CLOSE_THRESHOLD_SECONDS
         
         Returns:
             bool: 是否执行了取消操作
@@ -298,6 +383,10 @@ class BtcUpDown15m(NativePolymarketSpot):
             if seconds_left == 0:
                 print(f"{self._get_log_prefix()} ⏰ 市场已关闭")
                 return False
+            
+            # 使用默认阈值
+            if threshold_seconds is None:
+                threshold_seconds = self.MARKET_CLOSE_THRESHOLD_SECONDS
             
             # 市场即将关闭
             if seconds_left <= threshold_seconds:
@@ -359,7 +448,7 @@ class BtcUpDown15m(NativePolymarketSpot):
             traceback.print_exc()
             return False
     
-    def check_market_and_manage_orders(self, cancel_threshold_seconds: int = 60) -> dict:
+    def check_market_and_manage_orders(self, cancel_threshold_seconds: int = None) -> dict:
         """综合检查市场状态并管理订单(推荐在交易循环中调用)
         
         功能:
@@ -367,7 +456,7 @@ class BtcUpDown15m(NativePolymarketSpot):
         2. 检查市场是否已关闭,如果是则自动更新到新市场
         
         Args:
-            cancel_threshold_seconds: 距离关闭多少秒时取消订单,默认60秒(1分钟)
+            cancel_threshold_seconds: 距离关闭多少秒时取消订单,默认使用 MARKET_CLOSE_THRESHOLD_SECONDS
         
         Returns:
             dict: 包含执行结果的字典
@@ -411,14 +500,21 @@ class BtcUpDown15m(NativePolymarketSpot):
             'order': on_order_update
         }
         
-        # 调用父类方法
-        return super().start_ws(on_price_update, on_order_update)
+        # 调用父类方法启动 WebSocket
+        result = super().start_ws(on_price_update, on_order_update)
+        
+        # WebSocket 启动成功后,设置市场刷新定时器
+        if result:
+            print(f"{self._get_log_prefix()} ⏲️ WebSocket 已启动,开始设置市场刷新定时器...")
+            self._check_and_schedule_refresh()
+        
+        return result
     
     def _check_market_close_before_order(self) -> None:
         """下单前检查市场是否即将关闭
         
         Raises:
-            RuntimeError: 如果市场已关闭或即将关闭(1分钟内)
+            RuntimeError: 如果市场已关闭或即将关闭(阈值时间内)
         """
         if not self.market_end_time:
             return
@@ -431,8 +527,8 @@ class BtcUpDown15m(NativePolymarketSpot):
             print(f"{self._get_log_prefix()} ❌ {error_msg}")
             raise RuntimeError(error_msg)
         
-        # 市场即将关闭(1分钟内)
-        if seconds_left <= 60:
+        # 市场即将关闭(阈值时间内)
+        if seconds_left <= self.MARKET_CLOSE_THRESHOLD_SECONDS:
             error_msg = f"市场将在 {seconds_left} 秒后关闭,拒绝下单"
             print(f"{self._get_log_prefix()} ❌ {error_msg}")
             raise RuntimeError(error_msg)
@@ -440,7 +536,7 @@ class BtcUpDown15m(NativePolymarketSpot):
     def order_limit_buy(self, quantity: float, price: str, **kwargs) -> Dict:
         """限价买单(带市场关闭检查)
         
-        重写父类方法,添加市场关闭前1分钟的检查
+        重写父类方法,添加市场关闭前的检查
         
         Raises:
             RuntimeError: 如果市场即将关闭
@@ -454,7 +550,7 @@ class BtcUpDown15m(NativePolymarketSpot):
     def order_limit_sell(self, quantity: float, price: str, **kwargs) -> Dict:
         """限价卖单(带市场关闭检查)
         
-        重写父类方法,添加市场关闭前1分钟的检查
+        重写父类方法,添加市场关闭前的检查
         
         Raises:
             RuntimeError: 如果市场即将关闭
@@ -464,3 +560,27 @@ class BtcUpDown15m(NativePolymarketSpot):
         
         # 调用父类方法
         return super().order_limit_sell(quantity, price, **kwargs)
+    
+    def stop_ws(self) -> None:
+        """停止 WebSocket 并清理定时器
+        
+        重写父类方法以清理定时器
+        """
+        # 取消定时器
+        with self._timer_lock:
+            if self._refresh_timer:
+                self._refresh_timer.cancel()
+                self._refresh_timer = None
+                print(f"{self._get_log_prefix()} ⏲️ 已取消市场刷新定时器")
+        
+        # 调用父类方法
+        super().stop_ws()
+    
+    def __del__(self):
+        """析构函数,清理资源"""
+        try:
+            with self._timer_lock:
+                if self._refresh_timer:
+                    self._refresh_timer.cancel()
+        except:
+            pass
