@@ -358,7 +358,11 @@ class NativePolymarketSpot(BaseExchange):
                 new_order = self.order_limit_sell(quantity, price, **kwargs)
             
             print(f"{self._get_log_prefix()} ✅ 改价完成: 旧订单={cancel_order_id}, 新订单={new_order.get('orderId')}")
-            return new_order
+            
+            # 返回 Binance 兼容的格式,包含 newOrderResponse
+            return {
+                'newOrderResponse': new_order
+            }
                 
         except Exception as e:
             print(f"{self._get_log_prefix()} ❌ 改价失败: orderID={cancel_order_id}, error={e}")

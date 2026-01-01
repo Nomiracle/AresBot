@@ -347,7 +347,24 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
             bot_data['last_error_time'] = None
             bot_data['last_warning'] = None
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 改价失败 {order['orderId']}: {e}")
+            old_order_id = str(order['orderId'])
+            print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 改价失败 {old_order_id}: {e}")
+            
+            # 检查缓存中的待处理买单是否还存在
+            # 如果改价失败,可能是订单已经成交或被取消,需要从缓存中移除
+            try:
+                current_open_orders = exchange.get_open_orders()
+                open_order_ids = {str(o.get('orderId')) for o in current_open_orders if o.get('side') == 'BUY'}
+                
+                # 如果订单不在开放订单列表中,从缓存中移除
+                if old_order_id not in open_order_ids:
+                    bot_data['pending_buys'] = [
+                        pb for pb in bot_data.get('pending_buys', []) 
+                        if pb['order_id'] != old_order_id
+                    ]
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🧹 订单 {old_order_id} 不存在,已从缓存中移除")
+            except Exception as check_error:
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 检查订单状态失败: {check_error}")
 
 
 def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size, 
@@ -442,7 +459,22 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
             bot_data['last_warning'] = None
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 卖单改价失败 {sell_order_id}: {e}")
-            # 改价失败，保留原订单在 pending_sells 中（不清理）
+            
+            # 检查缓存中的待处理卖单是否还存在
+            # 如果改价失败,可能是订单已经成交或被取消,需要从缓存中移除
+            try:
+                current_open_orders = exchange.get_open_orders()
+                open_order_ids = {str(o.get('orderId')) for o in current_open_orders if o.get('side') == 'SELL'}
+                
+                # 如果订单不在开放订单列表中,从缓存中移除
+                if sell_order_id not in open_order_ids:
+                    bot_data['pending_sells'] = [
+                        ps for ps in bot_data.get('pending_sells', []) 
+                        if ps['order_id'] != sell_order_id
+                    ]
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🧹 订单 {sell_order_id} 不存在,已从缓存中移除")
+            except Exception as check_error:
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 检查订单状态失败: {check_error}")
         finally:
             # 清除改价标记
             bot_data['repricing_order_id'] = None

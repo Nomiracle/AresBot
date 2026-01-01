@@ -46,7 +46,7 @@ class BtcUpDown15m(NativePolymarketSpot):
     def _get_log_prefix(self) -> str:
         """生成日志前缀"""
         api_key_short = self.api_key[:6] if self.api_key else "NOKEY"
-        return f"[{datetime.now().isoformat()}] [BTCUpDown15Min-{api_key_short}-{self.symbol}]"
+        return f"[{datetime.now().isoformat()}] [BTCUpDown15Min-{api_key_short}-{self.market_slug}]"
 
     
     def _calculate_next_timestamp(self) -> int:
