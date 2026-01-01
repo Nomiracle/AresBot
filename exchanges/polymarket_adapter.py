@@ -173,42 +173,39 @@ class NativePolymarketSpot(BaseExchange):
             raise
     
     def get_order(self, order_id: str) -> Dict:
-        """查询订单状态"""
+        """查询订单状态
+        
+        使用 CLOB API: GET /data/order/<order_hash>
+        """
         try:
-            # Polymarket使用get_orders查询订单
-            orders = self.client.get_orders(OpenOrderParams())
+            # 使用 py-clob-client 的 get_order 方法直接查询单个订单
+            order = self.client.get_order(order_id)
             
-            for order in orders:
-                if order.get('id') == order_id:
-                    return self._normalize_order(order)
-            
-            # 如果在开放订单中找不到,可能已成交或取消
-            # 尝试从交易历史查询
-            trades = self.client.get_trades()
-            for trade in trades:
-                if trade.get('order_id') == order_id:
-                    return {
-                        'orderId': order_id,
-                        'status': 'FILLED',
-                        'side': trade.get('side', '').upper(),
-                        'price': float(trade.get('price', 0)),
-                        'executedQty': float(trade.get('size', 0)),
-                        'origQty': float(trade.get('size', 0))
-                    }
-            
-            # 订单不存在或已取消
-            return {
-                'orderId': order_id,
-                'status': 'CANCELED',
-                'side': 'UNKNOWN',
-                'price': 0,
-                'executedQty': 0,
-                'origQty': 0
-            }
+            if order:
+                return self._normalize_order(order)
+            else:
+                # 订单不存在
+                return {
+                    'orderId': order_id,
+                    'status': 'NOT_FOUND',
+                    'side': 'UNKNOWN',
+                    'price': 0,
+                    'executedQty': 0,
+                    'origQty': 0
+                }
             
         except Exception as e:
             print(f"{self._get_log_prefix()} ❌ 查询订单失败: {e}")
-            raise
+            # 如果查询失败，返回未知状态而不是抛出异常
+            return {
+                'orderId': order_id,
+                'status': 'UNKNOWN',
+                'side': 'UNKNOWN',
+                'price': 0,
+                'executedQty': 0,
+                'origQty': 0,
+                'error': str(e)
+            }
     
     def get_open_orders(self) -> list:
         """获取所有未完成订单"""

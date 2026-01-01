@@ -18,7 +18,7 @@ class BtcUpDown15m(NativePolymarketSpot):
     """
     
     # 市场关闭前的阈值时间(秒) - 用于取消订单和刷新市场
-    MARKET_CLOSE_THRESHOLD_SECONDS = 60
+    MARKET_CLOSE_THRESHOLD_SECONDS = 180
     
     def __init__(self, api_key: str, api_secret: str, outcome: str = "Up", testnet: bool = True):
         """初始化 BTC Up/Down 15分钟市场适配器
