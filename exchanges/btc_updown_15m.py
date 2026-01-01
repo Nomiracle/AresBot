@@ -350,9 +350,7 @@ class BtcUpDown15m(NativePolymarketSpot):
                 print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 旧市场: token_id={old_token_id}")
                 print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 新市场: slug={self.market_slug}, token_id={new_token_id}")
                 
-                # 重置市场切换标志，允许下单和改价
-                self._is_switching_market = False
-                print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 市场切换完成，允许下单和改价")
+
                 
                 # 发送 refresh_market 事件给 trading.py，清除旧市场的缓存订单
                 if self._ws_callbacks and self._ws_callbacks.get('order'):
@@ -364,6 +362,10 @@ class BtcUpDown15m(NativePolymarketSpot):
                     }
                     self._ws_callbacks['order'](refresh_event)
                     print(f"[{datetime.now().isoformat()}] 📤 [BTC Up/Down 15m] 已发送 refresh_market 事件")
+                time.sleep(1)
+                # 重置市场切换标志，允许下单和改价
+                self._is_switching_market = False
+                print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 市场切换完成，允许下单和改价")
                 
                 return True
             elif new_token_id == old_token_id:

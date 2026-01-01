@@ -603,7 +603,10 @@ def trading_loop(username, bot_key):
                             old_sells = len(bot_data.get('pending_sells', []))
                             bot_data['pending_buys'] = []
                             bot_data['pending_sells'] = []
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} 🧹 已清除缓存订单: {old_buys} 笔买单, {old_sells} 笔卖单")
+                            # 重置价格，等待新市场价格推送
+                            old_price = bot_data.get('current_price')
+                            bot_data['current_price'] = None
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} 🧹 已清除缓存订单: {old_buys} 笔买单, {old_sells} 笔卖单, 旧价格: {old_price}")
                             return
                         
                         # 错误事件
