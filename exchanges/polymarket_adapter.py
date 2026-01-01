@@ -739,82 +739,78 @@ class NativePolymarketSpot(BaseExchange):
         # 使用传入的 symbol 或默认使用 self.symbol
         event_symbol = symbol if symbol is not None else self.symbol
         
-        print(f"{self._get_log_prefix()} 💱 Trade事件: status={status}, side={side}, size={size}, price={price}, outcome={outcome}")
+        print(f"{self._get_log_prefix()} 💱 Trade事件: status={status}, side={side}, size={size}, price={price}, outcome={outcome}, trader_side={trader_side}")
         print(f"{self._get_log_prefix()} 💱 Trade详情: trade_id={trade_id}, taker_order_id={taker_order_id[:16] if taker_order_id else None}...")
         
         if status == 'MATCHED':
-            # 交易已匹配 - 这是最重要的状态，表示订单已成交
-            event = {
-                'event_type': 'order_filled',
-                'trade_id': trade_id,
-                'order_id': taker_order_id,
-                'taker_order_id': taker_order_id,
-                'symbol': event_symbol,
-                'side': side,
-                'price': price,
-                'quantity': size,
-                'size': size,
-                'executedQty': size,
-                'outcome': outcome,
-                'market': market,
-                'trader_side': trader_side,
-                'match_time': match_time,
-                'maker_orders': maker_orders
-            }
-            print(f"{self._get_log_prefix()} ✅ 订单成交(Trade): {trade_id}, {side} {size}@{price}")
-            return event
-        
-        elif status == 'MINED':
-            # 交易已上链
-            event = {
-                'event_type': 'trade_mined',
-                'trade_id': trade_id,
-                'taker_order_id': taker_order_id,
-                'symbol': event_symbol,
-                'transaction_hash': transaction_hash
-            }
-            print(f"{self._get_log_prefix()} ⛏️ 交易已上链: {trade_id}, tx={transaction_hash[:16] if transaction_hash else None}...")
-            return event
-        
-        elif status == 'CONFIRMED':
-            # 交易已确认
-            event = {
-                'event_type': 'trade_confirmed',
-                'trade_id': trade_id,
-                'taker_order_id': taker_order_id,
-                'symbol': event_symbol,
-                'transaction_hash': transaction_hash
-            }
-            print(f"{self._get_log_prefix()} ✅ 交易已确认: {trade_id}")
-            return event
-        
-        elif status == 'RETRYING':
-            # 交易重试中
-            event = {
-                'event_type': 'trade_retrying',
-                'trade_id': trade_id,
-                'taker_order_id': taker_order_id,
-                'symbol': event_symbol
-            }
-            print(f"{self._get_log_prefix()} 🔄 交易重试中: {trade_id}")
-            return event
-        
-        elif status == 'FAILED':
-            # 交易失败
-            event = {
-                'event_type': 'trade_failed',
-                'trade_id': trade_id,
-                'taker_order_id': taker_order_id,
-                'symbol': event_symbol,
-                'side': side,
-                'price': price,
-                'size': size
-            }
-            print(f"{self._get_log_prefix()} ❌ 交易失败: {trade_id}")
-            return event
+            # 判断是 TAKER 还是 MAKER
+            if trader_side == 'MAKER':
+                # 作为 Maker：我的限价单被别人吃掉
+                # 需要从 maker_orders 中找到我的订单
+                my_maker_address = self.api_key.lower()  # Proxy Wallet 地址
+                my_orders = [
+                    order for order in maker_orders 
+                    if order.get('maker_address', '').lower() == my_maker_address
+                ]
+                
+                if my_orders:
+                    # 可能有多个订单被匹配，逐个返回事件
+                    # 这里只处理第一个，如果需要处理多个可以改为返回列表
+                    for my_order in my_orders:
+                        my_order_id = my_order.get('order_id')
+                        my_matched_amount = float(my_order.get('matched_amount', 0))
+                        my_price = float(my_order.get('price', 0))
+                        my_side = my_order.get('side', '').upper()
+                        my_outcome = my_order.get('outcome')
+                        
+                        print(f"{self._get_log_prefix()} ✅ 订单成交(Maker): order_id={my_order_id[:16]}..., {my_side} {my_matched_amount}@{my_price}, outcome={my_outcome}")
+                        
+                        event = {
+                            'event_type': 'order_filled',
+                            'trade_id': trade_id,
+                            'order_id': my_order_id,
+                            'taker_order_id': taker_order_id,
+                            'symbol': event_symbol,
+                            'side': my_side,
+                            'price': my_price,
+                            'quantity': my_matched_amount,
+                            'size': my_matched_amount,
+                            'executedQty': my_matched_amount,
+                            'outcome': my_outcome,
+                            'market': market,
+                            'trader_side': 'MAKER',
+                            'match_time': match_time,
+                            'maker_orders': maker_orders
+                        }
+                        return event  # 返回第一个匹配的订单事件
+                else:
+                    print(f"{self._get_log_prefix()} ⚠️ Maker 交易但未找到我的订单, my_address={my_maker_address}")
+                    return None
+            else:
+                # 作为 Taker：我主动吃单
+                event = {
+                    'event_type': 'order_filled',
+                    'trade_id': trade_id,
+                    'order_id': taker_order_id,
+                    'taker_order_id': taker_order_id,
+                    'symbol': event_symbol,
+                    'side': side,
+                    'price': price,
+                    'quantity': size,
+                    'size': size,
+                    'executedQty': size,
+                    'outcome': outcome,
+                    'market': market,
+                    'trader_side': 'TAKER',
+                    'match_time': match_time,
+                    'maker_orders': maker_orders
+                }
+                print(f"{self._get_log_prefix()} ✅ 订单成交(Taker): {trade_id}, {side} {size}@{price}")
+                return event
         
         else:
-            print(f"{self._get_log_prefix()} ❓ 未知交易状态: {status}")
+            # 其他状态 (MINED/CONFIRMED/RETRYING/FAILED 等) - 仅打印日志
+            print(f"{self._get_log_prefix()} � Trade状态更新: {status}, trade_id={trade_id}")
             return None
     
     def subscribe_user_ws(self, callback: Callable = None):
