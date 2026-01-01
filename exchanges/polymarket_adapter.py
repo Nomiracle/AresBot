@@ -773,7 +773,14 @@ class NativePolymarketSpot(BaseExchange):
             self._ws_user_active = False
         
         def on_open(ws):
-            print(f"{self._get_log_prefix()} ✅ 用户 WebSocket 已连接")
+            # 检测是否为重连
+            is_reconnect = self._ws_user_connected_once if hasattr(self, '_ws_user_connected_once') else False
+            self._ws_user_connected_once = True
+            
+            if is_reconnect:
+                print(f"{self._get_log_prefix()} 🔄 用户 WebSocket 重连成功")
+            else:
+                print(f"{self._get_log_prefix()} ✅ 用户 WebSocket 已连接")
             
             # 获取 condition_id (如果有的话)
             markets_to_subscribe = []
@@ -797,18 +804,14 @@ class NativePolymarketSpot(BaseExchange):
             ws.send(json.dumps(subscribe_msg))
             print(f"{self._get_log_prefix()} 📡 已订阅用户订单")
             
-            # 启动心跳线程
-            def ping_loop():
-                while self._ws_user_active:
-                    try:
-                        ws.send("PING")
-                        time.sleep(10)
-                    except Exception as e:
-                        print(f"{self._get_log_prefix()} ❌ PING 失败: {e}")
-                        break
-            
-            ping_thread = threading.Thread(target=ping_loop, daemon=True)
-            ping_thread.start()
+            # 如果是重连，发送 reconnected 事件给 trading.py 触发订单状态同步
+            if is_reconnect and callback:
+                reconnect_event = {
+                    'event_type': 'reconnected',
+                    'symbol': self.outcome if hasattr(self, 'outcome') else self.symbol
+                }
+                callback(reconnect_event)
+                print(f"{self._get_log_prefix()} 📤 已发送 reconnected 事件，触发订单状态同步")
         
         def run_ws():
             ws_url = "wss://ws-subscriptions-clob.polymarket.com/ws/user"
