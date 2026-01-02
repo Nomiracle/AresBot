@@ -19,10 +19,11 @@ class UpDown15m(NativePolymarketSpot):
     支持多种市场，通过 symbol 参数指定，格式为 "market-outcome"，如 "btc-Up"
     """
     
-    # 市场关闭前的阈值时间(秒) - 用于取消订单和刷新市场
-    MARKET_CLOSE_THRESHOLD_SECONDS = 180
+    # 默认市场关闭前的阈值时间(秒) - 用于取消订单和刷新市场
+    DEFAULT_MARKET_CLOSE_THRESHOLD_SECONDS = 180
     
-    def __init__(self, api_key: str, api_secret: str, symbol: str = "btc-Up", testnet: bool = True):
+    def __init__(self, api_key: str, api_secret: str, symbol: str = "btc-Up", testnet: bool = True,
+                 min_price_threshold: float = None, market_close_threshold: int = None):
         """初始化 Up/Down 15分钟市场适配器
         
         Args:
@@ -32,10 +33,15 @@ class UpDown15m(NativePolymarketSpot):
                    market: 市场前缀（如 btc, eth）
                    outcome: 交易方向 "Up" 或 "Down"
             testnet: 是否使用测试网
+            min_price_threshold: 最低价格阈值（默认 0.15）
+            market_close_threshold: 市场关闭前阈值时间秒数（默认 180）
         """
         # 解析 symbol，格式为 "market-outcome"，如 "btc-Up"
         self.market_prefix, self.outcome = self._parse_symbol(symbol)
         self.original_symbol = symbol  # 保存原始 symbol 用于事件回调
+        
+        # 市场关闭阈值
+        self.market_close_threshold = market_close_threshold if market_close_threshold is not None else self.DEFAULT_MARKET_CLOSE_THRESHOLD_SECONDS
         
         self.market_end_time = None  # 市场结束时间戳
         self.condition_id = None  # 市场的条件 ID (用于 WebSocket 订阅)
@@ -50,13 +56,18 @@ class UpDown15m(NativePolymarketSpot):
         if not token_id:
             raise ValueError(f"无法获取最新的 {self.market_prefix.upper()} Up/Down 15分钟市场")
         
+        # 保存 min_price_threshold 用于传递给父类
+        self._min_price_threshold = min_price_threshold
+        
         # 调用父类初始化
-        super().__init__(api_key, api_secret, token_id, testnet)
+        super().__init__(api_key, api_secret, token_id, testnet, min_price_threshold=min_price_threshold)
         
         print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 使用市场: {self.market_slug}")
         print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 市场前缀: {self.market_prefix}")
         print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 交易方向: {self.outcome}")
         print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] Token ID: {token_id}")
+        print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 最低价格阈值: {self.min_price_threshold}")
+        print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 市场关闭阈值: {self.market_close_threshold}秒")
         
         # 注意: 定时器将在 start_ws() 中设置,确保客户端已完成认证
     
@@ -269,12 +280,12 @@ class UpDown15m(NativePolymarketSpot):
         print(f"{self._get_log_prefix()} ⏰ 距离市场关闭还有 {seconds_left} 秒")
         
         # 如果市场已关闭或即将关闭(小于阈值),立即切换到新市场
-        if seconds_left <= self.MARKET_CLOSE_THRESHOLD_SECONDS:
+        if seconds_left <= self.market_close_threshold:
             print(f"{self._get_log_prefix()} 🔄 市场即将关闭,立即切换到新市场...")
             self._refresh_market_and_cancel_orders()
         else:
             # 设置定时器,在结束前阈值时间触发
-            delay = seconds_left - self.MARKET_CLOSE_THRESHOLD_SECONDS
+            delay = seconds_left - self.market_close_threshold
             print(f"{self._get_log_prefix()} ⏲️ 设置定时器: {delay} 秒后触发市场刷新")
             
             with self._timer_lock:
@@ -515,7 +526,7 @@ class UpDown15m(NativePolymarketSpot):
             bool: 如果距离关闭时间小于等于阈值返回True
         """
         if threshold_seconds is None:
-            threshold_seconds = self.MARKET_CLOSE_THRESHOLD_SECONDS
+            threshold_seconds = self.market_close_threshold
         seconds_left = self.get_seconds_until_market_close()
         return 0 < seconds_left <= threshold_seconds
     
@@ -542,7 +553,7 @@ class UpDown15m(NativePolymarketSpot):
             
             # 使用默认阈值
             if threshold_seconds is None:
-                threshold_seconds = self.MARKET_CLOSE_THRESHOLD_SECONDS
+                threshold_seconds = self.market_close_threshold
             
             # 市场即将关闭
             if seconds_left <= threshold_seconds:
@@ -684,7 +695,7 @@ class UpDown15m(NativePolymarketSpot):
             raise RuntimeError(error_msg)
         
         # 市场即将关闭(阈值时间内)
-        if seconds_left <= self.MARKET_CLOSE_THRESHOLD_SECONDS:
+        if seconds_left <= self.market_close_threshold:
             error_msg = f"市场将在 {seconds_left} 秒后关闭,拒绝下单"
             print(f"{self._get_log_prefix()} ❌ {error_msg}")
             raise RuntimeError(error_msg)

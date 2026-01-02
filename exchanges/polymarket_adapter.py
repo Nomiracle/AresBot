@@ -30,7 +30,10 @@ except ImportError:
 class NativePolymarketSpot(BaseExchange):
     """Polymarket 交易所适配器"""
     
-    def __init__(self, api_key: str, api_secret: str, symbol: str, testnet: bool = True):
+    # 默认最低价格阈值
+    DEFAULT_MIN_PRICE_THRESHOLD = 0.15
+    
+    def __init__(self, api_key: str, api_secret: str, symbol: str, testnet: bool = True, min_price_threshold: float = None):
         """初始化 Polymarket 客户端
         
         Args:
@@ -52,6 +55,9 @@ class NativePolymarketSpot(BaseExchange):
         self.api_secret = api_secret
         self.symbol = symbol
         self.testnet = testnet
+        
+        # 最低价格阈值
+        self.min_price_threshold = min_price_threshold if min_price_threshold is not None else self.DEFAULT_MIN_PRICE_THRESHOLD
         
         # Polymarket 配置
         self.host = "https://clob.polymarket.com"
@@ -233,9 +239,9 @@ class NativePolymarketSpot(BaseExchange):
     def order_limit_buy(self, quantity: float, price: str, **kwargs) -> Dict:
         """限价买单"""
         try:
-            # 价格检查：低于 阈值 拒绝下单
-            if float(price) < 0.15:
-                error_msg = f"价格 {price} 低于最低限制 0.15，拒绝下单"
+            # 价格检查：低于阈值拒绝下单
+            if float(price) < self.min_price_threshold:
+                error_msg = f"价格 {price} 低于最低限制 {self.min_price_threshold}，拒绝下单"
                 print(f"{self._get_log_prefix()} ⛔ {error_msg}")
                 raise ValueError(error_msg)
             

@@ -199,12 +199,21 @@ def register_routes(app):
             testnet = bool(config.get('testnet', 1))
             exchange_name = config.get('exchange', 'binance').lower()
             symbol = config['symbol']
+            # Polymarket/UpDown15m 阈值参数
+            min_price_threshold = config.get('min_price_threshold')
+            market_close_threshold = config.get('market_close_threshold')
+            if min_price_threshold is not None:
+                min_price_threshold = float(min_price_threshold)
+            if market_close_threshold is not None:
+                market_close_threshold = int(market_close_threshold)
             exchange = ExchangeFactory.create(
                 exchange_name,
                 api_key,
                 api_secret,
                 symbol=symbol,
-                testnet=testnet
+                testnet=testnet,
+                min_price_threshold=min_price_threshold,
+                market_close_threshold=market_close_threshold
             )
             
             if not exchange:
@@ -633,12 +642,21 @@ def register_routes(app):
             testnet = bool(config.get('testnet', 1))
             exchange_name = config.get('exchange', 'binance').lower()
             symbol = config['symbol']
+            # Polymarket/UpDown15m 阈值参数
+            min_price_threshold = config.get('min_price_threshold')
+            market_close_threshold = config.get('market_close_threshold')
+            if min_price_threshold is not None:
+                min_price_threshold = float(min_price_threshold)
+            if market_close_threshold is not None:
+                market_close_threshold = int(market_close_threshold)
             exchange = ExchangeFactory.create(
                 exchange_name,
                 api_key,
                 api_secret,
                 symbol=symbol,
-                testnet=testnet
+                testnet=testnet,
+                min_price_threshold=min_price_threshold,
+                market_close_threshold=market_close_threshold
             )
             
             if not exchange:
@@ -947,7 +965,7 @@ def register_routes(app):
             'backpack': 'Backpack (BPX)',
             'bpx': 'Backpack (BPX)',
             'polymarket': 'Polymarket (预测市场)',
-            'btc_updown_15m': 'Polymarket - BTC 15分钟 (自动)',
+            'btc_updown_15m': 'Polymarket - UPDOWN 15分钟 (自动)',
         }
         
         # 去重并构建返回数据

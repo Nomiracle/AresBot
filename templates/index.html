@@ -680,6 +680,17 @@
               <option value="0">真实交易</option>
             </select>
           </div>
+          <!-- Polymarket/UpDown15m 高级配置 -->
+          <div class="input-group" id="minPriceThresholdGroup" style="display: none;">
+            <label>最低价格阈值 💰</label>
+            <input type="number" id="minPriceThreshold" value="0.15" step="0.01" min="0" max="1" />
+            <small style="color: #666;">低于此价格的订单将被拒绝（默认 0.15）</small>
+          </div>
+          <div class="input-group" id="marketCloseThresholdGroup" style="display: none;">
+            <label>市场关闭阈值 (秒) ⏰</label>
+            <input type="number" id="marketCloseThreshold" value="180" step="1" min="30" max="600" />
+            <small style="color: #666;">距离市场关闭多少秒时取消订单（默认 180）</small>
+          </div>
         </div>
 
         <div style="margin-bottom: 15px;">
@@ -1037,6 +1048,8 @@
         const marketInfoBox = document.getElementById("marketInfoBox");
         const polymarketSearchContainer = document.getElementById("polymarketSearchContainer");
         const symbolGroup = document.getElementById("symbolGroup");
+        const minPriceThresholdGroup = document.getElementById("minPriceThresholdGroup");
+        const marketCloseThresholdGroup = document.getElementById("marketCloseThresholdGroup");
         
         if (exchange === 'backpack') {
           apiKeyInput.placeholder = "输入 Backpack Public Key";
@@ -1046,25 +1059,31 @@
           apiSecretInput.placeholder = "输入 Binance API Secret";
         }
         
-        // Polymarket 交易所显示搜索组件，隐藏市场信息
+        // Polymarket 交易所显示搜索组件和价格阈值配置
         if (exchange === 'polymarket') {
           symbolGroup.style.display = 'block';
           marketInfoBox.style.display = 'none';
           polymarketSearchContainer.style.display = 'block';
+          minPriceThresholdGroup.style.display = 'block';
+          marketCloseThresholdGroup.style.display = 'none';
         }
-        // UpDown 15m 交易所隐藏市场信息
+        // UpDown 15m 交易所显示两个阈值配置
         else if (exchange === 'btc_updown_15m' || exchange === 'updown_15m') {
           symbolGroup.style.display = 'block';
           marketInfoBox.style.display = 'none';
           polymarketSearchContainer.style.display = 'none';
+          minPriceThresholdGroup.style.display = 'block';
+          marketCloseThresholdGroup.style.display = 'block';
           // 重新加载交易对列表
           loadTradingPairs();
         }
-        // 其他交易所显示正常的交易对选择器
+        // 其他交易所隐藏阈值配置
         else {
           symbolGroup.style.display = 'block';
           marketInfoBox.style.display = 'block';
           polymarketSearchContainer.style.display = 'none';
+          minPriceThresholdGroup.style.display = 'none';
+          marketCloseThresholdGroup.style.display = 'none';
           
           // 重新加载交易对列表（会根据当前交易所过滤）
           loadTradingPairs();
@@ -1430,6 +1449,14 @@
             document.getElementById("simulateTrading").value
           ),
         };
+        
+        // Polymarket/UpDown15m 阈值参数
+        if (exchange === 'polymarket' || exchange === 'btc_updown_15m' || exchange === 'updown_15m') {
+          config.min_price_threshold = parseFloat(document.getElementById("minPriceThreshold").value);
+        }
+        if (exchange === 'btc_updown_15m' || exchange === 'updown_15m') {
+          config.market_close_threshold = parseInt(document.getElementById("marketCloseThreshold").value);
+        }
 
         fetch("/api/start", {
           method: "POST",
@@ -1484,6 +1511,14 @@
             document.getElementById("simulateTrading").value
           ),
         };
+        
+        // Polymarket/UpDown15m 阈值参数
+        if (exchange === 'polymarket' || exchange === 'btc_updown_15m' || exchange === 'updown_15m') {
+          config.min_price_threshold = parseFloat(document.getElementById("minPriceThreshold").value);
+        }
+        if (exchange === 'btc_updown_15m' || exchange === 'updown_15m') {
+          config.market_close_threshold = parseInt(document.getElementById("marketCloseThreshold").value);
+        }
 
         fetch("/api/config/save", {
           method: "POST",
@@ -1548,6 +1583,14 @@
               document.getElementById("testnet").value = data.config.testnet;
               document.getElementById("simulateTrading").value =
                 data.config.simulate_trading;
+              
+              // 恢复阈值参数
+              if (data.config.min_price_threshold !== undefined) {
+                document.getElementById("minPriceThreshold").value = data.config.min_price_threshold;
+              }
+              if (data.config.market_close_threshold !== undefined) {
+                document.getElementById("marketCloseThreshold").value = data.config.market_close_threshold;
+              }
               
               console.log(`[加载配置] 配置加载完成`);
               

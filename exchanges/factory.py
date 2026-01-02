@@ -46,7 +46,8 @@ class ExchangeFactory:
     
     @classmethod
     def create(cls, exchange_name: str, api_key: str, api_secret: str, 
-               symbol: str, testnet: bool = True) -> Optional[BaseExchange]:
+               symbol: str, testnet: bool = True,
+               min_price_threshold: float = None, market_close_threshold: int = None) -> Optional[BaseExchange]:
         """创建交易所适配器实例
         
         Args:
@@ -58,16 +59,23 @@ class ExchangeFactory:
             symbol: 交易对（如 BTCUSDT）
                    对于 btc_updown_15m，symbol 应为 "Up" 或 "Down"
             testnet: 是否使用测试网
+            min_price_threshold: 最低价格阈值（仅 Polymarket 类适配器使用）
+            market_close_threshold: 市场关闭前阈值秒数（仅 UpDown15m 使用）
             
         Returns:
             BaseExchange 实例，如果不支持则返回 None
         """
         adapter_class = cls.SUPPORTED_EXCHANGES.get(exchange_name.lower())
         if adapter_class:
-            # UpDown15m 使用 symbol 参数，格式为 "market-outcome"，如 "btc-Up"
+            # UpDown15m 使用额外的阈值参数
             if adapter_class in (UpDown15m, BtcUpDown15m):
-                # 支持新格式 "btc-Up" 和旧格式 "Up"/"Down"
-                return adapter_class(api_key, api_secret, symbol, testnet)
+                return adapter_class(api_key, api_secret, symbol, testnet,
+                                    min_price_threshold=min_price_threshold,
+                                    market_close_threshold=market_close_threshold)
+            # Polymarket 使用价格阈值参数
+            elif adapter_class == NativePolymarketSpot:
+                return adapter_class(api_key, api_secret, symbol, testnet,
+                                    min_price_threshold=min_price_threshold)
             else:
                 return adapter_class(api_key, api_secret, symbol, testnet)
         return None
