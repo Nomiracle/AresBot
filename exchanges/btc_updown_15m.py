@@ -328,6 +328,9 @@ class BtcUpDown15m(NativePolymarketSpot):
             new_slug = self.market_slug
             
             if new_token_id and new_token_id != old_token_id:
+                # 清空成交订单去重缓存（新市场的订单 ID 不会与旧市场冲突）
+                self.clear_filled_order_ids()
+                
                 # 关闭旧市场的 WebSocket
                 print(f"[{datetime.now().isoformat()}] 🔌 [BTC Up/Down 15m] 关闭旧市场 WebSocket...")
                 self.stop_ws()

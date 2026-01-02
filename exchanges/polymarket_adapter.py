@@ -64,6 +64,10 @@ class NativePolymarketSpot(BaseExchange):
         self._ws_user_thread = None
         self._ws_market_active = False
         self._ws_user_active = False
+        
+        # 已处理的成交订单 ID 集合（用于去重）
+        self._filled_order_ids = set()
+        self._filled_order_ids_lock = threading.Lock()
         try:
             # 初始化Polymarket客户端
             host = "https://clob.polymarket.com"
@@ -638,6 +642,38 @@ class NativePolymarketSpot(BaseExchange):
         self._ws_market_thread.start()
         print(f"{self._get_log_prefix()} 🚀 市场 WebSocket[{ws_id}] 已启动")
     
+    def _is_order_already_filled(self, order_id: str) -> bool:
+        """检查订单是否已经处理过成交事件（用于去重）
+        
+        Args:
+            order_id: 订单 ID
+        
+        Returns:
+            bool: 如果已处理过返回 True，否则返回 False 并将其加入已处理集合
+        """
+        if not order_id:
+            return False
+        
+        with self._filled_order_ids_lock:
+            if order_id in self._filled_order_ids:
+                return True
+            self._filled_order_ids.add(order_id)
+            
+            # 防止内存泄漏：限制集合大小为 1000
+            if len(self._filled_order_ids) > 1000:
+                # 移除一半的旧记录（简单策略）
+                to_remove = list(self._filled_order_ids)[:500]
+                for oid in to_remove:
+                    self._filled_order_ids.discard(oid)
+            
+            return False
+    
+    def clear_filled_order_ids(self):
+        """清空已处理的成交订单 ID 集合（市场切换时调用）"""
+        with self._filled_order_ids_lock:
+            self._filled_order_ids.clear()
+            print(f"{self._get_log_prefix()} 🧹 已清空成交订单去重缓存")
+    
     def _process_order_event(self, data: dict, symbol: str = None) -> dict:
         """处理订单事件
         
@@ -682,6 +718,11 @@ class NativePolymarketSpot(BaseExchange):
         elif order_type == 'UPDATE':
             # 订单更新事件 - 检查是否完全成交
             if size_matched >= original_size and original_size > 0:
+                # 去重检查：防止同一订单的 order_filled 事件被重复处理
+                if self._is_order_already_filled(order_id):
+                    print(f"{self._get_log_prefix()} ⚠️ 订单成交事件重复(order UPDATE)，跳过: {order_id}")
+                    return None
+                
                 # 完全成交
                 event = {
                     'event_type': 'order_filled',
@@ -759,6 +800,11 @@ class NativePolymarketSpot(BaseExchange):
                         my_side = my_order.get('side', '').upper()
                         my_outcome = my_order.get('outcome')
                         
+                        # 去重检查：防止同一订单的 order_filled 事件被重复处理
+                        if self._is_order_already_filled(my_order_id):
+                            print(f"{self._get_log_prefix()} ⚠️ 订单成交事件重复(trade MAKER)，跳过: {my_order_id[:16]}...")
+                            continue
+                        
                         print(f"{self._get_log_prefix()} ✅ 订单成交(Maker): order_id={my_order_id[:16]}..., {my_side} {my_matched_amount}@{my_price}, outcome={my_outcome}")
                         
                         # 如果是买单成交，等待 token 余额更新后再回调
@@ -793,6 +839,11 @@ class NativePolymarketSpot(BaseExchange):
                     return None
             else:
                 # 作为 Taker：我主动吃单
+                # 去重检查：防止同一订单的 order_filled 事件被重复处理
+                if self._is_order_already_filled(taker_order_id):
+                    print(f"{self._get_log_prefix()} ⚠️ 订单成交事件重复(trade TAKER)，跳过: {taker_order_id[:16] if taker_order_id else None}...")
+                    return None
+                
                 print(f"{self._get_log_prefix()} ✅ 订单成交(Taker): {trade_id}, {side} {size}@{price}")
                 
                 # 如果是买单成交，等待 token 余额更新后再回调
