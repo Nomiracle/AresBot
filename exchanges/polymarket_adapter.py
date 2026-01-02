@@ -98,8 +98,6 @@ class NativePolymarketSpot(BaseExchange):
             print(f"{self._get_log_prefix()} ✅ 客户端初始化成功")
             print(f"{self._get_log_prefix()} 📍 钱包地址: {api_key}")
             
-            # 检查余额和授权
-            self._check_balance_and_allowance()
             
         except Exception as e:
             print(f"{self._get_log_prefix()} ❌ 初始化失败: {e}")
@@ -114,27 +112,7 @@ class NativePolymarketSpot(BaseExchange):
         api_key_short = self.api_key[:6] if self.api_key else "NOKEY"
         return f"[{datetime.now().isoformat()}] [polymarket-{api_key_short}-{self.symbol}]"
 
-    def _check_balance_and_allowance(self):
-        """检查账户余额和授权状态"""
-        try:
-            # 获取余额信息
-            balance_allowance = self.client.get_balance_allowance()
-            
-            balance = float(balance_allowance.get('balance', 0))
-            allowance = float(balance_allowance.get('allowance', 0))
-            
-            print(f"{self._get_log_prefix()} 💰 余额: ${balance:.2f} USDC")
-            print(f"{self._get_log_prefix()} 🔓 授权额度: ${allowance:.2f} USDC")
-            
-            if balance < 1:
-                print(f"{self._get_log_prefix()} ⚠️ 余额不足 $1 USDC")
-            
-            if allowance < 1:
-                print(f"{self._get_log_prefix()} ⚠️ 未授权或授权额度不足")
-                print(f"{self._get_log_prefix()} 💡 请访问 https://polymarket.com 完成 'Approve Tokens' 步骤")
-                
-        except Exception as e:
-            print(f"{self._get_log_prefix()} ⚠️ 无法检查余额/授权: {e}")
+
 
     def ping(self) -> bool:
         """测试连接"""
@@ -429,23 +407,16 @@ class NativePolymarketSpot(BaseExchange):
             raise
     
     def get_trading_rules(self) -> Dict:
-        """获取交易规则"""
-        if self._trading_rules_cache:
-            return self._trading_rules_cache
-        
+        """获取交易规则"""        
         try:
             # Polymarket的价格范围是0-1 (概率)
             # 最小价格单位通常是0.001 (0.1%)
-            rules = {
+            return {
                 'tick_size': 0.01,
                 'price_decimals': 2,
                 'step_size': 0.01,
                 'qty_decimals': 2
             }
-            
-            self._trading_rules_cache = rules
-            return rules
-            
         except Exception as e:
             print(f"{self._get_log_prefix()} ❌ 获取交易规则失败: {e}")
             

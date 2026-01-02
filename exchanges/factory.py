@@ -8,7 +8,7 @@ from .binance_adapterv2 import NativeBinanceSpot
 from .binance_futures_adapter import NativeBinanceFutures
 from .backpack_adapter import NativeBackpackSpot
 from .polymarket_adapter import NativePolymarketSpot
-from .btc_updown_15m import BtcUpDown15m
+from .updown_15m import UpDown15m, BtcUpDown15m
 from .ccxt_futures_adapter import CcxtBinanceFutures
 from .ccxt_binance_adapter import CcxtBinanceSpot
 from .short_futures_adapter import CcxtBinanceFuturesShort
@@ -26,7 +26,8 @@ class ExchangeFactory:
         'native_binance_futures': NativeBinanceFutures,
         'native_backpack_spot': NativeBackpackSpot,
         'native_polymarket_spot': NativePolymarketSpot,
-        'native_btc_updown_15m': BtcUpDown15m,
+        'native_updown_15m': UpDown15m,
+        'native_btc_updown_15m': BtcUpDown15m,  # 向后兼容
         # CCXT 实现
         'ccxt_binance_spot': CcxtBinanceSpot,
         'ccxt_binance_futures': CcxtBinanceFutures,
@@ -37,7 +38,8 @@ class ExchangeFactory:
         'backpack': NativeBackpackSpot,
         'bpx': NativeBackpackSpot,
         'polymarket': NativePolymarketSpot,
-        'btc_updown_15m': BtcUpDown15m,
+        'updown_15m': UpDown15m,
+        'btc_updown_15m': BtcUpDown15m,  # 向后兼容
         'ccxt_futures': CcxtBinanceFutures,
         'ccxt_binance': CcxtBinanceSpot,
     }
@@ -62,10 +64,10 @@ class ExchangeFactory:
         """
         adapter_class = cls.SUPPORTED_EXCHANGES.get(exchange_name.lower())
         if adapter_class:
-            # BtcUpDown15m 使用 outcome 参数而不是 symbol
-            if adapter_class == BtcUpDown15m:
-                outcome = symbol if symbol in ['Up', 'Down'] else 'Up'
-                return adapter_class(api_key, api_secret, outcome, testnet)
+            # UpDown15m 使用 symbol 参数，格式为 "market-outcome"，如 "btc-Up"
+            if adapter_class in (UpDown15m, BtcUpDown15m):
+                # 支持新格式 "btc-Up" 和旧格式 "Up"/"Down"
+                return adapter_class(api_key, api_secret, symbol, testnet)
             else:
                 return adapter_class(api_key, api_secret, symbol, testnet)
         return None

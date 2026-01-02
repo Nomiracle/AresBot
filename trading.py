@@ -593,7 +593,7 @@ def trading_loop(username, bot_key):
                             handle_reconnected(bot_data, exchange, log_prefix, _on_order_update)
                             return
                         
-                        # 市场刷新事件（BtcUpDown15m 市场切换）
+                        # 市场刷新事件（UpDown15m 市场切换）
                         if event_type == 'refresh_market':
                             old_slug = event.get('old_slug')
                             new_slug = event.get('new_slug')

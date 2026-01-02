@@ -1,6 +1,7 @@
 """
-BTC Up/Down 15分钟市场交易所适配器
+Up/Down 15分钟市场交易所适配器
 自动计算并使用最新的 15 分钟时间戳市场
+支持多种市场（如 btc, eth 等）
 """
 from datetime import datetime, timezone
 import requests
@@ -11,25 +12,31 @@ import threading
 from typing import Dict, Callable
 
 
-class BtcUpDown15m(NativePolymarketSpot):
-    """BTC Up/Down 15分钟市场交易所适配器
+class UpDown15m(NativePolymarketSpot):
+    """Up/Down 15分钟市场交易所适配器
     
     自动计算下一个 15 分钟时间戳,并使用对应的市场进行交易
+    支持多种市场，通过 symbol 参数指定，格式为 "market-outcome"，如 "btc-Up"
     """
     
     # 市场关闭前的阈值时间(秒) - 用于取消订单和刷新市场
     MARKET_CLOSE_THRESHOLD_SECONDS = 180
     
-    def __init__(self, api_key: str, api_secret: str, outcome: str = "Up", testnet: bool = True):
-        """初始化 BTC Up/Down 15分钟市场适配器
+    def __init__(self, api_key: str, api_secret: str, symbol: str = "btc-Up", testnet: bool = True):
+        """初始化 Up/Down 15分钟市场适配器
         
         Args:
             api_key: 钱包地址
             api_secret: 私钥 (Private Key, 0x开头的十六进制字符串)
-            outcome: 交易方向 "Up" 或 "Down" (默认: "Up")
+            symbol: 交易对，格式为 "market-outcome"，如 "btc-Up" 或 "eth-Down"
+                   market: 市场前缀（如 btc, eth）
+                   outcome: 交易方向 "Up" 或 "Down"
             testnet: 是否使用测试网
         """
-        self.outcome = outcome
+        # 解析 symbol，格式为 "market-outcome"，如 "btc-Up"
+        self.market_prefix, self.outcome = self._parse_symbol(symbol)
+        self.original_symbol = symbol  # 保存原始 symbol 用于事件回调
+        
         self.market_end_time = None  # 市场结束时间戳
         self.condition_id = None  # 市场的条件 ID (用于 WebSocket 订阅)
         self._ws_callbacks = None  # 保存 WebSocket 回调函数
@@ -41,22 +48,46 @@ class BtcUpDown15m(NativePolymarketSpot):
         token_id = self._get_latest_market_token()
         
         if not token_id:
-            raise ValueError("无法获取最新的 BTC Up/Down 15分钟市场")
+            raise ValueError(f"无法获取最新的 {self.market_prefix.upper()} Up/Down 15分钟市场")
         
         # 调用父类初始化
         super().__init__(api_key, api_secret, token_id, testnet)
         
-        print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 使用市场: {self.market_slug}")
-        print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 交易方向: {outcome}")
-        print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] Token ID: {token_id}")
+        print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 使用市场: {self.market_slug}")
+        print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 市场前缀: {self.market_prefix}")
+        print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 交易方向: {self.outcome}")
+        print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] Token ID: {token_id}")
         
         # 注意: 定时器将在 start_ws() 中设置,确保客户端已完成认证
     
+    def _parse_symbol(self, symbol: str) -> tuple:
+        """解析 symbol 格式
+        
+        Args:
+            symbol: 交易对，格式为 "market-outcome"，如 "btc-Up" 或 "eth-Down"
+        
+        Returns:
+            tuple: (market_prefix, outcome)
+        """
+        if '-' in symbol:
+            parts = symbol.split('-', 1)
+            market_prefix = parts[0].lower()
+            outcome = parts[1].capitalize() if len(parts) > 1 else 'Up'
+        else:
+            # 兼容旧格式，只传入 "Up" 或 "Down"
+            market_prefix = 'btc'
+            outcome = symbol.capitalize() if symbol else 'Up'
+        
+        # 验证 outcome
+        if outcome not in ['Up', 'Down']:
+            outcome = 'Up'
+        
+        return market_prefix, outcome
     
     def _get_log_prefix(self) -> str:
         """生成日志前缀"""
         api_key_short = self.api_key[:6] if self.api_key else "NOKEY"
-        return f"[{datetime.now().isoformat()}] [BTCUpDown15Min-{api_key_short}-{self.market_slug}]"
+        return f"[{datetime.now().isoformat()}] [UpDown15m-{self.market_prefix}-{api_key_short}-{self.market_slug}]"
 
     
     def _calculate_next_timestamp(self) -> int:
@@ -105,9 +136,10 @@ class BtcUpDown15m(NativePolymarketSpot):
             str: Token ID,如果获取失败返回 None
         """
         try:
-            slug = f"btc-updown-15m-{timestamp}"
+            # 使用动态市场前缀
+            slug = f"{self.market_prefix}-updown-15m-{timestamp}"
             
-            print(f"[{datetime.now().isoformat()}] 🔍 [BTC Up/Down 15m] 查询市场: {slug}")
+            print(f"[{datetime.now().isoformat()}] 🔍 [UpDown15m] 查询市场: {slug}")
             
             # 通过 Gamma API 查询市场
             response = requests.get(
@@ -129,7 +161,7 @@ class BtcUpDown15m(NativePolymarketSpot):
                             condition_id = market.get('conditionId') or market.get('condition_id')
                             if condition_id:
                                 self.condition_id = condition_id
-                                print(f"[{datetime.now().isoformat()}] 🔑 [BTC Up/Down 15m] Condition ID: {condition_id}")
+                                print(f"[{datetime.now().isoformat()}] 🔑 [UpDown15m] Condition ID: {condition_id}")
                         
                         # 尝试从 tokens 字段获取
                         tokens = market.get('tokens', [])
@@ -152,12 +184,12 @@ class BtcUpDown15m(NativePolymarketSpot):
                                             'outcome': outcomes[i]
                                         })
                             except (json.JSONDecodeError, Exception) as e:
-                                print(f"[{datetime.now().isoformat()}] ⚠️ [BTC Up/Down 15m] 解析 clobTokenIds 失败: {e}")
+                                print(f"[{datetime.now().isoformat()}] ⚠️ [UpDown15m] 解析 clobTokenIds 失败: {e}")
                         
                         # 查找对应方向的 token
-                        print(f"[{datetime.now().isoformat()}] 🔍 [BTC Up/Down 15m] 市场 {slug} 有 {len(tokens)} 个 token")
+                        print(f"[{datetime.now().isoformat()}] 🔍 [UpDown15m] 市场 {slug} 有 {len(tokens)} 个 token")
                         for token in tokens:
-                            print(f"[{datetime.now().isoformat()}] 🔍 [BTC Up/Down 15m]   - {token.get('outcome')}: {token.get('token_id')}")
+                            print(f"[{datetime.now().isoformat()}] 🔍 [UpDown15m]   - {token.get('outcome')}: {token.get('token_id')}")
                             if token.get('outcome', '').lower() == self.outcome.lower():
                                 token_id = token.get('token_id')
                                 
@@ -165,10 +197,10 @@ class BtcUpDown15m(NativePolymarketSpot):
                                     self.market_slug = slug
                                     self.market_end_time = timestamp + 900  # 900秒 = 15分钟
                                 
-                                print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 找到 {self.outcome} token")
-                                print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] Slug: {slug} (开始: {datetime.fromtimestamp(timestamp, tz=pytz.UTC).strftime('%H:%M')} UTC)")
-                                print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] Token ID: {token_id}")
-                                print(f"[{datetime.now().isoformat()}] ⏰ [BTC Up/Down 15m] 市场结束时间: {datetime.fromtimestamp(timestamp + 900, tz=pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
+                                print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 找到 {self.outcome} token")
+                                print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] Slug: {slug} (开始: {datetime.fromtimestamp(timestamp, tz=pytz.UTC).strftime('%H:%M')} UTC)")
+                                print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] Token ID: {token_id}")
+                                print(f"[{datetime.now().isoformat()}] ⏰ [UpDown15m] 市场结束时间: {datetime.fromtimestamp(timestamp + 900, tz=pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
                                 return token_id
                         
                         # 如果没有找到指定方向,使用第一个 token
@@ -180,14 +212,14 @@ class BtcUpDown15m(NativePolymarketSpot):
                                 self.market_slug = slug
                                 self.market_end_time = timestamp + 900  # 900秒 = 15分钟
                             
-                            print(f"[{datetime.now().isoformat()}] ⚠️ [BTC Up/Down 15m] 未找到 {self.outcome},使用 {actual_outcome}: {token_id}")
-                            print(f"[{datetime.now().isoformat()}] ⏰ [BTC Up/Down 15m] 市场结束时间: {datetime.fromtimestamp(timestamp + 900, tz=pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
+                            print(f"[{datetime.now().isoformat()}] ⚠️ [UpDown15m] 未找到 {self.outcome},使用 {actual_outcome}: {token_id}")
+                            print(f"[{datetime.now().isoformat()}] ⏰ [UpDown15m] 市场结束时间: {datetime.fromtimestamp(timestamp + 900, tz=pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
                             return token_id
             
-            print(f"[{datetime.now().isoformat()}] ⏭️ [BTC Up/Down 15m] 市场 {slug} 不存在")
+            print(f"[{datetime.now().isoformat()}] ⏭️ [UpDown15m] 市场 {slug} 不存在")
             
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [BTC Up/Down 15m] 查询失败: {e}")
+            print(f"[{datetime.now().isoformat()}] ❌ [UpDown15m] 查询失败: {e}")
         
         return None
     
@@ -204,7 +236,7 @@ class BtcUpDown15m(NativePolymarketSpot):
         token_id = self._get_market_token_by_timestamp(current_timestamp, update_state=True)
         
         if not token_id:
-            print(f"[{datetime.now().isoformat()}] ❌ [BTC Up/Down 15m] 无法获取最新市场")
+            print(f"[{datetime.now().isoformat()}] ❌ [UpDown15m] 无法获取最新市场")
         
         return token_id
     
@@ -218,7 +250,7 @@ class BtcUpDown15m(NativePolymarketSpot):
         token_id = self._get_market_token_by_timestamp(next_timestamp, update_state=True)
         
         if not token_id:
-            print(f"[{datetime.now().isoformat()}] ❌ [BTC Up/Down 15m] 无法获取下一个市场")
+            print(f"[{datetime.now().isoformat()}] ❌ [UpDown15m] 无法获取下一个市场")
         
         return token_id
     
@@ -317,8 +349,8 @@ class BtcUpDown15m(NativePolymarketSpot):
             bool: 是否成功刷新
         """
         try:
-            print(f"[{datetime.now().isoformat()}] 🔄 [BTC Up/Down 15m] 刷新市场...")
-            print(f"[{datetime.now().isoformat()}] 🔍 [BTC Up/Down 15m] 当前状态: slug={self.market_slug}, token_id={self.symbol}")
+            print(f"[{datetime.now().isoformat()}] 🔄 [UpDown15m] 刷新市场...")
+            print(f"[{datetime.now().isoformat()}] 🔍 [UpDown15m] 当前状态: slug={self.market_slug}, token_id={self.symbol}")
             
             old_token_id = self.symbol
             old_slug = self.market_slug
@@ -332,7 +364,7 @@ class BtcUpDown15m(NativePolymarketSpot):
                 self.clear_filled_order_ids()
                 
                 # 关闭旧市场的 WebSocket
-                print(f"[{datetime.now().isoformat()}] 🔌 [BTC Up/Down 15m] 关闭旧市场 WebSocket...")
+                print(f"[{datetime.now().isoformat()}] 🔌 [UpDown15m] 关闭旧市场 WebSocket...")
                 self.stop_ws()
                 
                 # 等待 WebSocket 完全关闭
@@ -343,15 +375,15 @@ class BtcUpDown15m(NativePolymarketSpot):
                 
                 # 如果之前有 WebSocket 回调,重新启动新市场的 WebSocket
                 if self._ws_callbacks:
-                    print(f"[{datetime.now().isoformat()}] 🚀 [BTC Up/Down 15m] 启动新市场 WebSocket...")
+                    print(f"[{datetime.now().isoformat()}] 🚀 [UpDown15m] 启动新市场 WebSocket...")
                     self.start_ws(
                         on_price_update=self._ws_callbacks['price'],
                         on_order_update=self._ws_callbacks['order']
                     )
                 
-                print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 市场已更新")
-                print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 旧市场: token_id={old_token_id}")
-                print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 新市场: slug={self.market_slug}, token_id={new_token_id}")
+                print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 市场已更新")
+                print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 旧市场: token_id={old_token_id}")
+                print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 新市场: slug={self.market_slug}, token_id={new_token_id}")
                 
 
                 
@@ -359,31 +391,31 @@ class BtcUpDown15m(NativePolymarketSpot):
                 if self._ws_callbacks and self._ws_callbacks.get('order'):
                     refresh_event = {
                         'event_type': 'refresh_market',
-                        'symbol': self.outcome,
+                        'symbol': self.original_symbol,  # 使用原始 symbol
                         'old_slug': old_slug,
                         'new_slug': new_slug
                     }
                     self._ws_callbacks['order'](refresh_event)
-                    print(f"[{datetime.now().isoformat()}] 📤 [BTC Up/Down 15m] 已发送 refresh_market 事件")
+                    print(f"[{datetime.now().isoformat()}] 📤 [UpDown15m] 已发送 refresh_market 事件")
                 time.sleep(1)
                 # 重置市场切换标志，允许下单和改价
                 self._is_switching_market = False
-                print(f"[{datetime.now().isoformat()}] ✅ [BTC Up/Down 15m] 市场切换完成，允许下单和改价")
+                print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 市场切换完成，允许下单和改价")
                 
                 return True
             elif new_token_id == old_token_id:
-                print(f"[{datetime.now().isoformat()}] ℹ️ [BTC Up/Down 15m] 已是最新市场: slug={self.market_slug}, token_id={self.symbol}")
+                print(f"[{datetime.now().isoformat()}] ℹ️ [UpDown15m] 已是最新市场: slug={self.market_slug}, token_id={self.symbol}")
                 # 重置市场切换标志
                 self._is_switching_market = False
                 return True
             else:
-                print(f"[{datetime.now().isoformat()}] ❌ [BTC Up/Down 15m] 刷新失败")
+                print(f"[{datetime.now().isoformat()}] ❌ [UpDown15m] 刷新失败")
                 # 刷新失败也要重置标志，否则会永久禁止下单
                 self._is_switching_market = False
                 return False
                 
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ [BTC Up/Down 15m] 刷新市场失败: {e}")
+            print(f"[{datetime.now().isoformat()}] ❌ [UpDown15m] 刷新市场失败: {e}")
             import traceback
             traceback.print_exc()
             # 异常时也要重置标志
@@ -415,30 +447,30 @@ class BtcUpDown15m(NativePolymarketSpot):
         return super().modify_order(cancel_order_id, new_price, new_quantity, side)
     
     def _process_order_event(self, data: dict, symbol: str = None) -> dict:
-        """处理订单事件 - 重写父类方法,使用 outcome 作为 symbol
+        """处理订单事件 - 重写父类方法,使用 original_symbol 作为 symbol
         
         Args:
             data: 订单事件数据
-            symbol: 用于事件的 symbol 字段,如果为 None 则使用 self.outcome
+            symbol: 用于事件的 symbol 字段,如果为 None 则使用 self.original_symbol
         
         Returns:
             dict: 处理后的事件字典,如果不需要回调则返回 None
         """
-        # 使用 outcome 作为 symbol,因为 config['symbol'] 存储的是 "Up" 或 "Down"
-        return super()._process_order_event(data, symbol=self.outcome)
+        # 使用 original_symbol 作为 symbol,因为 config['symbol'] 存储的是 "btc-Up" 格式
+        return super()._process_order_event(data, symbol=self.original_symbol)
 
     def _process_trade_event(self, data: dict, symbol: str = None) -> dict:
-        """处理交易事件 - 重写父类方法,使用 outcome 作为 symbol
+        """处理交易事件 - 重写父类方法,使用 original_symbol 作为 symbol
         
         Args:
             data: 交易事件数据
-            symbol: 用于事件的 symbol 字段,如果为 None 则使用 self.outcome
+            symbol: 用于事件的 symbol 字段,如果为 None 则使用 self.original_symbol
         
         Returns:
             dict: 处理后的事件字典,如果不需要回调则返回 None
         """
-        # 使用 outcome 作为 symbol,因为 config['symbol'] 存储的是 "Up" 或 "Down"
-        return super()._process_trade_event(data, symbol=self.outcome)
+        # 使用 original_symbol 作为 symbol,因为 config['symbol'] 存储的是 "btc-Up" 格式
+        return super()._process_trade_event(data, symbol=self.original_symbol)
     
     def get_market_info(self) -> dict:
         """获取当前市场信息
@@ -452,7 +484,9 @@ class BtcUpDown15m(NativePolymarketSpot):
         return {
             'slug': self.market_slug,
             'token_id': self.symbol,
+            'market_prefix': self.market_prefix,
             'outcome': self.outcome,
+            'original_symbol': self.original_symbol,
             'timestamp': self.market_end_time or self._calculate_next_timestamp(),
             'end_time': datetime.fromtimestamp(self.market_end_time).isoformat() if self.market_end_time else None
         }
@@ -706,3 +740,7 @@ class BtcUpDown15m(NativePolymarketSpot):
                     self._refresh_timer.cancel()
         except:
             pass
+
+
+# 为了向后兼容，保留 BtcUpDown15m 别名
+BtcUpDown15m = UpDown15m
