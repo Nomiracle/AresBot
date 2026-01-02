@@ -289,6 +289,13 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
                        exchange, config, log_prefix):
     """改价未完成买单"""
     for order in open_buy_orders:
+        order_id = str(order.get('orderId'))
+        
+        # 跳过已成交的订单（防止与成交回调并发冲突）
+        if order_id in bot_data.get('processed_filled_orders', set()):
+            print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 订单 {order_id} 已成交，跳过改价")
+            continue
+        
         current_price = float(order.get('price', 0))
         if current_price == target_price:
             continue
@@ -317,16 +324,14 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
                 if isinstance(new_order_data, dict):
                     new_order_id = str(new_order_data.get('orderId') or new_order_data.get('id'))
             
-            old_order_id = str(order['orderId'])
-            
             # 更新或添加 pending_buys 中的订单
-            if new_order_id == old_order_id:
+            if new_order_id == order_id:
                 # editOrderWs 返回相同 ID，更新现有条目的价格
                 for pb in bot_data.get('pending_buys', []):
-                    if pb['order_id'] == old_order_id:
+                    if pb['order_id'] == order_id:
                         pb['price'] = target_price
                         break
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单改价成功: {old_order_id}, 目标价格={target_price:.6f}/当前价格={bot_data['current_price']:.6f}")
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单改价成功: {order_id}, 目标价格={target_price:.6f}/当前价格={bot_data['current_price']:.6f}")
             else:
                 # 订单 ID 变化，添加新条目并移除旧条目
                 bot_data.setdefault('pending_buys', []).append({
@@ -338,17 +343,16 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
                 })
                 bot_data['pending_buys'] = [
                     pb for pb in bot_data.get('pending_buys', []) 
-                    if pb['order_id'] != old_order_id
+                    if pb['order_id'] != order_id
                 ]
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单改价成功: {old_order_id} → {new_order_id}, 目标价格={target_price:.6f}/当前价格={bot_data['current_price']:.6f}，本地缓存买单：{bot_data.get('pending_buys', [])}")
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单改价成功: {order_id} → {new_order_id}, 目标价格={target_price:.6f}/当前价格={bot_data['current_price']:.6f}，本地缓存买单：{bot_data.get('pending_buys', [])}")
                 
             # 改价成功，清除错误和警告信息
             bot_data['last_error'] = None
             bot_data['last_error_time'] = None
             bot_data['last_warning'] = None
         except Exception as e:
-            old_order_id = str(order['orderId'])
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 改价失败 {old_order_id}: {e}")
+            print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 改价失败 {order_id}: {e}")
             
             # 检查缓存中的待处理买单是否还存在
             # 如果改价失败,可能是订单已经成交或被取消,需要从缓存中移除
@@ -357,12 +361,12 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
                 open_order_ids = {str(o.get('orderId')) for o in current_open_orders if o.get('side') == 'BUY'}
                 
                 # 如果订单不在开放订单列表中,从缓存中移除
-                if old_order_id not in open_order_ids:
+                if order_id not in open_order_ids:
                     bot_data['pending_buys'] = [
                         pb for pb in bot_data.get('pending_buys', []) 
-                        if pb['order_id'] != old_order_id
+                        if pb['order_id'] != order_id
                     ]
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🧹 订单 {old_order_id} 不存在,已从缓存中移除")
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🧹 订单 {order_id} 不存在,已从缓存中移除")
             except Exception as check_error:
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 检查订单状态失败: {check_error}")
 
