@@ -103,6 +103,7 @@ class NativePolymarketSpot(BaseExchange):
                 # 继续执行,某些操作可能不需要 Level 2 认证
             print(f"{self._get_log_prefix()} ✅ 客户端初始化成功")
             print(f"{self._get_log_prefix()} 📍 钱包地址: {api_key}")
+            print(f"{self._get_log_prefix()} 💰 最低价格阈值: {self.min_price_threshold}")
             
             
         except Exception as e:

@@ -66,7 +66,6 @@ class UpDown15m(NativePolymarketSpot):
         print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 市场前缀: {self.market_prefix}")
         print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 交易方向: {self.outcome}")
         print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] Token ID: {token_id}")
-        print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 最低价格阈值: {self.min_price_threshold}")
         print(f"[{datetime.now().isoformat()}] ✅ [UpDown15m] 市场关闭阈值: {self.market_close_threshold}秒")
         
         # 注意: 定时器将在 start_ws() 中设置,确保客户端已完成认证
