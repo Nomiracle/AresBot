@@ -196,12 +196,20 @@ class NativePolymarketSpot(BaseExchange):
                 'error': str(e)
             }
     
-    def get_open_orders(self) -> list:
-        """获取当前 symbol 的未完成订单"""
+    def get_open_orders(self, asset_id: str = None) -> list:
+        """获取未完成订单
+        
+        Args:
+            asset_id: 指定的 asset_id，为 None 时使用当前 self.symbol
+        
+        Returns:
+            list: 未完成订单列表
+        """
+        target_asset_id = asset_id if asset_id is not None else self.symbol
         try:
-            print(f"{self._get_log_prefix()} 🔍 查询未完成订单 (asset_id={self.symbol})...")
-            # 使用 asset_id 过滤，只查询当前 symbol 的订单
-            orders = self.client.get_orders(OpenOrderParams(asset_id=self.symbol))
+            print(f"{self._get_log_prefix()} 🔍 查询未完成订单 (asset_id={target_asset_id})...")
+            # 使用 asset_id 过滤，只查询指定 symbol 的订单
+            orders = self.client.get_orders(OpenOrderParams(asset_id=target_asset_id))
             
             open_orders = []
             for order in orders:

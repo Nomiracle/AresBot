@@ -297,20 +297,22 @@ class UpDown15m(NativePolymarketSpot):
                 self._refresh_timer.daemon = True
                 self._refresh_timer.start()
     
-    def _cancel_all_buy_orders(self, tag: str = "") -> int:
+    def _cancel_all_buy_orders(self, tag: str = "", asset_id: str = None) -> int:
         """批量取消所有未完成的买单
         
         Args:
             tag: 日志标签，用于区分调用来源
+            asset_id: 指定的 asset_id，为 None 时使用当前 self.symbol
         
         Returns:
             int: 成功取消的订单数量
         """
         try:
             log_tag = f"({tag})" if tag else ""
-            print(f"{self._get_log_prefix()} 🚫 取消所有买单{log_tag}...")
+            target_asset_id = asset_id if asset_id is not None else self.symbol
+            print(f"{self._get_log_prefix()} 🚫 取消所有买单{log_tag} (asset_id={target_asset_id})...")
             
-            open_orders = self.get_open_orders()
+            open_orders = self.get_open_orders(asset_id=target_asset_id)
             buy_orders = [o for o in open_orders if o.get('side') == 'BUY']
             
             if not buy_orders:
@@ -339,6 +341,10 @@ class UpDown15m(NativePolymarketSpot):
         try:
             print(f"{self._get_log_prefix()} 🔄 开始刷新市场流程...")
             
+            # 保存旧市场的 asset_id，用于定时器取消订单
+            old_asset_id = self.symbol
+            print(f"{self._get_log_prefix()} 📝 保存旧市场 asset_id: {old_asset_id}")
+            
             # 设置市场切换中标志，禁止下单和改价
             self._is_switching_market = True
             print(f"{self._get_log_prefix()} 🚫 市场切换中，禁止下单和改价")
@@ -346,14 +352,14 @@ class UpDown15m(NativePolymarketSpot):
             # 等待1秒，确保正在进行的操作完成
             time.sleep(1)
             
-            # 1. 批量取消所有未完成的买单（第一次）
-            self._cancel_all_buy_orders("第1次")
+            # 1. 批量取消所有未完成的买单（第一次，使用旧 asset_id）
+            self._cancel_all_buy_orders("第1次", asset_id=old_asset_id)
             
-            # 设置定时器，7秒后再次执行批量取消
-            cancel_timer = threading.Timer(7, self._cancel_all_buy_orders, args=["第2次-定时器"])
+            # 设置定时器，7秒后再次执行批量取消（使用旧 asset_id）
+            cancel_timer = threading.Timer(7, self._cancel_all_buy_orders, kwargs={"tag": "第2次-定时器", "asset_id": old_asset_id})
             cancel_timer.daemon = True
             cancel_timer.start()
-            print(f"{self._get_log_prefix()} ⏲️ 已设置7秒后再次取消买单的定时器")
+            print(f"{self._get_log_prefix()} ⏲️ 已设置7秒后再次取消买单的定时器 (asset_id={old_asset_id})")
             
             # 2. 刷新到新市场
             print(f"{self._get_log_prefix()} 🔄 切换到新市场...")
@@ -361,7 +367,7 @@ class UpDown15m(NativePolymarketSpot):
             
             if success:
                 # 等待1秒，确保新市场 WebSocket 连接稳定
-                time.sleep(1)
+                time.sleep(2)
                 
                 # 3. 为新市场设置定时器
                 print(f"{self._get_log_prefix()} ⏲️ 为新市场设置定时器...")
