@@ -97,7 +97,7 @@ class UpDown15m(NativePolymarketSpot):
     def _get_log_prefix(self) -> str:
         """生成日志前缀"""
         api_key_short = self.api_key[:6] if self.api_key else "NOKEY"
-        return f"[{datetime.now().isoformat()}] [UpDown15m-{self.market_prefix}-{api_key_short}-{self.market_slug}]"
+        return f"[{datetime.now().isoformat()}] [UpDown15m-{api_key_short}-{self.market_slug}-{self.outcome}]"
 
     
     def _calculate_next_timestamp(self) -> int:
