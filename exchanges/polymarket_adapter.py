@@ -79,6 +79,9 @@ class NativePolymarketSpot(BaseExchange):
         self._cancelled_order_ids = {}  # {order_id: cancel_time}
         self._cancelled_order_ids_lock = threading.Lock()
         self._cancelled_order_ttl = 60  # 缓存 60 秒后自动清理
+        
+        # 最新买单成交价格（用于虚拟卖单）
+        self._last_buy_price = 0.0
         try:
             # 初始化Polymarket客户端
             host = "https://clob.polymarket.com"
@@ -222,11 +225,12 @@ class NativePolymarketSpot(BaseExchange):
         with self._cancelled_order_ids_lock:
             return order_id in self._cancelled_order_ids
     
-    def get_open_orders(self, asset_id: str = None) -> list:
+    def get_open_orders(self, asset_id: str = None, include_virtual_sell: bool = True) -> list:
         """获取未完成订单
         
         Args:
             asset_id: 指定的 asset_id，为 None 时使用当前 self.symbol
+            include_virtual_sell: 是否包含虚拟卖单（基于 token 余额）
         
         Returns:
             list: 未完成订单列表
@@ -242,6 +246,8 @@ class NativePolymarketSpot(BaseExchange):
             
             open_orders = []
             filtered_orders = []
+            sell_order_qty = 0  # 统计已有卖单的数量
+            
             for order in orders:
                 status = order.get('status', '').upper()
                 order_id = order.get('id')
@@ -252,9 +258,20 @@ class NativePolymarketSpot(BaseExchange):
                         continue
                     normalized = self._normalize_order(order)
                     open_orders.append(normalized)
+                    # 统计卖单数量
+                    if normalized.get('side') == 'SELL':
+                        sell_order_qty += normalized.get('origQty', 0) - normalized.get('executedQty', 0)
             
             if filtered_orders:
                 print(f"{self._get_log_prefix()} ⚠️ 过滤了 {len(filtered_orders)} 个已取消但 API 仍返回的订单: {filtered_orders}")
+            
+            # 检查 token 余额，生成虚拟卖单
+            if include_virtual_sell:
+                virtual_sell = self._get_virtual_sell_order(target_asset_id, sell_order_qty)
+                if virtual_sell:
+                    open_orders.append(virtual_sell)
+                    print(f"{self._get_log_prefix()} 💰 添加虚拟卖单: 数量={virtual_sell['origQty']:.2f}")
+            
             print(f"{self._get_log_prefix()} ✅ 找到 {len(open_orders)} 个未完成订单")
             return open_orders
             
@@ -263,6 +280,87 @@ class NativePolymarketSpot(BaseExchange):
             import traceback
             traceback.print_exc()
             return []
+    
+    def _get_virtual_sell_order(self, asset_id: str, existing_sell_qty: float = 0) -> dict:
+        """将 token 余额映射为虚拟卖单（参考 CcxtBinanceFutures._position_to_virtual_orders）
+        
+        - token 余额 → 虚拟卖单（类似合约多单持仓 → 虚拟卖单）
+        
+        Args:
+            asset_id: token_id
+            existing_sell_qty: 已有卖单的数量（需要排除）
+        
+        Returns:
+            dict: 虚拟卖单，如果余额不足则返回 None
+        """
+        try:
+            from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+            
+            params = BalanceAllowanceParams(
+                asset_type=AssetType.CONDITIONAL,
+                token_id=asset_id
+            )
+            balance_result = self.client.get_balance_allowance(params)
+            token_balance_raw = float(balance_result.get('balance', 0))
+            token_balance = token_balance_raw / 1_000_000
+            
+            # 可用余额 = 总余额 - 已挂卖单数量
+            available_qty = token_balance - existing_sell_qty
+            
+            # 余额大于 1 才生成虚拟卖单
+            if available_qty >= 1:
+                # 使用最新买单成交价格作为 entry_price
+                entry_price = self._last_buy_price
+                
+                # 格式参考 CcxtBinanceFutures._position_to_virtual_orders
+                return {
+                    'orderId': f'pos_token_{asset_id[:8]}',
+                    'id': f'pos_token_{asset_id[:8]}',
+                    'symbol': asset_id,
+                    'side': 'SELL',
+                    'price': str(entry_price) if entry_price > 0 else '0',
+                    'origQty': available_qty,
+                    'executedQty': 0,
+                    'status': 'NEW',
+                    'info': {
+                        'virtual': True,
+                        'from_position': True,
+                        'entry_price': entry_price,
+                        'token_balance': token_balance,
+                        'existing_sell_qty': existing_sell_qty
+                    }
+                }
+            
+            return None
+            
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ⚠️ 获取 token 余额失败: {e}")
+            return None
+    
+    def get_token_balance(self, asset_id: str = None) -> float:
+        """获取 token 余额
+        
+        Args:
+            asset_id: token_id，为 None 时使用当前 self.symbol
+        
+        Returns:
+            float: token 余额
+        """
+        try:
+            from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+            
+            target_asset_id = asset_id if asset_id is not None else self.symbol
+            params = BalanceAllowanceParams(
+                asset_type=AssetType.CONDITIONAL,
+                token_id=target_asset_id
+            )
+            balance_result = self.client.get_balance_allowance(params)
+            token_balance_raw = float(balance_result.get('balance', 0))
+            return token_balance_raw / 1_000_000
+            
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ⚠️ 获取 token 余额失败: {e}")
+            return 0.0
     
     def _normalize_order(self, order: Dict) -> Dict:
         """标准化订单格式"""
@@ -492,14 +590,22 @@ class NativePolymarketSpot(BaseExchange):
         try:
             print(f"{self._get_log_prefix()} 🔄 开始改价: orderID={cancel_order_id}, side={side}, new_price={price}, quantity={quantity}")
             
-            # Polymarket不支持原子性的cancel_replace,需要分两步
-            # 1. 取消旧订单
-            print(f"{self._get_log_prefix()} 🚫 改价步骤1: 取消旧订单 {cancel_order_id}")
-            self.cancel_order(cancel_order_id)
+            # 检查是否为虚拟订单（来自持仓的虚拟卖单）
+            is_virtual = cancel_order_id.startswith('pos_token_')
+            
+            if is_virtual:
+                # 虚拟订单不需要取消，直接创建新订单
+                print(f"{self._get_log_prefix()} 💰 虚拟订单无需取消，直接创建新订单")
+            else:
+                # Polymarket不支持原子性的cancel_replace,需要分两步
+                # 1. 取消旧订单
+                print(f"{self._get_log_prefix()} 🚫 改价步骤1: 取消旧订单 {cancel_order_id}")
+                self.cancel_order(cancel_order_id)
+                
+                # 短暂延迟确保取消完成
+                time.sleep(0.1)
             
             # 2. 创建新订单
-            time.sleep(0.1)  # 短暂延迟确保取消完成
-            
             print(f"{self._get_log_prefix()} 📝 改价步骤2: 创建新订单 price={price}, quantity={quantity}")
             if side.upper() == 'BUY':
                 new_order = self.order_limit_buy(quantity, price, **kwargs)
@@ -889,8 +995,9 @@ class NativePolymarketSpot(BaseExchange):
                         
                         print(f"{self._get_log_prefix()} ✅ 订单成交(Maker): order_id={my_order_id[:16]}..., {my_side} {my_matched_amount}@{my_price}, outcome={my_outcome}")
                         
-                        # 如果是买单成交，等待 token 余额更新后再回调
+                        # 如果是买单成交，保存买入价格并等待 token 余额更新
                         if my_side == 'BUY':
+                            self._last_buy_price = my_price
                             try:
                                 print(f"{self._get_log_prefix()} ⏳ 等待 Token 余额更新...")
                                 self._check_token_balance(my_matched_amount)
@@ -928,8 +1035,9 @@ class NativePolymarketSpot(BaseExchange):
                 
                 print(f"{self._get_log_prefix()} ✅ 订单成交(Taker): {trade_id}, {side} {size}@{price}")
                 
-                # 如果是买单成交，等待 token 余额更新后再回调
+                # 如果是买单成交，保存买入价格并等待 token 余额更新
                 if side == 'BUY':
+                    self._last_buy_price = price
                     try:
                         print(f"{self._get_log_prefix()} ⏳ 等待 Token 余额更新...")
                         self._check_token_balance(size)
