@@ -74,6 +74,11 @@ class NativePolymarketSpot(BaseExchange):
         # 已处理的成交订单 ID 集合（用于去重）
         self._filled_order_ids = set()
         self._filled_order_ids_lock = threading.Lock()
+        
+        # 已取消订单 ID 缓存（用于过滤 API 延迟返回的已取消订单）
+        self._cancelled_order_ids = {}  # {order_id: cancel_time}
+        self._cancelled_order_ids_lock = threading.Lock()
+        self._cancelled_order_ttl = 60  # 缓存 60 秒后自动清理
         try:
             # 初始化Polymarket客户端
             host = "https://clob.polymarket.com"
@@ -196,6 +201,27 @@ class NativePolymarketSpot(BaseExchange):
                 'error': str(e)
             }
     
+    def _cleanup_cancelled_cache(self):
+        """清理过期的已取消订单缓存"""
+        current_time = time.time()
+        with self._cancelled_order_ids_lock:
+            expired_ids = [
+                oid for oid, cancel_time in self._cancelled_order_ids.items()
+                if current_time - cancel_time > self._cancelled_order_ttl
+            ]
+            for oid in expired_ids:
+                del self._cancelled_order_ids[oid]
+    
+    def _mark_order_cancelled(self, order_id: str):
+        """标记订单为已取消（用于过滤 API 延迟）"""
+        with self._cancelled_order_ids_lock:
+            self._cancelled_order_ids[order_id] = time.time()
+    
+    def _is_order_cancelled(self, order_id: str) -> bool:
+        """检查订单是否在已取消缓存中"""
+        with self._cancelled_order_ids_lock:
+            return order_id in self._cancelled_order_ids
+    
     def get_open_orders(self, asset_id: str = None) -> list:
         """获取未完成订单
         
@@ -205,6 +231,9 @@ class NativePolymarketSpot(BaseExchange):
         Returns:
             list: 未完成订单列表
         """
+        # 清理过期的已取消订单缓存
+        self._cleanup_cancelled_cache()
+        
         target_asset_id = asset_id if asset_id is not None else self.symbol
         try:
             print(f"{self._get_log_prefix()} 🔍 查询未完成订单 (asset_id={target_asset_id})...")
@@ -212,12 +241,20 @@ class NativePolymarketSpot(BaseExchange):
             orders = self.client.get_orders(OpenOrderParams(asset_id=target_asset_id))
             
             open_orders = []
+            filtered_orders = []
             for order in orders:
                 status = order.get('status', '').upper()
+                order_id = order.get('id')
                 if status == 'LIVE':  # 只返回活跃订单
+                    # 过滤掉本地已标记为取消的订单（解决 API 延迟问题）
+                    if self._is_order_cancelled(order_id):
+                        filtered_orders.append(order_id)
+                        continue
                     normalized = self._normalize_order(order)
                     open_orders.append(normalized)
             
+            if filtered_orders:
+                print(f"{self._get_log_prefix()} ⚠️ 过滤了 {len(filtered_orders)} 个已取消但 API 仍返回的订单: {filtered_orders}")
             print(f"{self._get_log_prefix()} ✅ 找到 {len(open_orders)} 个未完成订单")
             return open_orders
             
@@ -382,11 +419,29 @@ class NativePolymarketSpot(BaseExchange):
         try:
             print(f"{self._get_log_prefix()} 🚫 取消订单: orderID={order_id}")
             resp = self.client.cancel(order_id)
-            print(f"{self._get_log_prefix()} ✅ 订单已取消: orderID={order_id}")
-            return {
-                'orderId': order_id,
-                'status': 'CANCELED'
-            }
+            print(f"{self._get_log_prefix()} 📡 取消订单响应: {resp}")
+            
+            # 解析响应: {"canceled": [...], "not_canceled": {...}}
+            canceled = resp.get('canceled', [])
+            not_canceled = resp.get('not_canceled', {})
+            
+            if order_id in canceled:
+                # 标记订单为已取消，用于过滤 API 延迟返回的已取消订单
+                self._mark_order_cancelled(order_id)
+                print(f"{self._get_log_prefix()} ✅ 订单已取消: orderID={order_id}")
+                return {
+                    'orderId': order_id,
+                    'status': 'CANCELED'
+                }
+            elif order_id in not_canceled:
+                reason = not_canceled.get(order_id, 'unknown')
+                # 仍然标记为已取消（可能订单已不存在）
+                self._mark_order_cancelled(order_id)
+                raise Exception(f"订单取消失败: orderID={order_id}, 原因={reason}")
+            else:
+                # 响应中没有该订单，可能已被取消
+                self._mark_order_cancelled(order_id)
+                raise Exception(f"订单不在响应中: orderID={order_id}, resp={resp}")
         except Exception as e:
             print(f"{self._get_log_prefix()} ❌ 取消订单失败: {e}")
             raise
@@ -412,6 +467,10 @@ class NativePolymarketSpot(BaseExchange):
             
             canceled = resp.get('canceled', [])
             not_canceled = resp.get('not_canceled', {})
+            
+            # 标记成功取消的订单，用于过滤 API 延迟返回的已取消订单
+            for oid in canceled:
+                self._mark_order_cancelled(oid)
             
             print(f"{self._get_log_prefix()} ✅ 批量取消完成: 成功 {len(canceled)} 个, 失败 {len(not_canceled)} 个")
             
