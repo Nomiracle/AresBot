@@ -873,10 +873,16 @@ class NativePolymarketSpot(BaseExchange):
             dict: 处理后的事件字典,如果不需要回调则返回 None
         """
         order_type = data.get('type')  # PLACEMENT/UPDATE/CANCELLATION
-        print(f"{self._get_log_prefix()} 📋 订单事件: {order_type}")
-        
         order_id = data.get('id')
         asset_id = str(data.get('asset_id'))  # 确保是字符串格式
+        
+        # 过滤非当前 symbol 的订单事件
+        if asset_id != self.symbol:
+            print(f"{self._get_log_prefix()} � 忽略非当前 symbol 的订单事件: asset_id={asset_id[:16]}..., self.symbol={self.symbol[:16]}...")
+            return None
+        
+        print(f"{self._get_log_prefix()} 📋 订单事件: {order_type}")
+        
         side = data.get('side', '').upper()
         price = float(data.get('price', 0))
         original_size = float(data.get('original_size', 0))
@@ -884,7 +890,6 @@ class NativePolymarketSpot(BaseExchange):
         
         # 使用传入的 symbol 或默认使用 self.symbol
         event_symbol = symbol if symbol is not None else self.symbol
-        print(f"{self._get_log_prefix()} {asset_id}/{self.symbol}/{symbol}，event_symbol: {event_symbol}")
         
         # 转换为 trading.py 期望的格式
         if order_type == 'CANCELLATION':
@@ -951,6 +956,12 @@ class NativePolymarketSpot(BaseExchange):
         status = data.get('status')  # MATCHED/MINED/CONFIRMED/RETRYING/FAILED
         taker_order_id = data.get('taker_order_id')
         asset_id = str(data.get('asset_id', ''))
+        
+        # 过滤非当前 symbol 的交易事件
+        if asset_id and asset_id != self.symbol:
+            print(f"{self._get_log_prefix()} 🔇 忽略非当前 symbol 的交易事件: asset_id={asset_id[:16]}..., self.symbol={self.symbol[:16]}...")
+            return None
+        
         side = data.get('side', '').upper()
         price = float(data.get('price', 0))
         size = float(data.get('size', 0))
