@@ -82,6 +82,8 @@
         border: 2px solid #ddd;
         border-radius: 6px;
         font-size: 14px;
+        width: 100%;
+        min-width: 0;
       }
       .input-group input:focus {
         outline: none;
@@ -643,13 +645,6 @@
               <option value="SOLUSDT">SOL/USDT</option>
             </select>
           </div>
-          <div class="input-group" id="btcUpDownDirectionGroup" style="display: none;">
-            <label>交易方向 📊</label>
-            <select id="btcUpDownDirection" onchange="onSymbolChange()">
-              <option value="Up">Up (看涨)</option>
-              <option value="Down">Down (看跌)</option>
-            </select>
-          </div>
           <div class="input-group">
             <label>偏移百分比 (%)</label>
             <input type="number" id="offsetPercent" value="-0.1" step="0.01" />
@@ -1042,7 +1037,6 @@
         const marketInfoBox = document.getElementById("marketInfoBox");
         const polymarketSearchContainer = document.getElementById("polymarketSearchContainer");
         const symbolGroup = document.getElementById("symbolGroup");
-        const btcUpDownDirectionGroup = document.getElementById("btcUpDownDirectionGroup");
         
         if (exchange === 'backpack') {
           apiKeyInput.placeholder = "输入 Backpack Public Key";
@@ -1052,24 +1046,23 @@
           apiSecretInput.placeholder = "输入 Binance API Secret";
         }
         
-        // BTC Up/Down 15m 交易所显示方向选择器，隐藏交易对选择器和市场信息
-        if (exchange === 'btc_updown_15m') {
-          symbolGroup.style.display = 'none';
-          btcUpDownDirectionGroup.style.display = 'block';
-          marketInfoBox.style.display = 'none';
-          polymarketSearchContainer.style.display = 'none';
-        }
         // Polymarket 交易所显示搜索组件，隐藏市场信息
-        else if (exchange === 'polymarket') {
+        if (exchange === 'polymarket') {
           symbolGroup.style.display = 'block';
-          btcUpDownDirectionGroup.style.display = 'none';
           marketInfoBox.style.display = 'none';
           polymarketSearchContainer.style.display = 'block';
-        } 
+        }
+        // UpDown 15m 交易所隐藏市场信息
+        else if (exchange === 'btc_updown_15m' || exchange === 'updown_15m') {
+          symbolGroup.style.display = 'block';
+          marketInfoBox.style.display = 'none';
+          polymarketSearchContainer.style.display = 'none';
+          // 重新加载交易对列表
+          loadTradingPairs();
+        }
         // 其他交易所显示正常的交易对选择器
         else {
           symbolGroup.style.display = 'block';
-          btcUpDownDirectionGroup.style.display = 'none';
           marketInfoBox.style.display = 'block';
           polymarketSearchContainer.style.display = 'none';
           
@@ -1416,14 +1409,7 @@
         const apiKey = document.getElementById("apiKey").value;
         const apiSecret = document.getElementById("apiSecret").value;
         const exchange = document.getElementById("exchange").value;
-        
-        // 对于 btc_updown_15m 交易所，使用方向而不是交易对
-        let symbol;
-        if (exchange === 'btc_updown_15m') {
-          symbol = document.getElementById("btcUpDownDirection").value;
-        } else {
-          symbol = document.getElementById("symbol").value;
-        }
+        const symbol = document.getElementById("symbol").value;
         
         const config = {
           exchange: exchange,
@@ -1476,16 +1462,8 @@
         
         const apiKey = document.getElementById("apiKey").value;
         const apiSecret = document.getElementById("apiSecret").value;
-        
         const exchange = document.getElementById("exchange").value;
-        
-        // 对于 btc_updown_15m 交易所，使用方向而不是交易对
-        let symbol;
-        if (exchange === 'btc_updown_15m') {
-          symbol = document.getElementById("btcUpDownDirection").value;
-        } else {
-          symbol = document.getElementById("symbol").value;
-        }
+        const symbol = document.getElementById("symbol").value;
         
         const config = {
           exchange: exchange,
@@ -1559,13 +1537,7 @@
               }
               
               desiredSymbolFromConfig = data.config.symbol;
-              
-              // 对于 btc_updown_15m 交易所，恢复方向选择
-              if (data.config.exchange === 'btc_updown_15m') {
-                document.getElementById("btcUpDownDirection").value = data.config.symbol;
-              } else {
-                document.getElementById("symbol").value = data.config.symbol;
-              }
+              document.getElementById("symbol").value = data.config.symbol;
               
               document.getElementById("offsetPercent").value =
                 data.config.offset_percent;
