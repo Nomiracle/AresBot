@@ -383,6 +383,42 @@ class NativePolymarketSpot(BaseExchange):
             print(f"{self._get_log_prefix()} ❌ 取消订单失败: {e}")
             raise
     
+    def cancel_orders(self, order_ids: List[str]) -> Dict:
+        """批量取消订单
+        
+        Args:
+            order_ids: 要取消的订单 ID 列表
+        
+        Returns:
+            Dict: {
+                'canceled': List[str],  # 成功取消的订单 ID
+                'not_canceled': Dict[str, str]  # 取消失败的订单 ID -> 原因
+            }
+        """
+        if not order_ids:
+            return {'canceled': [], 'not_canceled': {}}
+        
+        try:
+            print(f"{self._get_log_prefix()} 🚫 批量取消订单: {len(order_ids)} 个")
+            resp = self.client.cancel_orders(order_ids)
+            
+            canceled = resp.get('canceled', [])
+            not_canceled = resp.get('not_canceled', {})
+            
+            print(f"{self._get_log_prefix()} ✅ 批量取消完成: 成功 {len(canceled)} 个, 失败 {len(not_canceled)} 个")
+            
+            if not_canceled:
+                for oid, reason in not_canceled.items():
+                    print(f"{self._get_log_prefix()} ⚠️ 取消失败: {oid[:16]}... - {reason}")
+            
+            return {
+                'canceled': canceled,
+                'not_canceled': not_canceled
+            }
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ❌ 批量取消订单失败: {e}")
+            raise
+    
     def cancel_replace_order(self, side: str, order_type: str, 
                             quantity: float, price: str, cancel_order_id: str, **kwargs) -> Dict:
         """取消并替换订单"""

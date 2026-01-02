@@ -297,6 +297,43 @@ class UpDown15m(NativePolymarketSpot):
                 self._refresh_timer.daemon = True
                 self._refresh_timer.start()
     
+    def _cancel_all_buy_orders(self, tag: str = "") -> int:
+        """批量取消所有未完成的买单
+        
+        Args:
+            tag: 日志标签，用于区分调用来源
+        
+        Returns:
+            int: 成功取消的订单数量
+        """
+        try:
+            log_tag = f"({tag})" if tag else ""
+            print(f"{self._get_log_prefix()} 🚫 取消所有买单{log_tag}...")
+            
+            open_orders = self.get_open_orders()
+            buy_orders = [o for o in open_orders if o.get('side') == 'BUY']
+            
+            if not buy_orders:
+                print(f"{self._get_log_prefix()} ℹ️ 没有待取消的买单{log_tag}")
+                return 0
+            
+            # 提取所有买单 ID
+            buy_order_ids = [o.get('orderId') for o in buy_orders if o.get('orderId')]
+            
+            if not buy_order_ids:
+                return 0
+            
+            # 使用批量取消接口
+            result = self.cancel_orders(buy_order_ids)
+            canceled = result.get('canceled', [])
+            not_canceled = result.get('not_canceled', {})
+            print(f"{self._get_log_prefix()} ✅ 批量取消买单完成{log_tag}: 成功 {len(canceled)} 个, 失败 {len(not_canceled)} 个")
+            return len(canceled)
+            
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ⚠️ 查询或取消订单失败{tag}: {e}")
+            return 0
+    
     def _refresh_market_and_cancel_orders(self) -> None:
         """刷新市场并取消旧市场的买单"""
         try:
@@ -309,26 +346,14 @@ class UpDown15m(NativePolymarketSpot):
             # 等待1秒，确保正在进行的操作完成
             time.sleep(1)
             
-            # 1. 取消所有未完成的买单
-            print(f"{self._get_log_prefix()} 🚫 取消旧市场的所有买单...")
-            try:
-                open_orders = self.get_open_orders()
-                buy_orders = [o for o in open_orders if o.get('side') == 'BUY']
-                
-                if buy_orders:
-                    for order in buy_orders:
-                        try:
-                            order_id = order.get('orderId')
-                            if order_id:
-                                self.cancel_order(order_id)
-                                print(f"{self._get_log_prefix()} ✅ 已取消买单: {order_id}")
-                        except Exception as e:
-                            print(f"{self._get_log_prefix()} ⚠️ 取消买单失败: {e}")
-                    print(f"{self._get_log_prefix()} ✅ 共取消 {len(buy_orders)} 个买单")
-                else:
-                    print(f"{self._get_log_prefix()} ℹ️ 没有待取消的买单")
-            except Exception as e:
-                print(f"{self._get_log_prefix()} ⚠️ 查询或取消订单失败: {e}")
+            # 1. 批量取消所有未完成的买单（第一次）
+            self._cancel_all_buy_orders("第1次")
+            
+            # 设置定时器，7秒后再次执行批量取消
+            cancel_timer = threading.Timer(7, self._cancel_all_buy_orders, args=["第2次-定时器"])
+            cancel_timer.daemon = True
+            cancel_timer.start()
+            print(f"{self._get_log_prefix()} ⏲️ 已设置7秒后再次取消买单的定时器")
             
             # 2. 刷新到新市场
             print(f"{self._get_log_prefix()} 🔄 切换到新市场...")
@@ -565,19 +590,15 @@ class UpDown15m(NativePolymarketSpot):
                     print(f"{self._get_log_prefix()} ℹ️ 没有未完成订单需要取消")
                     return False
                 
-                # 取消所有订单
-                cancelled_count = 0
-                for order in open_orders:
-                    try:
-                        order_id = order.get('orderId')
-                        if order_id:
-                            self.cancel_order(order_id)
-                            cancelled_count += 1
-                            print(f"{self._get_log_prefix()} ✅ 已取消订单: {order_id}")
-                    except Exception as e:
-                        print(f"{self._get_log_prefix()} ❌ 取消订单失败: {e}")
+                # 提取所有订单 ID，使用批量取消
+                order_ids = [o.get('orderId') for o in open_orders if o.get('orderId')]
                 
-                print(f"{self._get_log_prefix()} ✅ 共取消 {cancelled_count}/{len(open_orders)} 个订单")
+                if order_ids:
+                    result = self.cancel_orders(order_ids)
+                    canceled = result.get('canceled', [])
+                    not_canceled = result.get('not_canceled', {})
+                    print(f"{self._get_log_prefix()} ✅ 批量取消完成: 成功 {len(canceled)} 个, 失败 {len(not_canceled)} 个")
+                
                 return True
             
             return False
