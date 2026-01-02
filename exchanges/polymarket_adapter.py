@@ -998,6 +998,12 @@ class NativePolymarketSpot(BaseExchange):
                         my_price = float(my_order.get('price', 0))
                         my_side = my_order.get('side', '').upper()
                         my_outcome = my_order.get('outcome')
+                        my_asset_id = str(my_order.get('asset_id', ''))
+                        
+                        # 过滤非当前 symbol 的 maker 订单
+                        if my_asset_id and my_asset_id != self.symbol:
+                            print(f"{self._get_log_prefix()} 🔇 忽略非当前 symbol 的 maker 订单: asset_id={my_asset_id[:16]}..., self.symbol={self.symbol[:16]}...")
+                            continue
                         
                         # 去重检查：防止同一订单的 order_filled 事件被重复处理
                         if self._is_order_already_filled(my_order_id):
