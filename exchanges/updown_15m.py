@@ -3,7 +3,7 @@ Up/Down 15分钟市场交易所适配器
 自动计算并使用最新的 15 分钟时间戳市场
 支持多种市场（如 btc, eth 等）
 """
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import requests
 from .polymarket_adapter import NativePolymarketSpot
 import pytz
@@ -113,7 +113,7 @@ class UpDown15m(NativePolymarketSpot):
         next_15min_mark = ((current_minute // 15) + 1) * 15
         
         if next_15min_mark >= 60:
-            next_time = now.replace(hour=now.hour + 1, minute=0, second=0, microsecond=0)
+            next_time = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
         else:
             next_time = now.replace(minute=next_15min_mark, second=0, microsecond=0)
         
