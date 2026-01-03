@@ -23,6 +23,7 @@ class UpDown15m(NativePolymarketSpot):
     DEFAULT_MARKET_CLOSE_THRESHOLD_SECONDS = 180
 
     MARKET_PERIOD = '15m'
+    MARKET_PERIOD_SECONDS = 15 * 60  # 市场周期时长（秒）
     
     def __init__(self, api_key: str, api_secret: str, symbol: str = "btc-Up", testnet: bool = True,
                  min_price_threshold: float = None, market_close_threshold: int = None):
@@ -205,7 +206,8 @@ class UpDown15m(NativePolymarketSpot):
                                 
                                 if update_state:
                                     self.market_slug = slug
-                                    self.market_end_time = self._calculate_next_timestamp()
+                                    # 市场结束时间 = 市场开始时间 + 周期时长
+                                    self.market_end_time = timestamp + self.MARKET_PERIOD_SECONDS
                                 
                                 print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  找到 {self.outcome} token")
                                 print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  Slug: {slug} (开始: {datetime.fromtimestamp(timestamp, tz=pytz.UTC).strftime('%H:%M')} UTC)")
@@ -220,7 +222,8 @@ class UpDown15m(NativePolymarketSpot):
                             
                             if update_state:
                                 self.market_slug = slug
-                                self.market_end_time = self._calculate_next_timestamp()
+                                # 市场结束时间 = 市场开始时间 + MARKET_PERIOD_SECONDS
+                                self.market_end_time = timestamp + self.MARKET_PERIOD_SECONDS
                             
                             print(f"[{datetime.now().isoformat()}] ⚠️ {self._get_log_prefix()}  未找到 {self.outcome},使用 {actual_outcome}: {token_id}")
                             print(f"[{datetime.now().isoformat()}] ⏰ {self._get_log_prefix()}  市场开始时间: {datetime.fromtimestamp(timestamp, tz=pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC, 当前时间: {datetime.now(pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
@@ -805,6 +808,7 @@ class UpDown4h(UpDown15m):
     PERIOD_HOURS = 4
     
     MARKET_PERIOD = '4h'
+    MARKET_PERIOD_SECONDS = 4 * 60 * 60  # 市场周期时长（秒）
     
     def _calculate_next_timestamp(self) -> int:
         """计算下一个 4 小时时间戳 (使用 ET 时区)
