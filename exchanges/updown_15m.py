@@ -781,3 +781,155 @@ class UpDown15m(NativePolymarketSpot):
 
 # 为了向后兼容，保留 BtcUpDown15m 别名
 BtcUpDown15m = UpDown15m
+
+
+class UpDown4h(UpDown15m):
+    """Up/Down 4小时市场交易所适配器
+    
+    继承自 UpDown15m，重写时间戳计算逻辑为 4 小时周期
+    """
+    
+    # 4小时周期的起始小时（UTC-5 ET时区）：0, 4, 8, 12, 16, 20
+    PERIOD_HOURS = 4
+    
+    def __init__(self, api_key: str, api_secret: str, symbol: str = "btc-Up", testnet: bool = True,
+                 min_price_threshold: float = None, market_close_threshold: int = None):
+        """初始化 Up/Down 4小时市场适配器
+        
+        Args:
+            api_key: 钱包地址
+            api_secret: 私钥
+            symbol: 交易对，格式为 "market-outcome"，如 "btc-Up"
+            testnet: 是否使用测试网
+            min_price_threshold: 最低价格阈值
+            market_close_threshold: 市场关闭前阈值时间秒数（默认 180）
+        """
+        super().__init__(api_key, api_secret, symbol, testnet, min_price_threshold, market_close_threshold)
+    
+    def _get_log_prefix(self) -> str:
+        """获取日志前缀"""
+        api_key_short = self.api_key[:6] if self.api_key else 'N/A'
+        return f"[{datetime.now().isoformat()}] [UpDown4h-{api_key_short}-{self.market_slug}-{self.outcome}]"
+    
+    def _calculate_next_timestamp(self) -> int:
+        """计算下一个 4 小时时间戳 (使用 ET 时区)
+        
+        4小时周期：0:00, 4:00, 8:00, 12:00, 16:00, 20:00
+        
+        Returns:
+            int: Unix 时间戳
+        """
+        et_tz = pytz.timezone('America/New_York')
+        now = datetime.now(et_tz)
+        current_hour = now.hour
+        
+        # 计算下一个 4 小时周期的起始小时
+        next_period_hour = ((current_hour // self.PERIOD_HOURS) + 1) * self.PERIOD_HOURS
+        
+        if next_period_hour >= 24:
+            # 跨天，需要加一天
+            next_time = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        else:
+            next_time = now.replace(hour=next_period_hour, minute=0, second=0, microsecond=0)
+        
+        return int(next_time.timestamp())
+    
+    def _calculate_current_timestamp(self) -> int:
+        """计算当前 4 小时时间戳 (使用 ET 时区)
+        
+        Returns:
+            int: Unix 时间戳
+        """
+        et_tz = pytz.timezone('America/New_York')
+        now = datetime.now(et_tz)
+        current_hour = now.hour
+        
+        # 计算当前 4 小时周期的起始小时
+        current_period_hour = (current_hour // self.PERIOD_HOURS) * self.PERIOD_HOURS
+        
+        current_time = now.replace(hour=current_period_hour, minute=0, second=0, microsecond=0)
+        
+        return int(current_time.timestamp())
+    
+    def _get_market_token_by_timestamp(self, timestamp: int, update_state: bool = True) -> str:
+        """根据时间戳获取市场的 token_id
+        
+        重写父类方法，使用 4h slug 格式
+        
+        Args:
+            timestamp: 市场开始时间戳
+            update_state: 是否更新实例状态
+        
+        Returns:
+            str: Token ID,如果获取失败返回 None
+        """
+        try:
+            # 使用 4h slug 格式
+            slug = f"{self.market_prefix}-updown-4h-{timestamp}"
+            
+            print(f"[{datetime.now().isoformat()}] 🔍 [UpDown4h] 查询市场: {slug}")
+            
+            # 通过 Gamma API 查询市场
+            response = requests.get(
+                f'https://gamma-api.polymarket.com/events?slug={slug}',
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                events = response.json()
+                if events and len(events) > 0:
+                    event = events[0]
+                    markets = event.get('markets', [])
+                    
+                    if markets and len(markets) > 0:
+                        market = markets[0]
+                        
+                        # 保存 condition_id
+                        if update_state:
+                            condition_id = market.get('conditionId') or market.get('condition_id')
+                            if condition_id:
+                                self.condition_id = condition_id
+                                print(f"[{datetime.now().isoformat()}] 🔑 [UpDown4h] Condition ID: {condition_id}")
+                        
+                        # 尝试从 tokens 字段获取
+                        tokens = market.get('tokens', [])
+                        
+                        # 如果 tokens 为空,尝试从 clobTokenIds 获取
+                        if not tokens:
+                            clob_token_ids = market.get('clobTokenIds', [])
+                            if clob_token_ids and len(clob_token_ids) >= 2:
+                                outcome_index = 0 if self.outcome == 'Up' else 1
+                                token_id = clob_token_ids[outcome_index]
+                                
+                                if update_state:
+                                    self.market_slug = slug
+                                    end_time_str = market.get('endDate') or market.get('end_date_iso')
+                                    if end_time_str:
+                                        self.market_end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
+                                    self.symbol = token_id
+                                
+                                print(f"[{datetime.now().isoformat()}] ✅ [UpDown4h] 获取到市场 token_id: {token_id[:20]}...")
+                                return token_id
+                        else:
+                            # 从 tokens 中找到对应的 outcome
+                            for token in tokens:
+                                token_outcome = token.get('outcome', '')
+                                if token_outcome == self.outcome:
+                                    token_id = token.get('token_id')
+                                    
+                                    if update_state:
+                                        self.market_slug = slug
+                                        end_time_str = market.get('endDate') or market.get('end_date_iso')
+                                        if end_time_str:
+                                            self.market_end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
+                                        self.symbol = token_id
+                                    
+                                    print(f"[{datetime.now().isoformat()}] ✅ [UpDown4h] 获取到市场 token_id: {token_id[:20]}...")
+                                    return token_id
+            
+            print(f"[{datetime.now().isoformat()}] ❌ [UpDown4h] 未找到市场: {slug}")
+            return None
+            
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ [UpDown4h] 获取市场失败: {e}")
+            return None

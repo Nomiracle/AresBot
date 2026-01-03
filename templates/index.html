@@ -1067,8 +1067,8 @@
           minPriceThresholdGroup.style.display = 'block';
           marketCloseThresholdGroup.style.display = 'none';
         }
-        // UpDown 15m 交易所显示两个阈值配置
-        else if (exchange === 'btc_updown_15m' || exchange === 'updown_15m') {
+        // UpDown 交易所显示两个阈值配置
+        else if (exchange === 'btc_updown_15m' || exchange === 'updown_15m' || exchange === 'updown_4h') {
           symbolGroup.style.display = 'block';
           marketInfoBox.style.display = 'none';
           polymarketSearchContainer.style.display = 'none';
@@ -1451,10 +1451,10 @@
         };
         
         // Polymarket/UpDown15m 阈值参数
-        if (exchange === 'polymarket' || exchange === 'btc_updown_15m' || exchange === 'updown_15m') {
+        if (exchange === 'polymarket' || exchange === 'btc_updown_15m' || exchange === 'updown_15m' || exchange === 'updown_4h') {
           config.min_price_threshold = parseFloat(document.getElementById("minPriceThreshold").value);
         }
-        if (exchange === 'btc_updown_15m' || exchange === 'updown_15m') {
+        if (exchange === 'btc_updown_15m' || exchange === 'updown_15m' || exchange === 'updown_4h') {
           config.market_close_threshold = parseInt(document.getElementById("marketCloseThreshold").value);
         }
 
@@ -1513,10 +1513,10 @@
         };
         
         // Polymarket/UpDown15m 阈值参数
-        if (exchange === 'polymarket' || exchange === 'btc_updown_15m' || exchange === 'updown_15m') {
+        if (exchange === 'polymarket' || exchange === 'btc_updown_15m' || exchange === 'updown_15m' || exchange === 'updown_4h') {
           config.min_price_threshold = parseFloat(document.getElementById("minPriceThreshold").value);
         }
-        if (exchange === 'btc_updown_15m' || exchange === 'updown_15m') {
+        if (exchange === 'btc_updown_15m' || exchange === 'updown_15m' || exchange === 'updown_4h') {
           config.market_close_threshold = parseInt(document.getElementById("marketCloseThreshold").value);
         }
 
@@ -1753,7 +1753,9 @@
           'polymarket': 'polymarket',
           'native_polymarket_spot': 'polymarket',
           'btc_updown_15m': 'polymarket',
-          'native_btc_updown_15m': 'polymarket'
+          'native_btc_updown_15m': 'polymarket',
+          'updown_15m': 'polymarket',
+          'updown_4h': 'polymarket'
         };
         
         const baseExchange = exchangeBaseMap[currentExchange] || currentExchange;

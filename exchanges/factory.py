@@ -8,7 +8,7 @@ from .binance_adapterv2 import NativeBinanceSpot
 from .binance_futures_adapter import NativeBinanceFutures
 from .backpack_adapter import NativeBackpackSpot
 from .polymarket_adapter import NativePolymarketSpot
-from .updown_15m import UpDown15m, BtcUpDown15m
+from .updown_15m import UpDown15m, BtcUpDown15m, UpDown4h
 from .ccxt_futures_adapter import CcxtBinanceFutures
 from .ccxt_binance_adapter import CcxtBinanceSpot
 from .short_futures_adapter import CcxtBinanceFuturesShort
@@ -28,6 +28,7 @@ class ExchangeFactory:
         'native_polymarket_spot': NativePolymarketSpot,
         'native_updown_15m': UpDown15m,
         'native_btc_updown_15m': BtcUpDown15m,  # 向后兼容
+        'native_updown_4h': UpDown4h,
         # CCXT 实现
         'ccxt_binance_spot': CcxtBinanceSpot,
         'ccxt_binance_futures': CcxtBinanceFutures,
@@ -40,6 +41,7 @@ class ExchangeFactory:
         'polymarket': NativePolymarketSpot,
         'updown_15m': UpDown15m,
         'btc_updown_15m': BtcUpDown15m,  # 向后兼容
+        'updown_4h': UpDown4h,
         'ccxt_futures': CcxtBinanceFutures,
         'ccxt_binance': CcxtBinanceSpot,
     }

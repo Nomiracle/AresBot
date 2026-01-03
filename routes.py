@@ -966,6 +966,8 @@ def register_routes(app):
             'bpx': 'Backpack (BPX)',
             'polymarket': 'Polymarket (预测市场)',
             'btc_updown_15m': 'Polymarket - UPDOWN 15分钟 (自动)',
+            'updown_15m': 'Polymarket - UPDOWN 15分钟 (自动)',
+            'updown_4h': 'Polymarket - UPDOWN 4小时 (自动)',
         }
         
         # 去重并构建返回数据
