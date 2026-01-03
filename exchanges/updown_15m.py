@@ -102,7 +102,7 @@ class UpDown15m(NativePolymarketSpot):
         api_key_short = api_key_short[:6] if api_key_short else "NOKEY"
         market_slug = getattr(self, 'market_slug', 'N/A')
         outcome = getattr(self, 'outcome', 'N/A')
-        return f"[{self.__class__.__name__}-{api_key_short}-{market_slug}-{outcome}]"
+        return f"[{datetime.now().isoformat()}] [{api_key_short}-{market_slug}-{outcome}]"
 
     
     def _calculate_next_timestamp(self) -> int:
