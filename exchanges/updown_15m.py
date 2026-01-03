@@ -542,8 +542,19 @@ class UpDown15m(NativePolymarketSpot):
             return 0
         
         # 使用 UTC 时间戳进行比较
-        now = datetime.now(timezone.utc).timestamp()
-        seconds_left = int(self.market_end_time - now)
+        now = datetime.now(timezone.utc)
+        
+        # 确保 market_end_time 是 datetime 对象
+        if isinstance(self.market_end_time, datetime):
+            end_time = self.market_end_time
+            # 如果没有时区信息，假设为 UTC
+            if end_time.tzinfo is None:
+                end_time = end_time.replace(tzinfo=timezone.utc)
+            seconds_left = int((end_time - now).total_seconds())
+        else:
+            # 如果是时间戳（float/int）
+            seconds_left = int(self.market_end_time - now.timestamp())
+        
         return max(0, seconds_left)
     
     def is_market_closing_soon(self, threshold_seconds: int = None) -> bool:
