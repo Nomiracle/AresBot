@@ -2119,6 +2119,7 @@
                       </div>
                       <div style="font-size: 12px; color: #888; margin-top: 5px;">
                         参数: 偏移 ${bot.config.offset_percent}% | 卖加价 ${bot.config.sell_offset_percent || 0.5}% | 数量 ${bot.config.quantity} | 间隔 ${bot.config.interval}s | 模式 ${mode}
+                        ${(bot.config.min_price_threshold != null || bot.config.market_close_threshold != null) ? `<br>阈值: ${bot.config.min_price_threshold != null ? `最低价格 ${bot.config.min_price_threshold}` : ''}${bot.config.market_close_threshold != null ? ` | 市场关闭 ${bot.config.market_close_threshold}s` : ''}` : ''}
                       </div>
                       ${bot.buy_min_price_diff_percent != null || bot.buy_max_price_diff_percent != null || bot.buy_avg_price_diff_percent != null ? `
                       <div style="font-size: 11px; color: #17a2b8; margin-top: 3px; padding: 4px 8px; background: #e7f5ff; border-radius: 3px; display: inline-block;">

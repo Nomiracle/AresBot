@@ -69,8 +69,8 @@ class ExchangeFactory:
         """
         adapter_class = cls.SUPPORTED_EXCHANGES.get(exchange_name.lower())
         if adapter_class:
-            # UpDown15m 使用额外的阈值参数
-            if adapter_class in (UpDown15m, BtcUpDown15m):
+            # UpDown15m/UpDown4h 使用额外的阈值参数
+            if adapter_class in (UpDown15m, BtcUpDown15m, UpDown4h):
                 return adapter_class(api_key, api_secret, symbol, testnet,
                                     min_price_threshold=min_price_threshold,
                                     market_close_threshold=market_close_threshold)
