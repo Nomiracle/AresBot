@@ -530,7 +530,7 @@ def get_user_profits(username):
                    sell_min_price_diff_percent, sell_max_price_diff_percent, sell_avg_price_diff_percent
             FROM orders 
             WHERE user_id=? AND side='SELL' AND status IN ('FILLED', 'order_filled')
-            ORDER BY id DESC LIMIT 100
+            ORDER BY id DESC
         """, (user_id,))
         orders = c.fetchall()
 
