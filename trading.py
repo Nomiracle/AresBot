@@ -922,13 +922,18 @@ def trading_loop(username, bot_key):
                 # 查询失败时不下单，避免重复挂单
                 query_success = False
 
-            # 补挂买单逻辑（要求查询成功、没有待处理卖单、没有正在下单、买单数量不足）
+            # 补挂买单逻辑（要求查询成功、没有正在下单、总持仓数量不足）
             order_grid = config.get('order_grid', 1)
-            current_buy_count = len(bot_data.get('pending_buys', []))
-            has_pending_sells = bool(bot_data.get('pending_sells', []))
             is_placing_order = bot_data.get('is_placing_order', False)
             
-            if query_success and not has_pending_sells and not is_placing_order and current_buy_count < order_grid:
+            # 计算当前总持仓数量（pending_buys + pending_sells 的数量之和）
+            pending_buys_qty = sum(pb.get('quantity', 0) for pb in bot_data.get('pending_buys', []))
+            pending_sells_qty = sum(ps.get('quantity', 0) for ps in bot_data.get('pending_sells', []))
+            total_pending_qty = pending_buys_qty + pending_sells_qty
+            target_qty = order_grid * aligned_quantity
+            need_more_orders = total_pending_qty < target_qty
+            
+            if query_success and not is_placing_order and need_more_orders:
                 is_buy_enabled = (config.get('simulate_trading', 1) != 1)
                 if is_buy_enabled:
                     offset_percent = config.get('offset_percent', -0.1)
@@ -993,10 +998,8 @@ def trading_loop(username, bot_key):
                 skip_reasons = []
                 if not query_success:
                     skip_reasons.append("查询失败")
-                if has_pending_sells:
-                    skip_reasons.append(f"有待处理卖单({len(bot_data.get('pending_sells', []))}笔)")
-                if current_buy_count >= order_grid:
-                    skip_reasons.append(f"买单已满({current_buy_count}/{order_grid})")
+                if not need_more_orders:
+                    skip_reasons.append(f"持仓已满({total_pending_qty:.6g}/{target_qty:.6g})")
                 if is_placing_order:
                     skip_reasons.append("正在下单中")
                 if skip_reasons:
