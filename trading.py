@@ -1,6 +1,9 @@
 import time
 import threading
 from datetime import datetime
+
+# 用于保护 pending_buys 并发修改的锁
+_pending_buys_lock = threading.Lock()
 from database import get_user_id, insert_order, update_order_status
 from notification import DingTalkNotification
 import math
@@ -118,11 +121,27 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
     # 发送钉钉通知
     send_order_notification(bot_data.get('username'), 'BUY', config['symbol'], buy_price, aligned_qty, order_id)
     
-    # 先从 pending_buys 移除（买单已成交）
-    bot_data['pending_buys'] = [
-        pb for pb in bot_data.get('pending_buys', []) 
-        if pb['order_id'] != order_id
-    ]
+    # 加锁保护 pending_buys 的并发修改
+    with _pending_buys_lock:
+        # 获取成交订单的 grid_index
+        filled_grid_index = 1
+        for pb in bot_data.get('pending_buys', []):
+            if pb['order_id'] == order_id:
+                filled_grid_index = pb.get('grid_index', 1)
+                break
+        
+        # 从 pending_buys 移除（买单已成交）
+        bot_data['pending_buys'] = [
+            pb for pb in bot_data.get('pending_buys', []) 
+            if pb['order_id'] != order_id
+        ]
+        
+        # 重新编号剩余买单的 grid_index（所有 grid_index > 成交的 grid_index 的订单都需要减1）
+        for pb in bot_data.get('pending_buys', []):
+            old_grid = pb.get('grid_index', 1)
+            if old_grid > filled_grid_index:
+                pb['grid_index'] = old_grid - 1
+                print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 买单 {pb['order_id']} grid_index: {old_grid} → {pb['grid_index']}")
     
     # 挂卖单
     try:
@@ -285,9 +304,26 @@ def handle_reconnected(bot_data, exchange, log_prefix, on_order_update):
             print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 查询卖单 {order_id} 失败: {e}")
 
 
-def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data, 
-                       exchange, config, log_prefix):
-    """改价未完成买单"""
+def reprice_buy_orders(open_buy_orders, aligned_quantity, bot_data, 
+                       exchange, config, tick_size, price_decimals, log_prefix):
+    """改价未完成买单（支持多格网格）"""
+    current_price = bot_data.get('current_price')
+    if not current_price:
+        return
+    
+    offset_percent = config.get('offset_percent', -0.1)
+    
+    # 改价前先同步 grid_index：根据当前 grid_index 排序后重新分配连续的序号
+    if bot_data.get('pending_buys'):
+        # 按 grid_index 从小到大排序
+        bot_data['pending_buys'].sort(key=lambda x: x.get('grid_index', 1))
+        # 重新分配连续的 grid_index
+        for idx, pb in enumerate(bot_data['pending_buys'], start=1):
+            old_grid = pb.get('grid_index', idx)
+            if old_grid != idx:
+                pb['grid_index'] = idx
+                print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 改价前调整 买单 {pb['order_id']} grid_index: {old_grid} → {idx}")
+    
     for order in open_buy_orders:
         order_id = str(order.get('orderId'))
         
@@ -296,14 +332,34 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
             print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 订单 {order_id} 已成交，跳过改价")
             continue
         
-        current_price = float(order.get('price', 0))
-        if current_price == target_price:
+        # 从 pending_buys 中获取该订单的 grid_index
+        grid_index = 1  # 默认第1格
+        for pb in bot_data.get('pending_buys', []):
+            if pb['order_id'] == order_id:
+                grid_index = pb.get('grid_index', 1)
+                break
+        
+        # 根据 grid_index 计算目标价: 现价 * (1 + grid_index * offset_percent)
+        grid_offset = grid_index * offset_percent
+        target_price = exchange.calculate_buy_target_price(
+            current_price,
+            grid_offset,
+            tick_size,
+            price_decimals
+        )
+        
+        # 第一格的目标价作为 bot_data 的 target_price
+        if grid_index == 1:
+            bot_data['target_price'] = target_price
+        
+        order_price = float(order.get('price', 0))
+        if order_price == target_price:
             continue
         
         # 计算价格差异百分比
-        price_diff_percent = abs(target_price - current_price) / current_price * 100
+        price_diff_percent = abs(target_price - order_price) / order_price * 100
         if price_diff_percent < 0.01:
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 买单价格差异 {price_diff_percent:.4f}% < 0.01%，跳过改价")
+            print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 买单[{grid_index}]价格差异 {price_diff_percent:.4f}% < 0.01%，跳过改价")
             continue
         
         try:
@@ -314,7 +370,7 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
                 price=f"{target_price}",
                 cancel_order_id=str(order['orderId']),
                 timeInForce='GTC',
-                current_price=bot_data.get('current_price')
+                current_price=current_price
             )
             
             # 提取新订单ID
@@ -331,7 +387,7 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
                     if pb['order_id'] == order_id:
                         pb['price'] = target_price
                         break
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单改价成功: {order_id}, 目标价格={target_price:.6f}/当前价格={bot_data['current_price']:.6f}")
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单[{grid_index}]改价成功: {order_id}, 目标价格={target_price:.6f}/当前价格={current_price:.6f}")
             else:
                 # 订单 ID 变化，添加新条目并移除旧条目
                 bot_data.setdefault('pending_buys', []).append({
@@ -339,13 +395,14 @@ def reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, bot_data
                     'price': target_price,
                     'quantity': aligned_quantity,
                     'symbol': config['symbol'],
-                    'user_id': bot_data['user_id']
+                    'user_id': bot_data['user_id'],
+                    'grid_index': grid_index
                 })
                 bot_data['pending_buys'] = [
                     pb for pb in bot_data.get('pending_buys', []) 
                     if pb['order_id'] != order_id
                 ]
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单改价成功: {order_id} → {new_order_id}, 目标价格={target_price:.6f}/当前价格={bot_data['current_price']:.6f}，本地缓存买单：{bot_data.get('pending_buys', [])}")
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单[{grid_index}]改价成功: {order_id} → {new_order_id}, 目标价格={target_price:.6f}/当前价格={current_price:.6f}")
                 
             # 改价成功，清除错误和警告信息
             bot_data['last_error'] = None
@@ -782,24 +839,8 @@ def trading_loop(username, bot_key):
 
                 # 改价买单
                 if open_buy_orders:
-                    # 计算买单目标价
-                    target_price = exchange.calculate_buy_target_price(
-                        current_price,
-                        config.get('offset_percent', -0.5),
-                        tick_size,
-                        price_decimals
-                    )
-                    bot_data['target_price'] = target_price
-                    
-                    # 调试日志：打印当前价格、目标价、挂单价、配置的偏移
-                    offset_pct_cfg = config.get('offset_percent', -0.5)
-                    for order in open_buy_orders:
-                        order_price = float(order.get('price', 0))
-                        diff_pct = (target_price - order_price) / order_price * 100 if order_price else 0
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 改价检查: 当前价={current_price}, 目标价={target_price}, 挂单价={order_price}, 差异={diff_pct:.4f}%, offset_percent={offset_pct_cfg}")
-                    
-                    reprice_buy_orders(open_buy_orders, target_price, aligned_quantity, 
-                                     bot_data, exchange, config, log_prefix)
+                    reprice_buy_orders(open_buy_orders, aligned_quantity, bot_data, 
+                                     exchange, config, tick_size, price_decimals, log_prefix)
 
                 # 同步 pending_sells 状态（清理已成交或取消的卖单）
                 # 注意: 只有当查询到卖单时才清理,避免API延迟导致误清理
@@ -824,40 +865,56 @@ def trading_loop(username, bot_key):
                 # 查询失败时不下单，避免重复挂单
                 query_success = False
 
-            # 下新单（要求查询成功、没有未完成订单、没有待处理买单、没有待处理卖单、没有正在下单）
-            has_pending_buys = bool(bot_data.get('pending_buys', []))
+            # 补挂买单逻辑（要求查询成功、没有待处理卖单、没有正在下单、买单数量不足）
+            order_grid = config.get('order_grid', 1)
+            current_buy_count = len(bot_data.get('pending_buys', []))
             has_pending_sells = bool(bot_data.get('pending_sells', []))
             is_placing_order = bot_data.get('is_placing_order', False)
             
-            if query_success and not open_orders and not has_pending_buys and not has_pending_sells and not is_placing_order:
+            if query_success and not has_pending_sells and not is_placing_order and current_buy_count < order_grid:
                 is_buy_enabled = (config.get('simulate_trading', 1) != 1)
                 if is_buy_enabled:
-                    # 计算买单目标价
-                    target_price = exchange.calculate_buy_target_price(
-                        current_price,
-                        config.get('offset_percent', -0.1),
-                        tick_size,
-                        price_decimals
-                    )
-                    bot_data['target_price'] = target_price
+                    offset_percent = config.get('offset_percent', -0.1)
+                    
+                    # 获取当前最大的 grid_index
+                    max_grid_index = 0
+                    for pb in bot_data.get('pending_buys', []):
+                        max_grid_index = max(max_grid_index, pb.get('grid_index', 0))
                     
                     bot_data['is_placing_order'] = True
                     try:
-                        order = exchange.order_limit_buy(
-                            quantity=aligned_quantity,
-                            price=f"{target_price}",
-                            current_price=current_price
-                        )
-                        order_id = str(order.get('orderId') or order.get('id'))
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 新买单 {order_id}: 价格={target_price}, 数量={aligned_quantity}")
+                        # 补挂缺少的买单（从 max_grid_index + 1 开始）
+                        for grid_index in range(max_grid_index + 1, order_grid + 1):
+                            # 计算每格买单目标价: 现价 * (1 + grid_index * offset_percent)
+                            grid_offset = grid_index * offset_percent
+                            target_price = exchange.calculate_buy_target_price(
+                                current_price,
+                                grid_offset,
+                                tick_size,
+                                price_decimals
+                            )
+                            
+                            # 第一格的目标价作为 bot_data 的 target_price
+                            if grid_index == 1:
+                                bot_data['target_price'] = target_price
+                            
+                            order = exchange.order_limit_buy(
+                                quantity=aligned_quantity,
+                                price=f"{target_price}",
+                                current_price=current_price
+                            )
+                            order_id = str(order.get('orderId') or order.get('id'))
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 新买单[{grid_index}/{order_grid}] {order_id}: 价格={target_price}, 数量={aligned_quantity}, 偏移={grid_offset*100:.2f}%")
 
-                        bot_data.setdefault('pending_buys', []).append({
-                            'order_id': order_id,
-                            'price': target_price,
-                            'quantity': aligned_quantity,
-                            'symbol': config['symbol'],
-                            'user_id': user_id
-                        })
+                            with _pending_buys_lock:
+                                bot_data.setdefault('pending_buys', []).append({
+                                    'order_id': order_id,
+                                    'price': target_price,
+                                    'quantity': aligned_quantity,
+                                    'symbol': config['symbol'],
+                                    'user_id': user_id,
+                                    'grid_index': grid_index
+                                })
                         
                         # 下单成功，清除错误和警告信息
                         bot_data['last_error'] = None
@@ -879,12 +936,10 @@ def trading_loop(username, bot_key):
                 skip_reasons = []
                 if not query_success:
                     skip_reasons.append("查询失败")
-                if open_orders:
-                    skip_reasons.append(f"有未完成订单({len(open_orders)}笔)")
-                if has_pending_buys:
-                    skip_reasons.append(f"有待处理买单({len(bot_data.get('pending_buys', []))}笔),{bot_data.get('pending_buys', [])}")
                 if has_pending_sells:
-                    skip_reasons.append(f"有待处理卖单({len(bot_data.get('pending_sells', []))}笔),{bot_data.get('pending_sells', [])}")
+                    skip_reasons.append(f"有待处理卖单({len(bot_data.get('pending_sells', []))}笔)")
+                if current_buy_count >= order_grid:
+                    skip_reasons.append(f"买单已满({current_buy_count}/{order_grid})")
                 if is_placing_order:
                     skip_reasons.append("正在下单中")
                 if skip_reasons:
