@@ -221,10 +221,10 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 15px;
+        padding: 8px 12px;
         border: 1px solid #ddd;
         border-radius: 6px;
-        margin-bottom: 10px;
+        margin-bottom: 6px;
         background: #f8f9fa;
       }
       .pair-info {
@@ -273,16 +273,17 @@
         background: #6c757d;
       }
       .bot-status-detail {
-        font-size: 12px;
+        font-size: 11px;
         color: #666;
-        margin-top: 5px;
+        margin-top: 2px;
+        display: inline;
       }
       .bot-status-badge {
         display: inline-block;
-        padding: 2px 6px;
+        padding: 1px 4px;
         border-radius: 3px;
-        font-size: 11px;
-        margin-right: 5px;
+        font-size: 10px;
+        margin-right: 3px;
       }
       .badge-success {
         background: #d4edda;
@@ -304,14 +305,14 @@
         background: #f8d7da;
         border: 1px solid #f5c6cb;
         border-radius: 4px;
-        padding: 8px 10px;
-        margin-top: 8px;
-        font-size: 12px;
+        padding: 4px 8px;
+        margin-top: 4px;
+        font-size: 11px;
         color: #721c24;
       }
       .error-message strong {
-        display: block;
-        margin-bottom: 4px;
+        display: inline;
+        margin-right: 6px;
         color: #dc3545;
       }
       .error-time {
@@ -323,14 +324,15 @@
         background: #fff3cd;
         border: 1px solid #ffeaa7;
         border-radius: 4px;
-        padding: 8px 10px;
-        margin-top: 8px;
-        font-size: 12px;
+        padding: 3px 8px;
+        margin-top: 3px;
+        font-size: 11px;
         color: #856404;
+        display: inline-block;
       }
       .warning-message strong {
-        display: block;
-        margin-bottom: 4px;
+        display: inline;
+        margin-right: 4px;
         color: #ff9800;
       }
       /* 自定义滚动条样式 */
@@ -2008,150 +2010,94 @@
                   ? `<span class="bot-status-badge badge-warning">⏳ ${bot.pending_buys_count} 待成交</span>`
                   : '';
                 
-                // 错误信息显示
+                // 错误信息显示（紧凑版）
                 let errorDisplay = '';
                 if (bot.last_error) {
-                  const errorTime = bot.last_error_time ? new Date(bot.last_error_time).toLocaleString('zh-CN') : '';
-                  errorDisplay = `
-                    <div class="error-message">
-                      <strong>❌ 循环错误 (第 ${bot.error_count} 次)</strong>
-                      <div>${bot.last_error}</div>
-                      ${errorTime ? `<div class="error-time">最后发生: ${errorTime}</div>` : ''}
-                    </div>
-                  `;
+                  errorDisplay = `<div class="error-message">❌ 错误(${bot.error_count}次): ${bot.last_error}</div>`;
                 }
                 
-                // 警告信息显示
+                // 警告信息显示（紧凑版）
                 let warningDisplay = '';
                 if (bot.last_warning) {
-                  warningDisplay = `
-                    <div class="warning-message">
-                      <strong>⚠️ ${bot.last_warning} (共 ${bot.warning_count} 次)</strong>
-                      <div>机器人正在等待价格监听器更新数据，请检查网络连接或交易所API状态</div>
-                    </div>
-                  `;
+                  warningDisplay = `<div class="warning-message">⚠️ ${bot.last_warning}(${bot.warning_count}次)</div>`;
                 }
                 
-                // 币安API限制显示
+                // 币安API限制显示（紧凑版）
                 let rateLimitDisplay = '';
                 if (bot.rate_limit_status) {
                   const rls = bot.rate_limit_status;
-                  const percent10s = (rls.count_10s / rls.limit_10s * 100).toFixed(1);
-                  const percent24h = (rls.count_24h / rls.limit_24h * 100).toFixed(2);
-                  
-                  // 根据使用率设置颜色
+                  const percent10s = (rls.count_10s / rls.limit_10s * 100).toFixed(0);
+                  const percent24h = (rls.count_24h / rls.limit_24h * 100).toFixed(1);
                   const color10s = rls.exceeded_10s ? '#dc3545' : (percent10s > 80 ? '#ffc107' : '#28a745');
                   const color24h = rls.exceeded_24h ? '#dc3545' : (percent24h > 80 ? '#ffc107' : '#28a745');
-                  
-                  rateLimitDisplay = `
-                    <div style="font-size: 11px; margin-top: 8px; padding: 6px; background: #f8f9fa; border-radius: 4px; border-left: 3px solid #007bff;">
-                      <div style="font-weight: 600; margin-bottom: 4px; color: #495057;">📊 币安API限制使用情况</div>
-                      <div style="display: flex; gap: 15px;">
-                        <div style="flex: 1;">
-                          <span style="color: #6c757d;">10秒:</span>
-                          <span style="color: ${color10s}; font-weight: 600;">${rls.count_10s}/${rls.limit_10s}</span>
-                          <span style="color: #6c757d;">(${percent10s}%)</span>
-                          ${rls.exceeded_10s ? '<span style="color: #dc3545; font-weight: 600;">⚠️超限</span>' : ''}
-                        </div>
-                        <div style="flex: 1;">
-                          <span style="color: #6c757d;">24小时:</span>
-                          <span style="color: ${color24h}; font-weight: 600;">${rls.count_24h}/${rls.limit_24h}</span>
-                          <span style="color: #6c757d;">(${percent24h}%)</span>
-                          ${rls.exceeded_24h ? '<span style="color: #dc3545; font-weight: 600;">⚠️超限</span>' : ''}
-                        </div>
-                      </div>
-                    </div>
-                  `;
+                  rateLimitDisplay = `<span style="font-size:10px;color:#6c757d;margin-left:8px;">API: <span style="color:${color10s};">${percent10s}%</span>/<span style="color:${color24h};">${percent24h}%</span>${rls.exceeded_10s || rls.exceeded_24h ? '⚠️' : ''}</span>`;
                 }
                 
                 // 交易所显示
                 const exchangeName = (bot.config && bot.config.exchange) ? bot.config.exchange.toUpperCase() : 'BINANCE';
                 
-                // 市场信息显示(适用于 Polymarket 和 BTC Up/Down 15m)
+                // 市场信息显示（紧凑版）
                 let marketInfoDisplay = '';
                 if (bot.market_info) {
                   const mi = bot.market_info;
-                  let timeDisplay = '';
-                  
-                  // 显示剩余时间
+                  let timeStr = '';
                   if (bot.seconds_until_close != null && bot.seconds_until_close > 0) {
-                    const seconds = bot.seconds_until_close;
-                    const minutes = Math.floor(seconds / 60);
-                    const hours = Math.floor(minutes / 60);
-                    const days = Math.floor(hours / 24);
-                    
-                    let timeStr = '';
-                    if (days > 0) {
-                      timeStr = `${days}天${hours % 24}小时`;
-                    } else if (hours > 0) {
-                      timeStr = `${hours}小时${minutes % 60}分钟`;
-                    } else if (minutes > 0) {
-                      timeStr = `${minutes}分钟${seconds % 60}秒`;
-                    } else {
-                      timeStr = `${seconds}秒`;
-                    }
-                    
-                    // 根据剩余时间设置颜色
-                    const timeColor = seconds <= 60 ? '#dc3545' : (seconds <= 300 ? '#ffc107' : '#28a745');
-                    timeDisplay = `<span style="color: ${timeColor}; font-weight: 600;">⏰ ${timeStr}</span>`;
+                    const s = bot.seconds_until_close, m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+                    timeStr = d > 0 ? `${d}天${h % 24}时` : h > 0 ? `${h}时${m % 60}分` : m > 0 ? `${m}分${s % 60}秒` : `${s}秒`;
+                    const timeColor = s <= 60 ? '#dc3545' : (s <= 300 ? '#ffc107' : '#28a745');
+                    timeStr = `<span style="color:${timeColor};font-weight:600;">⏰${timeStr}</span>`;
                   } else if (bot.seconds_until_close === 0) {
-                    timeDisplay = '<span style="color: #dc3545; font-weight: 600;">⏰ 已关闭</span>';
+                    timeStr = '<span style="color:#dc3545;font-weight:600;">⏰已关闭</span>';
                   }
-                  
-                  marketInfoDisplay = `
-                    <div style="font-size: 12px; margin-top: 6px; padding: 6px 10px; background: #f0f8ff; border-radius: 4px; border-left: 3px solid #007bff;">
-                      <div style="font-weight: 600; color: #0056b3; margin-bottom: 3px;">📍 市场信息</div>
-                      ${mi.slug ? `<div style="color: #495057; margin-bottom: 2px;"><strong>Slug:</strong> <a href="https://polymarket.com/event/${mi.slug}" target="_blank" style="color: #007bff; text-decoration: none; font-weight: 600;">${mi.slug} 🔗</a></div>` : ''}
-                      ${mi.outcome ? `<div style="color: #495057; margin-bottom: 2px;"><strong>方向:</strong> ${mi.outcome}</div>` : ''}
-                      ${mi.end_time ? `<div style="color: #495057; margin-bottom: 2px;"><strong>结束时间:</strong> ${new Date(mi.end_time).toLocaleString('zh-CN')}</div>` : ''}
-                      ${timeDisplay ? `<div style="margin-top: 4px;">${timeDisplay}</div>` : ''}
-                    </div>
-                  `;
+                  const parts = [];
+                  if (mi.slug) parts.push(`<a href="https://polymarket.com/event/${mi.slug}" target="_blank" style="color:#007bff;">${mi.slug}🔗</a>`);
+                  if (mi.outcome) parts.push(mi.outcome);
+                  if (timeStr) parts.push(timeStr);
+                  marketInfoDisplay = `<div style="font-size:10px;color:#495057;margin-top:2px;padding:2px 6px;background:#f0f8ff;border-radius:3px;display:inline-block;">📍 ${parts.join(' | ')}</div>`;
+                }
+                
+                // 紧凑的买卖单差值显示
+                let priceDiffDisplay = '';
+                const hasBuyDiff = bot.buy_min_price_diff_percent != null || bot.buy_avg_price_diff_percent != null;
+                const hasSellDiff = bot.sell_min_price_diff_percent != null || bot.sell_avg_price_diff_percent != null;
+                if (hasBuyDiff || hasSellDiff) {
+                  let parts = [];
+                  if (hasBuyDiff) {
+                    parts.push(`<span style="color:#17a2b8;">买${bot.buy_avg_price_diff_percent != null ? Number(bot.buy_avg_price_diff_percent).toFixed(3) + '%' : '-'}</span>`);
+                  }
+                  if (hasSellDiff) {
+                    parts.push(`<span style="color:#28a745;">卖${bot.sell_avg_price_diff_percent != null ? Number(bot.sell_avg_price_diff_percent).toFixed(3) + '%' : '-'}</span>`);
+                  }
+                  priceDiffDisplay = ` | 差值: ${parts.join('/')}`;
+                }
+                
+                // 紧凑的阈值显示
+                let thresholdDisplay = '';
+                if (bot.config.min_price_threshold != null || bot.config.market_close_threshold != null) {
+                  let parts = [];
+                  if (bot.config.min_price_threshold != null) parts.push(`价≥${bot.config.min_price_threshold}`);
+                  if (bot.config.market_close_threshold != null) parts.push(`关${bot.config.market_close_threshold}s`);
+                  thresholdDisplay = ` | ${parts.join(' ')}`;
                 }
                 
                 return `
                   <div class="pair-item" id="bot-${bot.config.exchange || 'binance'}-${bot.symbol}">
                     <div class="pair-info">
-                      <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                      <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 4px;">
                         <span class="status-indicator ${statusClass}"></span>
-                        <strong style="font-size: 16px;">${bot.symbol}</strong>
-                        <span class="bot-status-badge" style="margin-left: 8px; background: #6f42c1; color: white;">${exchangeName}</span>
-                        <span style="margin-left: 10px; color: ${statusColor}; font-weight: 600;">${bot.status_text}</span>
+                        <strong style="font-size: 14px;">${bot.symbol}</strong>
+                        <span class="bot-status-badge" style="background: #6f42c1; color: white;">${exchangeName}</span>
+                        <span style="color: ${statusColor}; font-size: 12px;">${bot.status_text}</span>
+                        ${bot.running ? uptimeBadge + monitorBadge + orderMonitorBadge + threadBadge + pendingBadge : '<span class="bot-status-badge badge-secondary">停止</span>'}${rateLimitDisplay}
                       </div>
-                      ${marketInfoDisplay}
-                      <div style="margin-bottom: 5px;">
-                        当前价: <strong>${cp}</strong> | 目标价: <strong>${tp}</strong> | 仓位: <strong>${positionSize}</strong>
+                      <div style="font-size: 11px; color: #555; margin-top: 2px;">
+                        现价 <strong>${cp}</strong> → 目标 <strong>${tp}</strong> | 仓 <strong>${positionSize}</strong> | 偏${bot.config.offset_percent}%/卖+${bot.config.sell_offset_percent || 0.5}% | 量${bot.config.quantity} | ${bot.config.interval}s | 格${bot.config.order_grid || 1} | ${mode}${thresholdDisplay}${priceDiffDisplay}
                       </div>
-                      <div class="bot-status-detail">
-                        ${bot.running ? uptimeBadge + monitorBadge + orderMonitorBadge + threadBadge + pendingBadge : '<span class="bot-status-badge badge-secondary">已停止</span>'}
-                      </div>
-                      <div style="font-size: 12px; color: #888; margin-top: 5px;">
-                        参数: 偏移 ${bot.config.offset_percent}% | 卖加价 ${bot.config.sell_offset_percent || 0.5}% | 数量 ${bot.config.quantity} | 间隔 ${bot.config.interval}s | 网格 ${bot.config.order_grid || 1} | 模式 ${mode}
-                        ${(bot.config.min_price_threshold != null || bot.config.market_close_threshold != null) ? `<br>阈值: ${bot.config.min_price_threshold != null ? `最低价格 ${bot.config.min_price_threshold}` : ''}${bot.config.market_close_threshold != null ? ` | 市场关闭 ${bot.config.market_close_threshold}s` : ''}` : ''}
-                      </div>
-                      ${bot.buy_min_price_diff_percent != null || bot.buy_max_price_diff_percent != null || bot.buy_avg_price_diff_percent != null ? `
-                      <div style="font-size: 11px; color: #17a2b8; margin-top: 3px; padding: 4px 8px; background: #e7f5ff; border-radius: 3px; display: inline-block;">
-                        📊 买单差值: 
-                        ${bot.buy_min_price_diff_percent != null ? `最小 ${Number(bot.buy_min_price_diff_percent).toFixed(4)}%` : ''}
-                        ${bot.buy_avg_price_diff_percent != null ? ` | 平均 ${Number(bot.buy_avg_price_diff_percent).toFixed(4)}%` : ''}
-                        ${bot.buy_max_price_diff_percent != null ? ` | 最大 ${Number(bot.buy_max_price_diff_percent).toFixed(4)}%` : ''}
-                      </div>
-                      ` : ''}
-                      ${bot.sell_min_price_diff_percent != null || bot.sell_max_price_diff_percent != null || bot.sell_avg_price_diff_percent != null ? `
-                      <div style="font-size: 11px; color: #28a745; margin-top: 3px; padding: 4px 8px; background: #e8f5e9; border-radius: 3px; display: inline-block; margin-left: 5px;">
-                        📊 卖单差值: 
-                        ${bot.sell_min_price_diff_percent != null ? `最小 ${Number(bot.sell_min_price_diff_percent).toFixed(4)}%` : ''}
-                        ${bot.sell_avg_price_diff_percent != null ? ` | 平均 ${Number(bot.sell_avg_price_diff_percent).toFixed(4)}%` : ''}
-                        ${bot.sell_max_price_diff_percent != null ? ` | 最大 ${Number(bot.sell_max_price_diff_percent).toFixed(4)}%` : ''}
-                      </div>
-                      ` : ''}
-                      ${errorDisplay}
-                      ${warningDisplay}
-                      ${rateLimitDisplay}
+                      ${marketInfoDisplay}${errorDisplay}${warningDisplay}
                     </div>
-                    <div class="pair-actions">
-                      <button class="btn btn-primary btn-sm" onclick="editBot('${bot.symbol}', '${bot.config.exchange || 'binance'}')">✏️ 编辑</button>
-                      <button class="btn btn-danger btn-sm" onclick="deleteBotSymbol('${bot.symbol}', '${bot.config.exchange || 'binance'}')">🗑️ 删除</button>
+                    <div class="pair-actions" style="flex-shrink: 0;">
+                      <button class="btn btn-primary btn-sm" style="padding:4px 8px;font-size:12px;" onclick="editBot('${bot.symbol}', '${bot.config.exchange || 'binance'}')">✏️</button>
+                      <button class="btn btn-danger btn-sm" style="padding:4px 8px;font-size:12px;" onclick="deleteBotSymbol('${bot.symbol}', '${bot.config.exchange || 'binance'}')">🗑️</button>
                     </div>
                   </div>
                 `;
