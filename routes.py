@@ -583,6 +583,12 @@ def register_routes(app):
                     except:
                         pass
                 
+                # 获取挂单价格列表
+                pending_buys = b.get('pending_buys', [])
+                pending_sells = b.get('pending_sells', [])
+                buy_prices = [float(pb.get('price', 0)) for pb in pending_buys if pb.get('price')]
+                sell_prices = [float(ps.get('price', 0)) for ps in pending_sells if ps.get('price')]
+                
                 bots.append({
                     'symbol': sym,
                     'running': is_running,
@@ -593,7 +599,10 @@ def register_routes(app):
                     'config': b.get('config', {}),
                     'monitor_started': monitor_started,
                     'order_monitor_enabled': order_monitor_enabled,
-                    'pending_buys_count': pending_buys_count,
+                    'pending_buys_count': len(pending_buys),
+                    'pending_sells_count': len(pending_sells),
+                    'buy_prices': buy_prices,
+                    'sell_prices': sell_prices,
                     'thread_alive': thread_alive,
                     'last_error': last_error,
                     'error_count': error_count,

@@ -1952,17 +1952,43 @@
                   positionSize = '≈$' + size.toFixed(2);
                 }
                 
-                // 计算价差
-                let tp = '-';
-                if (bot.target_price != null) {
-                  tp = '$' + bot.target_price;
-                  if (bot.current_price != null && bot.target_price != null) {
-                    const priceDiff = bot.target_price - bot.current_price;
-                    const priceDiffPercent = (priceDiff / bot.current_price * 100).toFixed(3);
-                    const diffSign = priceDiff >= 0 ? '+' : '';
-                    // 低于现价（负数）绿色，高于现价（正数）红色
-                    tp += ` <span style="color: ${priceDiff < 0 ? '#28a745' : '#dc3545'};">(${diffSign}$${priceDiff.toPrecision(6)} / ${diffSign}${priceDiffPercent}%)</span>`;
+                // 显示挂单信息
+                let ordersDisplay = '-';
+                const buyPrices = (bot.buy_prices || []).slice().sort((a, b) => b - a); // 从高到低排序
+                const sellPrices = bot.sell_prices || [];
+                const buyCount = bot.pending_buys_count || 0;
+                const sellCount = bot.pending_sells_count || 0;
+                const currentPrice = bot.current_price;
+                
+                let parts = [];
+                if (buyCount > 0) {
+                  const minBuy = Math.min(...buyPrices);
+                  const maxBuy = Math.max(...buyPrices);
+                  const buyText = buyCount === 1 ? `$${minBuy}` : `$${minBuy}~${maxBuy}`;
+                  
+                  // 计算买单差价百分比：第一单相对现价，后续相对上一单
+                  let avgDiffPercent = '';
+                  if (currentPrice && buyPrices.length > 0) {
+                    let diffs = [];
+                    // 第一单相对于现价
+                    diffs.push((buyPrices[0] - currentPrice) / currentPrice * 100);
+                    // 后续买单相对于上一笔买单
+                    for (let i = 1; i < buyPrices.length; i++) {
+                      diffs.push((buyPrices[i] - buyPrices[i-1]) / buyPrices[i-1] * 100);
+                    }
+                    const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+                    avgDiffPercent = ` <span style="color:#17a2b8;">(均${avg.toFixed(3)}%)</span>`;
                   }
+                  parts.push(`<span style="color:#28a745;">买${buyCount}单 ${buyText}${avgDiffPercent}</span>`);
+                }
+                if (sellCount > 0) {
+                  const minSell = Math.min(...sellPrices);
+                  const maxSell = Math.max(...sellPrices);
+                  const sellText = sellCount === 1 ? `$${minSell}` : `$${minSell}~${maxSell}`;
+                  parts.push(`<span style="color:#dc3545;">卖${sellCount}单 ${sellText}</span>`);
+                }
+                if (parts.length > 0) {
+                  ordersDisplay = parts.join(' | ');
                 }
                 
                 // 状态指示器
@@ -2094,7 +2120,7 @@
                         ${bot.running ? uptimeBadge + monitorBadge + orderMonitorBadge + threadBadge + pendingBadge : '<span class="bot-status-badge badge-secondary">停止</span>'}${rateLimitDisplay}
                       </div>
                       <div style="font-size: 11px; color: #555; margin-top: 2px;">
-                        现价 <strong>${cp}</strong> → 目标 <strong>${tp}</strong> | 仓 <strong>${positionSize}</strong> | 偏${bot.config.offset_percent}%/卖+${bot.config.sell_offset_percent || 0.5}% | 量${bot.config.quantity} | ${bot.config.interval}s | 格${bot.config.order_grid || 1} | ${mode}${thresholdDisplay}${priceDiffDisplay}
+                        现价 <strong>${cp}</strong> | 挂单 ${ordersDisplay} | 仓 <strong>${positionSize}</strong> | 偏${bot.config.offset_percent}%/卖+${bot.config.sell_offset_percent || 0.5}% | 量${bot.config.quantity} | ${bot.config.interval}s | 格${bot.config.order_grid || 1} | ${mode}${thresholdDisplay}${priceDiffDisplay}
                       </div>
                       ${marketInfoDisplay}${errorDisplay}${warningDisplay}
                     </div>
