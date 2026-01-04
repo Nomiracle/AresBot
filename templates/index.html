@@ -667,6 +667,11 @@
             <input type="number" id="interval" value="1" min="1" />
           </div>
           <div class="input-group">
+            <label>网格数量</label>
+            <input type="number" id="orderGrid" value="1" min="1" max="10" />
+            <small style="color: #666;">同时挂多少格买单（默认 1）</small>
+          </div>
+          <div class="input-group">
             <label>网络环境</label>
             <select id="testnet">
               <option value="1">测试网络</option>
@@ -1444,6 +1449,7 @@
           ),
           quantity: parseFloat(document.getElementById("quantity").value),
           interval: parseInt(document.getElementById("interval").value),
+          order_grid: parseInt(document.getElementById("orderGrid").value) || 1,
           testnet: parseInt(document.getElementById("testnet").value),
           simulate_trading: parseInt(
             document.getElementById("simulateTrading").value
@@ -1506,6 +1512,7 @@
           ),
           quantity: parseFloat(document.getElementById("quantity").value),
           interval: parseInt(document.getElementById("interval").value),
+          order_grid: parseInt(document.getElementById("orderGrid").value) || 1,
           testnet: parseInt(document.getElementById("testnet").value),
           simulate_trading: parseInt(
             document.getElementById("simulateTrading").value
@@ -1580,6 +1587,7 @@
                 data.config.sell_offset_percent || 0.5;
               document.getElementById("quantity").value = data.config.quantity;
               document.getElementById("interval").value = data.config.interval;
+              document.getElementById("orderGrid").value = data.config.order_grid || 1;
               document.getElementById("testnet").value = data.config.testnet;
               document.getElementById("simulateTrading").value =
                 data.config.simulate_trading;
@@ -2118,7 +2126,7 @@
                         ${bot.running ? uptimeBadge + monitorBadge + orderMonitorBadge + threadBadge + pendingBadge : '<span class="bot-status-badge badge-secondary">已停止</span>'}
                       </div>
                       <div style="font-size: 12px; color: #888; margin-top: 5px;">
-                        参数: 偏移 ${bot.config.offset_percent}% | 卖加价 ${bot.config.sell_offset_percent || 0.5}% | 数量 ${bot.config.quantity} | 间隔 ${bot.config.interval}s | 模式 ${mode}
+                        参数: 偏移 ${bot.config.offset_percent}% | 卖加价 ${bot.config.sell_offset_percent || 0.5}% | 数量 ${bot.config.quantity} | 间隔 ${bot.config.interval}s | 网格 ${bot.config.order_grid || 1} | 模式 ${mode}
                         ${(bot.config.min_price_threshold != null || bot.config.market_close_threshold != null) ? `<br>阈值: ${bot.config.min_price_threshold != null ? `最低价格 ${bot.config.min_price_threshold}` : ''}${bot.config.market_close_threshold != null ? ` | 市场关闭 ${bot.config.market_close_threshold}s` : ''}` : ''}
                       </div>
                       ${bot.buy_min_price_diff_percent != null || bot.buy_max_price_diff_percent != null || bot.buy_avg_price_diff_percent != null ? `

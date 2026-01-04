@@ -151,6 +151,12 @@ def init_db(recreate=False):
         print(f"[{datetime.now().isoformat()}] ✅ user_configs 表已添加 market_close_threshold 列")
     except sqlite3.OperationalError:
         pass  # 列已存在
+    
+    try:
+        c.execute("ALTER TABLE user_configs ADD COLUMN order_grid INTEGER DEFAULT 1")
+        print(f"[{datetime.now().isoformat()}] ✅ user_configs 表已添加 order_grid 列")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
 
     c.execute('''CREATE TABLE IF NOT EXISTS orders
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -363,23 +369,25 @@ def save_user_config(username, config, config_name='default'):
             c.execute("""UPDATE user_configs
                          SET exchange=?, credential_id=?, symbol=?, offset_percent=?, sell_offset_percent=?,
                              quantity=?, interval=?, testnet=?, simulate_trading=?,
-                             min_price_threshold=?, market_close_threshold=?, updated_at=?
+                             min_price_threshold=?, market_close_threshold=?, order_grid=?, updated_at=?
                          WHERE user_id=? AND config_name=?""",
                       (exchange, credential_id, config['symbol'],
                        config['offset_percent'], config.get('sell_offset_percent', 0.5),
                        config['quantity'], config['interval'],
                        config.get('testnet', 1), config.get('simulate_trading', 1),
                        config.get('min_price_threshold', 0.15), config.get('market_close_threshold', 180),
+                       config.get('order_grid', 1),
                        datetime.now().isoformat(), user_id, config_name))
         else:
             c.execute("""INSERT INTO user_configs
-                         (user_id, config_name, exchange, credential_id, symbol, offset_percent, sell_offset_percent, quantity, interval, testnet, simulate_trading, min_price_threshold, market_close_threshold, updated_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                         (user_id, config_name, exchange, credential_id, symbol, offset_percent, sell_offset_percent, quantity, interval, testnet, simulate_trading, min_price_threshold, market_close_threshold, order_grid, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                       (user_id, config_name, exchange, credential_id, config['symbol'],
                        config['offset_percent'], config.get('sell_offset_percent', 0.5),
                        config['quantity'], config['interval'],
                        config.get('testnet', 1), config.get('simulate_trading', 1),
                        config.get('min_price_threshold', 0.15), config.get('market_close_threshold', 180),
+                       config.get('order_grid', 1),
                        datetime.now().isoformat()))
 
     print(f"[{datetime.now().isoformat()}] ✅ 配置已保存到 DB (user={username}, config={config_name}, credential_id={credential_id})")
@@ -394,7 +402,7 @@ def load_user_config(username, config_name='default'):
     with db_pool.get_cursor() as (conn, c):
         c.execute("""SELECT config_name, exchange, credential_id, symbol, 
                             offset_percent, sell_offset_percent, quantity, interval, 
-                            testnet, simulate_trading, min_price_threshold, market_close_threshold
+                            testnet, simulate_trading, min_price_threshold, market_close_threshold, order_grid
                      FROM user_configs WHERE user_id=? AND config_name=?""", (user_id, config_name))
         result = c.fetchone()
 
@@ -426,7 +434,8 @@ def load_user_config(username, config_name='default'):
         'testnet': result[8],
         'simulate_trading': result[9],
         'min_price_threshold': result[10] if result[10] is not None else 0.15,
-        'market_close_threshold': result[11] if result[11] is not None else 180
+        'market_close_threshold': result[11] if result[11] is not None else 180,
+        'order_grid': result[12] if result[12] is not None else 1
     }
 
 
