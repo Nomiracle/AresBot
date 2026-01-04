@@ -961,7 +961,7 @@ def trading_loop(username, bot_key):
                                 current_price=current_price
                             )
                             order_id = str(order.get('orderId') or order.get('id'))
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 新买单[{grid_index}/{order_grid}] {order_id}: 价格={target_price}, 数量={aligned_quantity}, 偏移={grid_offset*100:.2f}%")
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 新买单[{grid_index}/{order_grid}] {order_id}: 价格={target_price}, 数量={aligned_quantity}, 偏移={grid_offset:.2f}%")
 
                             with _pending_buys_lock:
                                 bot_data.setdefault('pending_buys', []).append({
