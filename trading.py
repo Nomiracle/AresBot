@@ -1,5 +1,6 @@
 import time
 import threading
+import uuid
 from datetime import datetime
 
 # 用于保护 pending_buys 并发修改的锁
@@ -38,10 +39,34 @@ def send_order_notification(username, side, symbol, price, quantity, order_id):
     threading.Thread(target=_send, daemon=True).start()
 
 
-
-
-
-
+def calculate_dynamic_sell_offset(offset_percent, sell_offset_percent, sell_count):
+    """
+    计算动态卖出加价百分比
+    
+    Args:
+        offset_percent: 买入偏移百分比（通常为负数）
+        sell_offset_percent: 基础卖出加价百分比
+        sell_count: 该网格位置的卖出次数（从1开始）
+    
+    Returns:
+        实际使用的卖出加价百分比
+    """
+    # A = |offset_percent| 和 sell_offset_percent 差值的绝对值
+    abs_offset = abs(offset_percent)
+    A = abs(abs_offset - sell_offset_percent)
+    
+    # 最大值作为起始点
+    max_value = max(abs_offset, sell_offset_percent)
+    
+    # 根据卖出次数递减: 第1次用max_value, 第2次用max_value - 30%*A, 第3次用max_value - 60%*A...
+    reduction = (sell_count - 1) * 0.3 * A
+    calculated_value = max_value - reduction
+    
+    # 如果计算值小于 sell_offset_percent，则使用 sell_offset_percent
+    if calculated_value < sell_offset_percent:
+        return sell_offset_percent
+    
+    return calculated_value
 
 
 def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_decimals, 
@@ -57,12 +82,19 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
     # 标记为已处理
     bot_data.setdefault('processed_filled_orders', set()).add(order_id)
     
-    # 获取买入价格
+    # 获取买入价格和虚拟订单号
     buy_price = float(event.get('price', 0))
+    virtual_sell_id = None
     if not buy_price:
         for pb in bot_data.get('pending_buys', []):
             if pb['order_id'] == order_id:
                 buy_price = pb.get('price')
+                virtual_sell_id = pb.get('virtual_sell_id')
+                break
+    else:
+        for pb in bot_data.get('pending_buys', []):
+            if pb['order_id'] == order_id:
+                virtual_sell_id = pb.get('virtual_sell_id')
                 break
     
     if not buy_price:
@@ -70,12 +102,28 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
         bot_data.get('processed_filled_orders', set()).discard(order_id)
         return
     
+    # 如果没有虚拟订单号，生成一个新的
+    if not virtual_sell_id:
+        virtual_sell_id = f"VS_{uuid.uuid4().hex[:8]}"
+    
     current_price = bot_data.get('current_price')
+
+    # 使用虚拟订单号追踪卖出次数
+    sell_counts = bot_data.setdefault('virtual_sell_counts', {})
+    sell_count = sell_counts.get(virtual_sell_id, 0) + 1
+    sell_counts[virtual_sell_id] = sell_count
+    
+    # 计算动态卖出加价百分比
+    offset_percent = config.get('offset_percent', -0.1)
+    base_sell_offset = config.get('sell_offset_percent', 0.5)
+    dynamic_sell_offset = calculate_dynamic_sell_offset(offset_percent, base_sell_offset, sell_count)
+    
+    print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 虚拟单{virtual_sell_id} 第{sell_count}次卖出, 动态加价: {dynamic_sell_offset:.4f}% (基础: {base_sell_offset}%)")
 
     # 计算卖出价格
     sell_price = exchange.calculate_sell_price(
         buy_price, 
-        config.get('sell_offset_percent', 0.5),
+        dynamic_sell_offset,
         tick_size, 
         price_decimals,
         current_price=current_price
@@ -163,7 +211,8 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
             'price': sell_price,
             'quantity': aligned_qty,
             'buy_order_id': order_id,
-            'buy_price': buy_price
+            'buy_price': buy_price,
+            'virtual_sell_id': virtual_sell_id
         })
         
         # 插入卖单记录到数据库
@@ -707,6 +756,14 @@ def trading_loop(username, bot_key):
                         # 卖单成交
                         if event_type == 'order_filled' and event.get('side') == 'SELL':
                             order_id = event.get('order_id')
+                            # 获取虚拟订单号并清除计数
+                            for ps in bot_data.get('pending_sells', []):
+                                if ps['order_id'] == order_id:
+                                    virtual_sell_id = ps.get('virtual_sell_id')
+                                    if virtual_sell_id and 'virtual_sell_counts' in bot_data:
+                                        bot_data['virtual_sell_counts'].pop(virtual_sell_id, None)
+                                        print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 虚拟单号{virtual_sell_id}卖出计数已清除")
+                                    break
                             # 从 pending_sells 移除
                             bot_data['pending_sells'] = [
                                 ps for ps in bot_data.get('pending_sells', []) 
