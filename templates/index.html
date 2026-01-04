@@ -1941,15 +1941,21 @@
             }
             botsCache = Object.fromEntries(data.bots.map(b => [`${b.config.exchange || 'binance'}:${b.symbol}`, b]));
             container.innerHTML = data.bots
-              .map((bot) => {
+              .map((bot, index) => {
+                const botIndex = index + 1;
                 const mode = (bot.config && parseInt(bot.config.simulate_trading) === 1) ? '模拟' : '实盘';
                 const cp = bot.current_price != null ? ('$' + Number(bot.current_price).toPrecision(6)) : '-';
                 
-                // 计算仓位大小（现价 × 数量）
+                // 计算实际挂单仓位（买单价格×数量 + 卖单价格×数量）
                 let positionSize = '-';
-                if (bot.current_price != null && bot.config && bot.config.quantity) {
-                  const size = bot.current_price * bot.config.quantity;
-                  positionSize = '≈$' + size.toFixed(2);
+                const qty = bot.config && bot.config.quantity ? parseFloat(bot.config.quantity) : 0;
+                const buyPricesRaw = bot.buy_prices || [];
+                const sellPricesRaw = bot.sell_prices || [];
+                if (qty > 0 && (buyPricesRaw.length > 0 || sellPricesRaw.length > 0)) {
+                  const buyTotal = buyPricesRaw.reduce((sum, p) => sum + p * qty, 0);
+                  const sellTotal = sellPricesRaw.reduce((sum, p) => sum + p * qty, 0);
+                  const total = buyTotal + sellTotal;
+                  positionSize = '≈$' + total.toFixed(2);
                 }
                 
                 // 显示挂单信息
@@ -1966,15 +1972,15 @@
                   const maxBuy = Math.max(...buyPrices);
                   const buyText = buyCount === 1 ? `$${minBuy}` : `$${minBuy}~${maxBuy}`;
                   
-                  // 计算买单差价百分比：第一单相对现价，后续相对上一单
+                  // 计算买单差价百分比：将现价加入数组排序后依次相减
                   let avgDiffPercent = '';
                   if (currentPrice && buyPrices.length > 0) {
+                    // 将现价和所有买单价格放入数组并排序
+                    const allPrices = [currentPrice, ...buyPrices].sort((a, b) => b - a);
+                    // 依次计算相邻价格的差值百分比
                     let diffs = [];
-                    // 第一单相对于现价
-                    diffs.push((buyPrices[0] - currentPrice) / currentPrice * 100);
-                    // 后续买单相对于上一笔买单
-                    for (let i = 1; i < buyPrices.length; i++) {
-                      diffs.push((buyPrices[i] - buyPrices[i-1]) / buyPrices[i-1] * 100);
+                    for (let i = 1; i < allPrices.length; i++) {
+                      diffs.push((allPrices[i] - allPrices[i-1]) / allPrices[i-1] * 100);
                     }
                     const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length;
                     avgDiffPercent = ` <span style="color:#17a2b8;">(均${avg.toFixed(3)}%)</span>`;
@@ -2085,19 +2091,25 @@
                   marketInfoDisplay = `<div style="font-size:10px;color:#495057;margin-top:2px;padding:2px 6px;background:#f0f8ff;border-radius:3px;display:inline-block;">📍 ${parts.join(' | ')}</div>`;
                 }
                 
-                // 紧凑的买卖单差值显示
+                // 紧凑的买卖单差值显示（实盘统计）
                 let priceDiffDisplay = '';
-                const hasBuyDiff = bot.buy_min_price_diff_percent != null || bot.buy_avg_price_diff_percent != null;
-                const hasSellDiff = bot.sell_min_price_diff_percent != null || bot.sell_avg_price_diff_percent != null;
+                const hasBuyDiff = bot.buy_min_price_diff_percent != null && bot.buy_max_price_diff_percent != null && bot.buy_avg_price_diff_percent != null;
+                const hasSellDiff = bot.sell_min_price_diff_percent != null && bot.sell_max_price_diff_percent != null && bot.sell_avg_price_diff_percent != null;
                 if (hasBuyDiff || hasSellDiff) {
                   let parts = [];
                   if (hasBuyDiff) {
-                    parts.push(`<span style="color:#17a2b8;">买${bot.buy_avg_price_diff_percent != null ? Number(bot.buy_avg_price_diff_percent).toFixed(3) + '%' : '-'}</span>`);
+                    const buyMin = Number(bot.buy_min_price_diff_percent).toFixed(2);
+                    const buyMax = Number(bot.buy_max_price_diff_percent).toFixed(2);
+                    const buyAvg = Number(bot.buy_avg_price_diff_percent).toFixed(2);
+                    parts.push(`<span style="color:#17a2b8;">买${buyMin}~${buyMax}%,均${buyAvg}%</span>`);
                   }
                   if (hasSellDiff) {
-                    parts.push(`<span style="color:#28a745;">卖${bot.sell_avg_price_diff_percent != null ? Number(bot.sell_avg_price_diff_percent).toFixed(3) + '%' : '-'}</span>`);
+                    const sellMin = Number(bot.sell_min_price_diff_percent).toFixed(2);
+                    const sellMax = Number(bot.sell_max_price_diff_percent).toFixed(2);
+                    const sellAvg = Number(bot.sell_avg_price_diff_percent).toFixed(2);
+                    parts.push(`<span style="color:#28a745;">卖${sellMin}~${sellMax}%,均${sellAvg}%</span>`);
                   }
-                  priceDiffDisplay = ` | 差值: ${parts.join('/')}`;
+                  priceDiffDisplay = ` | 差值: ${parts.join(' / ')}`;
                 }
                 
                 // 紧凑的阈值显示
@@ -2113,6 +2125,7 @@
                   <div class="pair-item" id="bot-${bot.config.exchange || 'binance'}-${bot.symbol}">
                     <div class="pair-info">
                       <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 4px;">
+                        <span style="font-size: 12px; color: #6c757d; margin-right: 2px;">#${botIndex}</span>
                         <span class="status-indicator ${statusClass}"></span>
                         <strong style="font-size: 14px;">${bot.symbol}</strong>
                         <span class="bot-status-badge" style="background: #6f42c1; color: white;">${exchangeName}</span>
