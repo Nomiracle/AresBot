@@ -82,6 +82,10 @@ class NativePolymarketSpot(BaseExchange):
         
         # 最新买单成交价格（用于虚拟卖单）
         self._last_buy_price = 0.0
+        
+        # 买单成交等待余额更新标志（用于阻止重复下单）
+        self._waiting_balance_update = False
+        self._waiting_balance_lock = threading.Lock()
         try:
             # 初始化Polymarket客户端
             host = "https://clob.polymarket.com"
@@ -384,6 +388,13 @@ class NativePolymarketSpot(BaseExchange):
     def order_limit_buy(self, quantity: float, price: str, **kwargs) -> Dict:
         """限价买单"""
         try:
+            # 检查是否正在等待余额更新（买单刚成交）
+            with self._waiting_balance_lock:
+                if self._waiting_balance_update:
+                    error_msg = "买单刚成交，正在等待余额更新，暂停下单"
+                    print(f"{self._get_log_prefix()} ⏸️ {error_msg}")
+                    raise Exception(error_msg)
+            
             # 价格检查：低于阈值拒绝下单
             if float(price) < self.min_price_threshold:
                 error_msg = f"价格 {price} 低于最低限制 {self.min_price_threshold}，拒绝下单"
@@ -921,12 +932,21 @@ class NativePolymarketSpot(BaseExchange):
                 # 如果是买单成交，保存买入价格并等待 token 余额更新
                 if side == 'BUY':
                     self._last_buy_price = price
+                    # 设置等待标志，阻止重复下单
+                    with self._waiting_balance_lock:
+                        self._waiting_balance_update = True
+                    print(f"{self._get_log_prefix()} 🔒 设置等待标志，阻止重复下单")
                     try:
                         print(f"{self._get_log_prefix()} ⏳ 等待 Token 余额更新...")
                         self._check_token_balance(original_size)
                         print(f"{self._get_log_prefix()} ✅ Token 余额已更新，触发回调")
                     except Exception as e:
                         print(f"{self._get_log_prefix()} ⚠️ 等待余额超时，仍触发回调: {e}")
+                    finally:
+                        # 清除等待标志
+                        with self._waiting_balance_lock:
+                            self._waiting_balance_update = False
+                        print(f"{self._get_log_prefix()} 🔓 清除等待标志，恢复下单")
                 
                 # 完全成交
                 event = {
@@ -1026,12 +1046,21 @@ class NativePolymarketSpot(BaseExchange):
                         # 如果是买单成交，保存买入价格并等待 token 余额更新
                         if my_side == 'BUY':
                             self._last_buy_price = my_price
+                            # 设置等待标志，阻止重复下单
+                            with self._waiting_balance_lock:
+                                self._waiting_balance_update = True
+                            print(f"{self._get_log_prefix()} 🔒 设置等待标志，阻止重复下单")
                             try:
                                 print(f"{self._get_log_prefix()} ⏳ 等待 Token 余额更新...")
                                 self._check_token_balance(my_matched_amount)
                                 print(f"{self._get_log_prefix()} ✅ Token 余额已更新，触发回调")
                             except Exception as e:
                                 print(f"{self._get_log_prefix()} ⚠️ 等待余额超时，仍触发回调: {e}")
+                            finally:
+                                # 清除等待标志
+                                with self._waiting_balance_lock:
+                                    self._waiting_balance_update = False
+                                print(f"{self._get_log_prefix()} 🔓 清除等待标志，恢复下单")
                         
                         event = {
                             'event_type': 'order_filled',
@@ -1066,12 +1095,21 @@ class NativePolymarketSpot(BaseExchange):
                 # 如果是买单成交，保存买入价格并等待 token 余额更新
                 if side == 'BUY':
                     self._last_buy_price = price
+                    # 设置等待标志，阻止重复下单
+                    with self._waiting_balance_lock:
+                        self._waiting_balance_update = True
+                    print(f"{self._get_log_prefix()} 🔒 设置等待标志，阻止重复下单")
                     try:
                         print(f"{self._get_log_prefix()} ⏳ 等待 Token 余额更新...")
                         self._check_token_balance(size)
                         print(f"{self._get_log_prefix()} ✅ Token 余额已更新，触发回调")
                     except Exception as e:
                         print(f"{self._get_log_prefix()} ⚠️ 等待余额超时，仍触发回调: {e}")
+                    finally:
+                        # 清除等待标志
+                        with self._waiting_balance_lock:
+                            self._waiting_balance_update = False
+                        print(f"{self._get_log_prefix()} 🔓 清除等待标志，恢复下单")
                 
                 event = {
                     'event_type': 'order_filled',
