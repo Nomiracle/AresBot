@@ -35,7 +35,7 @@ def send_order_notification(username, side, symbol, price, quantity, order_id, m
             side_text = "买" if side == 'BUY' else "卖"
             
             # 构建消息
-            msg = f"{side_emoji} {symbol} {side_text} {price}@{quantity}"
+            msg = f"{side_emoji} {symbol} {side_text} {price}@{quantity} - {order_id}"
             
             # 添加市场信息
             if market_info:
