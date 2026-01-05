@@ -920,11 +920,22 @@ def trading_loop(username, bot_key):
             is_placing_order = bot_data.get('is_placing_order', False)
             
             # 计算当前总持仓数量（pending_buys + pending_sells 的数量之和）
-            pending_buys_qty = sum(pb.get('quantity', 0) for pb in bot_data.get('pending_buys', []))
-            pending_sells_qty = sum(ps.get('quantity', 0) for ps in bot_data.get('pending_sells', []))
+            pending_buys = bot_data.get('pending_buys', [])
+            pending_sells = bot_data.get('pending_sells', [])
+            pending_buys_qty = sum(pb.get('quantity', 0) for pb in pending_buys)
+            pending_sells_qty = sum(ps.get('quantity', 0) for ps in pending_sells)
             total_pending_qty = pending_buys_qty + pending_sells_qty
             target_qty = order_grid * aligned_quantity
             need_more_orders = total_pending_qty < target_qty
+            
+            # 调试日志:当数量超标时显示详细信息
+            if total_pending_qty > target_qty:
+                buy_orders = [f"{pb['order_id']}({pb.get('quantity', 0)})" for pb in pending_buys]
+                sell_orders = [f"{ps['order_id']}({ps.get('quantity', 0)})" for ps in pending_sells]
+                print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 持仓超标详情:")
+                print(f"  pending_buys({len(pending_buys)}笔): {buy_orders}")
+                print(f"  pending_sells({len(pending_sells)}笔): {sell_orders}")
+                print(f"  total={total_pending_qty:.6g}, target={target_qty:.6g}")
             
             if query_success and not is_placing_order and need_more_orders:
                 is_buy_enabled = (config.get('simulate_trading', 1) != 1)
