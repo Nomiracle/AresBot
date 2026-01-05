@@ -77,6 +77,9 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
     abs_buy_offset = abs(offset_percent)
     use_decay = sell_decay_count > 0 and abs_buy_offset > base_sell_offset
     
+    # 调试日志:显示衰减判断条件
+    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 衰减判断: sell_decay_count={sell_decay_count}, abs_buy_offset={abs_buy_offset:.4f}%, base_sell_offset={base_sell_offset:.4f}%, use_decay={use_decay}")
+    
     if use_decay:
         # 使用衰减逻辑: 初始使用买入偏移绝对值作为卖出偏移
         dynamic_sell_offset = abs_buy_offset
