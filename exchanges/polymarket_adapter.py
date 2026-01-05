@@ -916,6 +916,18 @@ class NativePolymarketSpot(BaseExchange):
                     print(f"{self._get_log_prefix()} ⚠️ 订单成交事件重复(order UPDATE)，跳过: {order_id}")
                     return None
                 
+                print(f"{self._get_log_prefix()} ✅ 订单成交: {order_id}, 数量: {size_matched}/{original_size}")
+                
+                # 如果是买单成交，保存买入价格并等待 token 余额更新
+                if side == 'BUY':
+                    self._last_buy_price = price
+                    try:
+                        print(f"{self._get_log_prefix()} ⏳ 等待 Token 余额更新...")
+                        self._check_token_balance(original_size)
+                        print(f"{self._get_log_prefix()} ✅ Token 余额已更新，触发回调")
+                    except Exception as e:
+                        print(f"{self._get_log_prefix()} ⚠️ 等待余额超时，仍触发回调: {e}")
+                
                 # 完全成交
                 event = {
                     'event_type': 'order_filled',
@@ -926,7 +938,6 @@ class NativePolymarketSpot(BaseExchange):
                     'quantity': original_size,
                     'executedQty': size_matched
                 }
-                print(f"{self._get_log_prefix()} ✅ 订单成交: {order_id}, 数量: {size_matched}/{original_size}")
                 return event
             else:
                 # 部分成交或其他更新 - 暂不处理
