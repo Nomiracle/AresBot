@@ -39,35 +39,6 @@ def send_order_notification(username, side, symbol, price, quantity, order_id):
     threading.Thread(target=_send, daemon=True).start()
 
 
-def calculate_dynamic_sell_offset(offset_percent, sell_offset_percent, sell_count):
-    """
-    计算动态卖出加价百分比
-    
-    Args:
-        offset_percent: 买入偏移百分比（通常为负数）
-        sell_offset_percent: 基础卖出加价百分比
-        sell_count: 该网格位置的卖出次数（从1开始）
-    
-    Returns:
-        实际使用的卖出加价百分比
-    """
-    # A = |offset_percent| 和 sell_offset_percent 差值的绝对值
-    abs_offset = abs(offset_percent)
-    A = abs(abs_offset - sell_offset_percent)
-    
-    # 最大值作为起始点
-    max_value = max(abs_offset, sell_offset_percent)
-    
-    # 根据卖出次数递减: 第1次用max_value, 第2次用max_value - 30%*A, 第3次用max_value - 60%*A...
-    reduction = (sell_count - 1) * 0.3 * A
-    calculated_value = max_value - reduction
-    
-    # 如果计算值小于 sell_offset_percent，则使用 sell_offset_percent
-    if calculated_value < sell_offset_percent:
-        return sell_offset_percent
-    
-    return calculated_value
-
 
 def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_decimals, 
                             step_size, qty_decimals, log_prefix):
@@ -82,19 +53,12 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
     # 标记为已处理
     bot_data.setdefault('processed_filled_orders', set()).add(order_id)
     
-    # 获取买入价格和虚拟订单号
+    # 获取买入价格
     buy_price = float(event.get('price', 0))
-    virtual_sell_id = None
     if not buy_price:
         for pb in bot_data.get('pending_buys', []):
             if pb['order_id'] == order_id:
                 buy_price = pb.get('price')
-                virtual_sell_id = pb.get('virtual_sell_id')
-                break
-    else:
-        for pb in bot_data.get('pending_buys', []):
-            if pb['order_id'] == order_id:
-                virtual_sell_id = pb.get('virtual_sell_id')
                 break
     
     if not buy_price:
@@ -102,23 +66,25 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
         bot_data.get('processed_filled_orders', set()).discard(order_id)
         return
     
-    # 如果没有虚拟订单号，生成一个新的
-    if not virtual_sell_id:
-        virtual_sell_id = f"VS_{uuid.uuid4().hex[:8]}"
-    
     current_price = bot_data.get('current_price')
 
-    # 使用虚拟订单号追踪卖出次数
-    sell_counts = bot_data.setdefault('virtual_sell_counts', {})
-    sell_count = sell_counts.get(virtual_sell_id, 0) + 1
-    sell_counts[virtual_sell_id] = sell_count
-    
     # 计算动态卖出加价百分比
     offset_percent = config.get('offset_percent', -0.1)
     base_sell_offset = config.get('sell_offset_percent', 0.5)
-    dynamic_sell_offset = calculate_dynamic_sell_offset(offset_percent, base_sell_offset, sell_count)
+    sell_decay_count = config.get('sell_decay_count', 0)
     
-    print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 虚拟单{virtual_sell_id} 第{sell_count}次卖出, 动态加价: {dynamic_sell_offset:.4f}% (基础: {base_sell_offset}%)")
+    # 判断是否使用衰减逻辑
+    abs_buy_offset = abs(offset_percent)
+    use_decay = sell_decay_count > 0 and abs_buy_offset > base_sell_offset
+    
+    if use_decay:
+        # 使用衰减逻辑: 初始使用买入偏移绝对值作为卖出偏移
+        dynamic_sell_offset = abs_buy_offset
+        print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 启用衰减逻辑, 初始加价: {dynamic_sell_offset:.4f}% (买入偏移绝对值)")
+    else:
+        # 不使用衰减逻辑: 使用固定卖单偏移
+        dynamic_sell_offset = base_sell_offset
+        print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 使用固定卖单偏移加价: {dynamic_sell_offset:.4f}%")
 
     # 计算卖出价格
     sell_price = exchange.calculate_sell_price(
@@ -212,7 +178,7 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
             'quantity': aligned_qty,
             'buy_order_id': order_id,
             'buy_price': buy_price,
-            'virtual_sell_id': virtual_sell_id
+            'reprice_count': 0  # 初始改价次数为0
         })
         
         # 插入卖单记录到数据库
@@ -488,19 +454,49 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
         sell_order_id = str(sell_order['orderId'])
         current_sell_price = float(sell_order['price'])
         
-        # 获取对应的买入价
+        # 获取对应的买入价和改价次数
         buy_price = None
+        reprice_count = 0
         for ps in bot_data.get('pending_sells', []):
             if ps.get('order_id') == sell_order_id:
                 buy_price = ps.get('buy_price')
+                reprice_count = ps.get('reprice_count', 0)
                 break
         
         if not buy_price:
             continue
+        
+        # 获取配置参数
+        offset_percent = config.get('offset_percent', -0.1)
+        base_sell_offset = config.get('sell_offset_percent', 0.5)
+        sell_decay_count = config.get('sell_decay_count', 0)
+        
+        # 判断是否使用衰减逻辑
+        abs_buy_offset = abs(offset_percent)
+        use_decay = sell_decay_count > 0 and abs_buy_offset > base_sell_offset
+        
         # 计算目标卖价
+        if use_decay and reprice_count < sell_decay_count:
+            # 使用衰减逻辑: 每次改价递减 (100/sell_decay_count)% 的差值
+            A = abs(abs_buy_offset - base_sell_offset)
+            decay_percent = 100.0 / sell_decay_count  # 计算递减百分比
+            reduction = reprice_count * (decay_percent / 100.0) * A
+            calculated_offset = abs_buy_offset - reduction
+            
+            # 如果计算值小于实际卖出偏移,使用实际卖出偏移
+            if calculated_offset < base_sell_offset:
+                dynamic_sell_offset = base_sell_offset
+                print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 改价{reprice_count+1}: 计算值{calculated_offset:.4f}% < 基础{base_sell_offset}%, 使用基础偏移")
+            else:
+                dynamic_sell_offset = calculated_offset
+                print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 改价{reprice_count+1}: 使用衰减偏移 {dynamic_sell_offset:.4f}% (递减{decay_percent:.1f}%)")
+        else:
+            # 不使用衰减逻辑或已达到衰减次数上限: 使用实际卖出偏移
+            dynamic_sell_offset = base_sell_offset
+        
         target_sell_price = exchange.calculate_sell_price(
             buy_price,
-            config.get('sell_offset_percent', 0.5),
+            dynamic_sell_offset,
             tick_size,
             price_decimals,
             current_price
@@ -541,12 +537,13 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
             
             # 更新或添加 pending_sells 中的订单
             if new_order_id == sell_order_id:
-                # editOrderWs 返回相同 ID，更新现有条目的价格
+                # editOrderWs 返回相同 ID，更新现有条目的价格和改价次数
                 for ps in bot_data.get('pending_sells', []):
                     if ps['order_id'] == sell_order_id:
                         ps['price'] = target_sell_price
+                        ps['reprice_count'] = reprice_count + 1  # 增加改价次数
                         break
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单改价成功: {sell_order_id}, 目标价格={target_sell_price:.6f}/当前价格={bot_data['current_price']:.6f}")
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单改价成功: {sell_order_id}, 目标价格={target_sell_price:.6f}/当前价格={bot_data['current_price']:.6f}, 改价次数={reprice_count + 1}")
             else:
                 # 订单 ID 变化，添加新条目并移除旧条目
                 bot_data.setdefault('pending_sells', []).append({
@@ -555,13 +552,14 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
                     'quantity': aligned_qty,
                     'symbol': config['symbol'],
                     'user_id': bot_data['user_id'],
-                    'buy_price': buy_price
+                    'buy_price': buy_price,
+                    'reprice_count': reprice_count + 1  # 增加改价次数
                 })
                 bot_data['pending_sells'] = [
                     ps for ps in bot_data.get('pending_sells', []) 
                     if ps['order_id'] != sell_order_id
                 ]
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单改价成功: {sell_order_id} → {new_order_id}, 目标价格={target_sell_price:.6f}/当前价格={bot_data['current_price']:.6f}，本地缓存卖单：{bot_data.get('pending_sells', [])}")
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单改价成功: {sell_order_id} → {new_order_id}, 目标价格={target_sell_price:.6f}/当前价格={bot_data['current_price']:.6f}, 改价次数={reprice_count + 1}，本地缓存卖单：{bot_data.get('pending_sells', [])}")
                 
             # 改价成功，清除错误和警告信息
             bot_data['last_error'] = None
@@ -756,14 +754,6 @@ def trading_loop(username, bot_key):
                         # 卖单成交
                         if event_type == 'order_filled' and event.get('side') == 'SELL':
                             order_id = event.get('order_id')
-                            # 获取虚拟订单号并清除计数
-                            for ps in bot_data.get('pending_sells', []):
-                                if ps['order_id'] == order_id:
-                                    virtual_sell_id = ps.get('virtual_sell_id')
-                                    if virtual_sell_id and 'virtual_sell_counts' in bot_data:
-                                        bot_data['virtual_sell_counts'].pop(virtual_sell_id, None)
-                                        print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 虚拟单号{virtual_sell_id}卖出计数已清除")
-                                    break
                             # 从 pending_sells 移除
                             bot_data['pending_sells'] = [
                                 ps for ps in bot_data.get('pending_sells', []) 

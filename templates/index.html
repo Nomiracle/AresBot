@@ -664,6 +664,11 @@
             />
           </div>
           <div class="input-group">
+            <label>卖单衰减次数</label>
+            <input type="number" id="sellDecayCount" value="0" min="0" max="10" step="1" />
+            <small style="color: #666;">改价递减次数（0=不衰减，默认 0）</small>
+          </div>
+          <div class="input-group">
             <label>购买数量</label>
             <input type="number" id="quantity" value="0.001" step="0.0001" />
           </div>
@@ -1515,6 +1520,7 @@
           sell_offset_percent: parseFloat(
             document.getElementById("sellOffsetPercent").value
           ),
+          sell_decay_count: parseInt(document.getElementById("sellDecayCount").value) || 0,
           quantity: parseFloat(document.getElementById("quantity").value),
           interval: parseInt(document.getElementById("interval").value),
           order_grid: parseInt(document.getElementById("orderGrid").value) || 1,
@@ -1590,6 +1596,8 @@
                 data.config.offset_percent;
               document.getElementById("sellOffsetPercent").value =
                 data.config.sell_offset_percent || 0.5;
+              document.getElementById("sellDecayCount").value =
+                data.config.sell_decay_count || 0;
               document.getElementById("quantity").value = data.config.quantity;
               document.getElementById("interval").value = data.config.interval;
               document.getElementById("orderGrid").value = data.config.order_grid || 1;
@@ -2133,7 +2141,7 @@
                         ${bot.running ? uptimeBadge + monitorBadge + orderMonitorBadge + threadBadge + pendingBadge : '<span class="bot-status-badge badge-secondary">停止</span>'}${rateLimitDisplay}
                       </div>
                       <div style="font-size: 11px; color: #555; margin-top: 2px;">
-                        现价 <strong>${cp}</strong> | 挂单 ${ordersDisplay} | 仓 <strong>${positionSize}</strong> | 偏${bot.config.offset_percent}%/卖+${bot.config.sell_offset_percent || 0.5}% | 量${bot.config.quantity} | ${bot.config.interval}s | 格${bot.config.order_grid || 1} | ${mode}${thresholdDisplay}${priceDiffDisplay}
+                        现价 <strong>${cp}</strong> | 挂单 ${ordersDisplay} | 仓 <strong>${positionSize}</strong> | 偏${bot.config.offset_percent}%/卖+${bot.config.sell_offset_percent || 0.5}%${bot.config.sell_decay_count > 0 ? '/衰减' + bot.config.sell_decay_count : ''} | 量${bot.config.quantity} | ${bot.config.interval}s | 格${bot.config.order_grid || 1} | ${mode}${thresholdDisplay}${priceDiffDisplay}
                       </div>
                       ${marketInfoDisplay}${errorDisplay}${warningDisplay}
                     </div>
@@ -2163,6 +2171,7 @@
             <div style="flex:1; display:grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap:10px;">
               <label>偏移% <input type="number" id="edit-offset-${exchange}-${symbol}" value="${cfg.offset_percent}" step="0.01"></label>
               <label>卖加价% <input type="number" id="edit-selloffset-${exchange}-${symbol}" value="${cfg.sell_offset_percent || 0.5}" step="0.01"></label>
+              <label>衰减次数 <input type="number" id="edit-decay-${exchange}-${symbol}" value="${cfg.sell_decay_count || 0}" min="0" max="10"></label>
               <label>数量 <input type="number" id="edit-qty-${exchange}-${symbol}" value="${cfg.quantity}" step="0.0001"></label>
               <label>间隔(秒) <input type="number" id="edit-interval-${exchange}-${symbol}" value="${cfg.interval}" min="1"></label>
               <label>模式
@@ -2186,6 +2195,7 @@
           exchange,
           offset_percent: parseFloat(document.getElementById(`edit-offset-${exchange}-${symbol}`).value),
           sell_offset_percent: parseFloat(document.getElementById(`edit-selloffset-${exchange}-${symbol}`).value),
+          sell_decay_count: parseInt(document.getElementById(`edit-decay-${exchange}-${symbol}`).value) || 0,
           quantity: parseFloat(document.getElementById(`edit-qty-${exchange}-${symbol}`).value),
           interval: parseInt(document.getElementById(`edit-interval-${exchange}-${symbol}`).value),
           simulate_trading: parseInt(document.getElementById(`edit-sim-${exchange}-${symbol}`).value)
