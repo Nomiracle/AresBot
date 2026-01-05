@@ -794,7 +794,7 @@ def register_routes(app):
         if not bot:
             return jsonify({'success': False, 'message': '机器人不存在'})
         cfg = bot.get('config', {})
-        for k in ['offset_percent', 'sell_offset_percent', 'quantity', 'interval', 'simulate_trading', 'testnet']:
+        for k in ['offset_percent', 'sell_offset_percent', 'sell_decay_count', 'quantity', 'interval', 'simulate_trading', 'testnet']:
             if k in data and data[k] is not None:
                 cfg[k] = data[k]
         bot['config'] = cfg
