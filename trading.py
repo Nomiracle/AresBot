@@ -13,7 +13,7 @@ import traceback
 user_bots = {}
 
 
-def send_order_notification(username, side, symbol, price, quantity, order_id, market_info=None):
+def send_order_notification(username, side, symbol, price, quantity, order_id, market_info=None, cost_info=None):
     """发送订单成交通知（异步执行，不阻塞主线程）
     
     Args:
@@ -24,6 +24,7 @@ def send_order_notification(username, side, symbol, price, quantity, order_id, m
         quantity: 成交数量
         order_id: 订单号
         market_info: 市场信息（可选，由 exchange.get_notification_info() 提供）
+        cost_info: 成本信息（可选，卖单时显示成本价）
     """
     if not username:
         return
@@ -36,7 +37,13 @@ def send_order_notification(username, side, symbol, price, quantity, order_id, m
             
             # 构建消息
             time_str = datetime.now().strftime("%H:%M:%S")
-            msg = f"[{time_str}] {side_emoji} {symbol} {side_text} {price}@{quantity} - {order_id}"
+            msg = f"[{time_str}] {side_emoji} {symbol} {side_text} {price}"
+            
+            # 添加成本信息（卖单时显示）
+            if cost_info:
+                msg = f"{msg} ({cost_info})"
+            
+            msg = f"{msg}@{quantity} - {order_id}"
             
             # 添加市场信息
             if market_info:
@@ -806,6 +813,13 @@ def trading_loop(username, bot_key):
                         # 卖单成交
                         if event_type == 'order_filled' and event.get('side') == 'SELL':
                             order_id = event.get('order_id')
+                            # 先获取成本价（从 pending_sells 中查找）
+                            buy_price = None
+                            for ps in bot_data.get('pending_sells', []):
+                                if ps['order_id'] == order_id:
+                                    buy_price = ps.get('buy_price')
+                                    break
+                            
                             # 从 pending_sells 移除
                             bot_data['pending_sells'] = [
                                 ps for ps in bot_data.get('pending_sells', []) 
@@ -813,11 +827,12 @@ def trading_loop(username, bot_key):
                             ]
                             print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单成交 {order_id}")
                             
-                            # 发送钉钉通知
+                            # 发送钉钉通知（包含成本价）
                             sell_price = event.get('price', 0)
                             sell_qty = event.get('executedQty') or event.get('quantity', 0)
                             market_info = exchange.get_notification_info() if hasattr(exchange, 'get_notification_info') else None
-                            send_order_notification(bot_data.get('username'), 'SELL', config['symbol'], sell_price, sell_qty, order_id, market_info=market_info)
+                            cost_info = f"成本:{buy_price}" if buy_price else None
+                            send_order_notification(bot_data.get('username'), 'SELL', config['symbol'], sell_price, sell_qty, order_id, market_info=market_info, cost_info=cost_info)
                             
                             # 更新数据库订单状态
                             try:
