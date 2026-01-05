@@ -49,6 +49,116 @@ def send_order_notification(username, side, symbol, price, quantity, order_id, m
 
 
 
+def place_sell_order_with_retry(exchange, bot_data, config, buy_order_id, buy_price, 
+                                 quantity, sell_price, current_price, log_prefix, 
+                                 retry_count=0, max_retry=3):
+    """挂卖单（带递归重试）
+    
+    Args:
+        exchange: 交易所适配器
+        bot_data: 机器人数据
+        config: 配置
+        buy_order_id: 买单ID
+        buy_price: 买入价格
+        quantity: 卖出数量
+        sell_price: 卖出价格
+        current_price: 当前价格
+        log_prefix: 日志前缀
+        retry_count: 当前重试次数
+        max_retry: 最大重试次数
+    
+    Returns:
+        bool: 是否成功
+    """
+    try:
+        sell_order = exchange.order_limit_sell(
+            quantity=quantity,
+            price=f"{sell_price}",
+            current_price=current_price,
+            entry_price=buy_price
+        )
+        sell_order_id = str(sell_order.get('orderId') or sell_order.get('id'))
+        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单已挂 {sell_order_id}: 价格={sell_price}")
+        
+        # 更新 target_price 为卖单价格
+        bot_data['target_price'] = sell_price
+        
+        # 添加到 pending_sells 跟踪列表
+        bot_data.setdefault('pending_sells', []).append({
+            'order_id': sell_order_id,
+            'price': sell_price,
+            'quantity': quantity,
+            'buy_order_id': buy_order_id,
+            'buy_price': buy_price,
+            'reprice_count': 0
+        })
+        
+        # 插入卖单记录到数据库
+        user_id = bot_data.get('user_id')
+        if user_id:
+            try:
+                # 获取买单阶段的价格差值统计数据
+                buy_min_diff = bot_data.get('buy_min_price_diff_percent')
+                buy_max_diff = bot_data.get('buy_max_price_diff_percent')
+                buy_avg_diff = bot_data.get('buy_avg_price_diff_percent')
+                
+                buy_min_diff_str = str(round(buy_min_diff, 4)) if buy_min_diff is not None else None
+                buy_max_diff_str = str(round(buy_max_diff, 4)) if buy_max_diff is not None else None
+                buy_avg_diff_str = str(round(buy_avg_diff, 4)) if buy_avg_diff is not None else None
+                
+                insert_order(
+                    user_id=user_id,
+                    symbol=config['symbol'],
+                    price=str(sell_price),
+                    quantity=str(quantity),
+                    side='SELL',
+                    status='NEW',
+                    order_id=sell_order_id,
+                    buy_price=str(buy_price),
+                    exchange=config.get('exchange', 'unknown'),
+                    fee=None,
+                    offset_percent=str(config.get('offset_percent', 0)),
+                    sell_offset_percent=str(config.get('sell_offset_percent', 0)),
+                    interval=str(config.get('interval', 0)),
+                    min_price_diff_percent=buy_min_diff_str,
+                    max_price_diff_percent=buy_max_diff_str,
+                    avg_price_diff_percent=buy_avg_diff_str
+                )
+                print(f"[{datetime.now().isoformat()}] {log_prefix} 📝 卖单已记录到数据库 (买单差值: 最小={buy_min_diff_str}%, 最大={buy_max_diff_str}%, 平均={buy_avg_diff_str}%)")
+                
+                # 重置买单差值统计数据
+                bot_data['buy_min_price_diff_percent'] = None
+                bot_data['buy_max_price_diff_percent'] = None
+                bot_data['buy_avg_price_diff_percent'] = None
+            except Exception as db_e:
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 卖单记录失败: {db_e}")
+        
+        # 挂卖单成功，清除错误和警告信息
+        bot_data['last_error'] = None
+        bot_data['last_error_time'] = None
+        bot_data['last_warning'] = None
+        return True
+        
+    except Exception as e:
+        error_msg = str(e)
+        error_type = type(e).__name__
+        
+        if retry_count < max_retry:
+            print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 挂卖单失败 [{retry_count + 1}/{max_retry}]: {e}，1秒后重试...")
+            time.sleep(1)
+            return place_sell_order_with_retry(
+                exchange, bot_data, config, buy_order_id, buy_price,
+                quantity, sell_price, current_price, log_prefix,
+                retry_count + 1, max_retry
+            )
+        else:
+            print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 挂卖单失败，已重试{max_retry}次: {e}")
+            bot_data['last_error'] = f"挂卖单失败 - {error_type}: {error_msg}"
+            bot_data['error_count'] = bot_data.get('error_count', 0) + 1
+            bot_data['last_error_time'] = datetime.now().isoformat()
+            return False
+
+
 def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_decimals, 
                             step_size, qty_decimals, log_prefix):
     """处理买单成交事件"""
@@ -170,83 +280,11 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
                 pb['grid_index'] = old_grid - 1
                 print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 买单 {pb['order_id']} grid_index: {old_grid} → {pb['grid_index']}")
     
-    # 挂卖单
-    try:
-        sell_order = exchange.order_limit_sell(
-            quantity=aligned_qty,
-            price=f"{sell_price}",
-            current_price=current_price,
-            entry_price=buy_price
-        )
-        sell_order_id = str(sell_order.get('orderId') or sell_order.get('id'))
-        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单已挂 {sell_order_id}: 价格={sell_price}")
-        
-        # 更新 target_price 为卖单价格
-        bot_data['target_price'] = sell_price
-        
-        # 添加到 pending_sells 跟踪列表
-        bot_data.setdefault('pending_sells', []).append({
-            'order_id': sell_order_id,
-            'price': sell_price,
-            'quantity': aligned_qty,
-            'buy_order_id': order_id,
-            'buy_price': buy_price,
-            'reprice_count': 0  # 初始改价次数为0
-        })
-        
-        # 插入卖单记录到数据库
-        user_id = bot_data.get('user_id')
-        if user_id:
-            try:
-                # 获取买单阶段的价格差值统计数据
-                buy_min_diff = bot_data.get('buy_min_price_diff_percent')
-                buy_max_diff = bot_data.get('buy_max_price_diff_percent')
-                buy_avg_diff = bot_data.get('buy_avg_price_diff_percent')
-                
-                buy_min_diff_str = str(round(buy_min_diff, 4)) if buy_min_diff is not None else None
-                buy_max_diff_str = str(round(buy_max_diff, 4)) if buy_max_diff is not None else None
-                buy_avg_diff_str = str(round(buy_avg_diff, 4)) if buy_avg_diff is not None else None
-                
-                insert_order(
-                    user_id=user_id,
-                    symbol=config['symbol'],
-                    price=str(sell_price),
-                    quantity=str(aligned_qty),
-                    side='SELL',
-                    status='NEW',
-                    order_id=sell_order_id,
-                    buy_price=str(buy_price),
-                    exchange=config.get('exchange', 'unknown'),
-                    fee=None,  # 成交后更新
-                    offset_percent=str(config.get('offset_percent', 0)),
-                    sell_offset_percent=str(config.get('sell_offset_percent', 0)),
-                    interval=str(config.get('interval', 0)),
-                    min_price_diff_percent=buy_min_diff_str,
-                    max_price_diff_percent=buy_max_diff_str,
-                    avg_price_diff_percent=buy_avg_diff_str
-                )
-                print(f"[{datetime.now().isoformat()}] {log_prefix} 📝 卖单已记录到数据库 (买单差值: 最小={buy_min_diff_str}%, 最大={buy_max_diff_str}%, 平均={buy_avg_diff_str}%)")
-                
-                # 重置买单差值统计数据,为下一次交易做准备
-                bot_data['buy_min_price_diff_percent'] = None
-                bot_data['buy_max_price_diff_percent'] = None
-                bot_data['buy_avg_price_diff_percent'] = None
-            except Exception as db_e:
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 卖单记录失败: {db_e}")
-        
-        # 挂卖单成功，清除错误和警告信息
-        bot_data['last_error'] = None
-        bot_data['last_error_time'] = None
-        bot_data['last_warning'] = None
-    except Exception as e:
-        error_msg = str(e)
-        error_type = type(e).__name__
-        print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 挂卖单失败: {e}")
-        
-        # 保存挂卖单错误信息
-        bot_data['last_error'] = f"挂卖单失败 - {error_type}: {error_msg}"
-        bot_data['error_count'] = bot_data.get('error_count', 0) + 1
-        bot_data['last_error_time'] = datetime.now().isoformat()
+    # 挂卖单（带重试）
+    place_sell_order_with_retry(
+        exchange, bot_data, config, order_id, buy_price,
+        aligned_qty, sell_price, current_price, log_prefix
+    )
 
 
 def handle_reconnected(bot_data, exchange, log_prefix, on_order_update):
