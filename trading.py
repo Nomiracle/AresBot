@@ -806,9 +806,17 @@ def trading_loop(username, bot_key):
                         
                         # 买单成交
                         if event_type == 'order_filled' and event.get('side') == 'BUY':
-                            handle_buy_order_filled(event, bot_data, exchange, config, 
-                                                   tick_size, price_decimals, step_size, 
-                                                   qty_decimals, log_prefix)
+                            # 设置禁止下单标志
+                            bot_data['is_handling_buy_filled'] = True
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} 🔒 设置禁止下单标志")
+                            try:
+                                handle_buy_order_filled(event, bot_data, exchange, config, 
+                                                       tick_size, price_decimals, step_size, 
+                                                       qty_decimals, log_prefix)
+                            finally:
+                                # 清除禁止下单标志
+                                bot_data['is_handling_buy_filled'] = False
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} 🔓 清除禁止下单标志")
                         
                         # 卖单成交
                         if event_type == 'order_filled' and event.get('side') == 'SELL':
@@ -1028,6 +1036,11 @@ def trading_loop(username, bot_key):
                             # 第一格的目标价作为 bot_data 的 target_price
                             if grid_index == 1:
                                 bot_data['target_price'] = target_price
+                            
+                            # 检查是否正在处理买单成交（禁止下单）
+                            if bot_data.get('is_handling_buy_filled', False):
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏸️ 正在处理买单成交，跳过下单")
+                                continue
                             
                             order = exchange.order_limit_buy(
                                 quantity=aligned_quantity,
