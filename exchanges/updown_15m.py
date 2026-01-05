@@ -517,6 +517,16 @@ class UpDown15m(NativePolymarketSpot):
         # 使用 original_symbol 作为 symbol,因为 config['symbol'] 存储的是 "btc-Up" 格式
         return super()._process_trade_event(data, symbol=self.original_symbol)
     
+    def get_notification_info(self) -> str:
+        """获取通知消息的附加信息
+        
+        重写父类方法,返回当前市场的 slug
+        
+        Returns:
+            str: 市场 slug,如 "will-btc-close-higher-on-jan-5-2026-at-1-00-pm-et-than-at-12-45-pm-et"
+        """
+        return self.market_slug
+    
     def get_market_info(self) -> dict:
         """获取当前市场信息
         

@@ -13,7 +13,7 @@ import traceback
 user_bots = {}
 
 
-def send_order_notification(username, side, symbol, price, quantity, order_id):
+def send_order_notification(username, side, symbol, price, quantity, order_id, market_info=None):
     """发送订单成交通知（异步执行，不阻塞主线程）
     
     Args:
@@ -23,6 +23,7 @@ def send_order_notification(username, side, symbol, price, quantity, order_id):
         price: 成交价格
         quantity: 成交数量
         order_id: 订单号
+        market_info: 市场信息（可选，由 exchange.get_notification_info() 提供）
     """
     if not username:
         return
@@ -30,9 +31,17 @@ def send_order_notification(username, side, symbol, price, quantity, order_id):
     def _send():
         try:
             notifier = DingTalkNotification(username=username)
-            side_text = "买单" if side == 'BUY' else "卖单"
-            price_text = "买入价" if side == 'BUY' else "卖出价"
-            notifier.send(f"✅ {side_text}成交\n交易对: {symbol}\n{price_text}: {price}\n数量: {quantity}\n订单号: {order_id}")
+            side_emoji = "🟢" if side == 'BUY' else "🔴"
+            side_text = "买" if side == 'BUY' else "卖"
+            
+            # 构建消息
+            msg = f"{side_emoji} {symbol} {side_text} {price}@{quantity}"
+            
+            # 添加市场信息
+            if market_info:
+                msg = f"[{market_info}] {msg}"
+            
+            notifier.send(msg)
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ⚠️ 发送钉钉通知失败: {e}")
     
@@ -136,7 +145,8 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
     print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单成交 {order_id}: 买价={buy_price}, 数量={aligned_qty}")
     
     # 发送钉钉通知
-    send_order_notification(bot_data.get('username'), 'BUY', config['symbol'], buy_price, aligned_qty, order_id)
+    market_info = exchange.get_notification_info() if hasattr(exchange, 'get_notification_info') else None
+    send_order_notification(bot_data.get('username'), 'BUY', config['symbol'], buy_price, aligned_qty, order_id, market_info=market_info)
     
     # 加锁保护 pending_buys 的并发修改
     with _pending_buys_lock:
@@ -767,7 +777,8 @@ def trading_loop(username, bot_key):
                             # 发送钉钉通知
                             sell_price = event.get('price', 0)
                             sell_qty = event.get('executedQty') or event.get('quantity', 0)
-                            send_order_notification(bot_data.get('username'), 'SELL', config['symbol'], sell_price, sell_qty, order_id)
+                            market_info = exchange.get_notification_info() if hasattr(exchange, 'get_notification_info') else None
+                            send_order_notification(bot_data.get('username'), 'SELL', config['symbol'], sell_price, sell_qty, order_id, market_info=market_info)
                             
                             # 更新数据库订单状态
                             try:

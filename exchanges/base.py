@@ -245,3 +245,14 @@ class BaseExchange(ABC):
             new_avg = (avg_diff + price_diff_percent) / 2
         
         return [new_min, new_avg, new_max]
+    
+    def get_notification_info(self) -> str:
+        """获取通知消息的附加信息
+        
+        默认实现返回类名,子类可以重写此方法提供自定义信息
+        例如: UpDown15m 可以返回当前市场的 slug
+        
+        Returns:
+            str: 附加信息字符串
+        """
+        return self.__class__.__name__
