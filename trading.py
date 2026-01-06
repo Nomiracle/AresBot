@@ -9,6 +9,7 @@ from database import get_user_id, insert_order, update_order_status
 from notification import DingTalkNotification
 import math
 import traceback
+from crash_logger import log_crash
 
 user_bots = {}
 
@@ -437,6 +438,7 @@ def reprice_buy_orders(open_buy_orders, aligned_quantity, bot_data,
             continue
         
         try:
+            print(f"[{datetime.now().isoformat()}] {log_prefix} 🔧 准备改价买单[{grid_index}]: {order_id}, 目标价={target_price:.6f}")
             resp = exchange.cancel_replace_order(
                 side='BUY',
                 order_type='LIMIT',
@@ -446,6 +448,7 @@ def reprice_buy_orders(open_buy_orders, aligned_quantity, bot_data,
                 timeInForce='GTC',
                 current_price=current_price
             )
+            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 改价请求已完成: {order_id}")
             
             # 提取新订单ID
             new_order_id = None
@@ -483,7 +486,9 @@ def reprice_buy_orders(open_buy_orders, aligned_quantity, bot_data,
             bot_data['last_error_time'] = None
             bot_data['last_warning'] = None
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 改价失败 {order_id}: {e}")
+            error_msg = f"[{datetime.now().isoformat()}] {log_prefix} ❌ 改价失败 {order_id}: {e}\n"
+            error_msg += ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            print(error_msg)
             
             # 检查缓存中的待处理买单是否还存在
             # 如果改价失败,可能是订单已经成交或被取消,需要从缓存中移除
@@ -660,6 +665,27 @@ def trading_loop(username, bot_key):
     symbol = bot_data.get('config', {}).get('symbol', bot_key)
     log_prefix = f"[{username}-{exchange_name}-{symbol}]"
     print(f"[{datetime.now().isoformat()}] {log_prefix} ▶️ 交易循环已启动")
+    
+    # 顶层异常捕获 - 确保任何未预期的崩溃都能被记录
+    try:
+        _trading_loop_inner(username, bot_key, bot_data, log_prefix)
+    except Exception as fatal_error:
+        # 记录到崩溃日志文件(即使标准输出失败也能记录)
+        log_crash(fatal_error, context=log_prefix)
+        
+        # 打印到标准输出
+        error_msg = f"[{datetime.now().isoformat()}] {log_prefix} 💥 交易循环致命错误:\n"
+        error_msg += ''.join(traceback.format_exception(type(fatal_error), fatal_error, fatal_error.__traceback__))
+        print(error_msg)
+        
+        # 更新机器人状态
+        bot_data['last_error'] = f"致命错误: {type(fatal_error).__name__}: {str(fatal_error)}"
+        bot_data['last_error_time'] = datetime.now().isoformat()
+        bot_data['running'] = False
+
+
+def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
+    """交易主循环内部实现"""
 
     # 初始化
     tick_size = price_decimals = step_size = qty_decimals = None
@@ -754,6 +780,9 @@ def trading_loop(username, bot_key):
 
                         event_type = event.get('event_type')
                         print(f"[{datetime.now().isoformat()}] {log_prefix} 📥 收到订单事件: {event}")
+                        
+                        # 在处理每个事件前记录,方便定位崩溃点
+                        print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 开始处理事件类型: {event_type}")
                         
                         # 重连事件
                         if event_type == 'reconnected':
