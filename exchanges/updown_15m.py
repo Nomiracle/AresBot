@@ -9,6 +9,7 @@ from .polymarket_adapter import NativePolymarketSpot
 import pytz
 import time
 import threading
+import random
 from typing import Dict, Callable
 
 
@@ -316,8 +317,11 @@ class UpDown15m(NativePolymarketSpot):
             self._refresh_market_and_cancel_orders()
         else:
             # 设置定时器,在结束前阈值时间触发
-            delay = seconds_left - self.market_close_threshold
-            print(f"{self._get_log_prefix()} ⏲️ 设置定时器: {delay} 秒后触发市场刷新")
+            # 添加随机偏移(0-10秒),避免多个市场同时更新
+            base_delay = seconds_left - self.market_close_threshold
+            random_offset = random.randint(0, 10)
+            delay = max(0, base_delay - random_offset)
+            print(f"{self._get_log_prefix()} ⏲️ 设置定时器: {delay} 秒后触发市场刷新 (基础延迟={base_delay}秒, 随机偏移=-{random_offset}秒)")
             
             with self._timer_lock:
                 # 取消旧定时器
