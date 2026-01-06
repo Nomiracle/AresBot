@@ -915,14 +915,29 @@ def trading_loop(username, bot_key):
                 if not pending_buys_recovered:
                     print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 启动恢复检查: open_buy_orders={len(open_buy_orders)}, open_sell_orders={len(open_sell_orders)}, pending_buys={len(bot_data.get('pending_buys', []))}, pending_sells={len(bot_data.get('pending_sells', []))}")
                     if not bot_data.get('pending_buys', []) and open_buy_orders:
+                        buy_offset_percent = config.get('buy_offset_percent', 0.5)
+                        order_grid = config.get('order_grid', 1)
+                        
                         for order in open_buy_orders:
+                            order_price = float(order['price'])
+                            
+                            # 根据订单价格计算 grid_index
+                            # grid_index = 1 对应 buy_offset_percent
+                            # grid_index = 2 对应 buy_offset_percent * 2，以此类推
+                            grid_index = 1
+                            if current_price and current_price > 0:
+                                price_diff_percent = abs((current_price - order_price) / current_price * 100)
+                                grid_index = max(1, min(order_grid, round(price_diff_percent / buy_offset_percent)))
+                            
                             bot_data.setdefault('pending_buys', []).append({
                                 'order_id': str(order['orderId']),
-                                'price': float(order['price']),
+                                'price': order_price,
                                 'quantity': float(order['origQty']),
                                 'symbol': config['symbol'],
-                                'user_id': user_id
+                                'user_id': user_id,
+                                'grid_index': grid_index
                             })
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复买单 {order['orderId']}，price={order_price}，grid_index={grid_index}")
                         print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复 {len(open_buy_orders)} 笔买单")
                     
                     if not bot_data.get('pending_sells', []) and open_sell_orders:
@@ -1009,6 +1024,49 @@ def trading_loop(username, bot_key):
                 print(f"  pending_buys({len(pending_buys)}笔): {buy_orders}")
                 print(f"  pending_sells({len(pending_sells)}笔): {sell_orders}")
                 print(f"  total={total_pending_qty:.6g}, target={target_qty:.6g}")
+            
+            # 下单前检查和修复 grid_index（在 query_success 时执行）
+            if query_success and not is_placing_order:
+                pending_buys = bot_data.get('pending_buys', [])
+                
+                # 1. 取消超出 order_grid 的订单
+                orders_to_cancel = [pb for pb in pending_buys if pb.get('grid_index', 1) > order_grid]
+                if orders_to_cancel:
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 发现 {len(orders_to_cancel)} 笔超出网格范围的订单，准备取消")
+                    for pb in orders_to_cancel:
+                        try:
+                            exchange.cancel_order(pb['order_id'])
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 取消超范围订单: {pb['order_id']}, grid_index={pb.get('grid_index')}")
+                            bot_data['pending_buys'] = [
+                                p for p in bot_data.get('pending_buys', []) 
+                                if p['order_id'] != pb['order_id']
+                            ]
+                        except Exception as e:
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 取消订单失败 {pb['order_id']}: {e}")
+                
+                # 2. 检查 grid_index 重复
+                pending_buys = bot_data.get('pending_buys', [])
+                grid_index_map = {}
+                for pb in pending_buys:
+                    grid_idx = pb.get('grid_index', 1)
+                    if grid_idx not in grid_index_map:
+                        grid_index_map[grid_idx] = []
+                    grid_index_map[grid_idx].append(pb)
+                
+                # 找出重复的 grid_index
+                duplicates = {idx: orders for idx, orders in grid_index_map.items() if len(orders) > 1}
+                if duplicates:
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 发现 grid_index 重复: {list(duplicates.keys())}")
+                    
+                    # 直接重新分配 grid_index，后续改价会自动调整到正确价格
+                    pending_buys = bot_data.get('pending_buys', [])
+                    for idx, pb in enumerate(pending_buys, start=1):
+                        old_grid_index = pb.get('grid_index', 1)
+                        pb['grid_index'] = idx
+                        if old_grid_index != idx:
+                            print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 订单 {pb['order_id']} grid_index: {old_grid_index} → {idx}")
+                    
+                    bot_data['pending_buys'] = pending_buys
             
             if query_success and not is_placing_order and need_more_orders:
                 is_buy_enabled = (config.get('simulate_trading', 1) != 1)
