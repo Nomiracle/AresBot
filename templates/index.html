@@ -2049,8 +2049,9 @@
                 const threadBadge = bot.thread_alive
                   ? '<span class="bot-status-badge badge-success">✓ 线程</span>'
                   : '<span class="bot-status-badge badge-danger">✗ 线程</span>';
-                const pendingBadge = bot.pending_buys_count > 0
-                  ? `<span class="bot-status-badge badge-warning">⏳ ${bot.pending_buys_count} 待成交</span>`
+                const totalPending = (bot.pending_buys_count || 0) + (bot.pending_sells_count || 0);
+                const pendingBadge = totalPending > 0
+                  ? `<span class="bot-status-badge badge-warning">⏳ ${totalPending} 待成交</span>`
                   : '';
                 
                 // 错误信息显示（紧凑版）
