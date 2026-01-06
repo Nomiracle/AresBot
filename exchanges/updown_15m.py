@@ -486,10 +486,14 @@ class UpDown15m(NativePolymarketSpot):
                 self._is_switching_market = False
                 return True
             else:
-                print(f"[{datetime.now().isoformat()}] ❌ {self._get_log_prefix()}  刷新失败")
-                # 刷新失败也要重置标志，否则会永久禁止下单
-                self._is_switching_market = False
-                return False
+                # new_token_id 为 None，说明交易所可能在维护，继续尝试下一个市场
+                print(f"[{datetime.now().isoformat()}] ⚠️ {self._get_log_prefix()}  当前市场刷新失败，可能交易所维护中，继续尝试下一个市场...")
+                # 不重置 _is_switching_market 标志，继续尝试
+                # 递归调用，尝试下一个市场（market_end_time 已在 _get_next_market_token 中更新）
+                retry_delay = random.randint(10, 20)  # 随机等待10-20秒
+                print(f"[{datetime.now().isoformat()}] ⏳ {self._get_log_prefix()}  等待 {retry_delay} 秒后重试...")
+                time.sleep(retry_delay)
+                return self.refresh_market()
                 
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ {self._get_log_prefix()}  刷新市场失败: {e}")
