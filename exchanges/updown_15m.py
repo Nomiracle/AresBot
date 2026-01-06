@@ -254,19 +254,47 @@ class UpDown15m(NativePolymarketSpot):
         
         return token_id
     
-    def _get_next_market_token(self) -> str:
+    def _get_next_market_token(self, initial_delay: int = 5) -> str:
         """获取下一个 15 分钟市场的 token_id
+        
+        如果市场不存在,会在当前市场结束时间之前持续尝试
+        重试间隔递增: 5秒, 10秒, 15秒, 20秒...
+        
+        Args:
+            initial_delay: 初始重试间隔秒数 (默认5秒)
         
         Returns:
             str: Token ID,如果获取失败返回 None
         """
         next_timestamp = self._calculate_next_timestamp()
-        token_id = self._get_market_token_by_timestamp(next_timestamp, update_state=True)
+        attempt = 0
+        current_delay = initial_delay
         
-        if not token_id:
-            print(f"[{datetime.now().isoformat()}] ❌ {self._get_log_prefix()}  无法获取下一个市场")
+        while True:
+            attempt += 1
+            token_id = self._get_market_token_by_timestamp(next_timestamp, update_state=True)
+            
+            if token_id:
+                if attempt > 1:
+                    print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  第{attempt}次尝试成功获取市场")
+                return token_id
+            
+            # 检查是否还有时间继续重试
+            if self.market_end_time:
+                seconds_left = self.get_seconds_until_market_close()
+                if seconds_left <= current_delay:
+                    print(f"[{datetime.now().isoformat()}] ⏰ {self._get_log_prefix()}  距离市场结束仅剩{seconds_left}秒,停止重试")
+                    break
+            
+            # 等待后重试
+            print(f"[{datetime.now().isoformat()}] ⏳ {self._get_log_prefix()}  市场尚未创建,{current_delay}秒后重试 (第{attempt}次尝试)")
+            time.sleep(current_delay)
+            
+            # 递增重试间隔
+            current_delay += initial_delay
         
-        return token_id
+        print(f"[{datetime.now().isoformat()}] ❌ {self._get_log_prefix()}  尝试{attempt}次后仍无法获取下一个市场")
+        return None
     
     def _check_and_schedule_refresh(self) -> None:
         """检查市场状态并设置定时器
