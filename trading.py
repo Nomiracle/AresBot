@@ -1057,9 +1057,12 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
             # 下单前检查和修复 grid_index（在 query_success 时执行）
             if query_success and not is_placing_order:
                 pending_buys = bot_data.get('pending_buys', [])
+                pending_sells = bot_data.get('pending_sells', [])
                 
                 # 1. 取消超出 order_grid 的订单
-                orders_to_cancel = [pb for pb in pending_buys if pb.get('grid_index', 1) > order_grid]
+                # 买单的最大 grid_index = order_grid - 卖单数量
+                max_buy_grid_index = order_grid - len(pending_sells)
+                orders_to_cancel = [pb for pb in pending_buys if pb.get('grid_index', 1) > max_buy_grid_index]
                 if orders_to_cancel:
                     print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 发现 {len(orders_to_cancel)} 笔超出网格范围的订单，准备取消")
                     for pb in orders_to_cancel:
