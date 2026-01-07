@@ -571,7 +571,7 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
         price_diff_percent = abs(target_sell_price - current_sell_price) / current_sell_price * 100
         # 首先检查是否小于 0.01%
         if price_diff_percent < 0.01:
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 卖单价格差异 {price_diff_percent:.4f}% < 0.01%，跳过改价")
+            print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 卖单 {sell_order_id} 价格差异 {price_diff_percent:.4f}% < 0.01%，跳过改价")
             continue
         
         try:
@@ -1102,15 +1102,22 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                 if is_buy_enabled:
                     offset_percent = config.get('offset_percent', -0.1)
                     
+                    # 计算需要补挂的买单数量（按缺少的总数量计算，而不是补齐所有网格）
+                    missing_qty = target_qty - total_pending_qty
+                    orders_to_add = math.ceil(missing_qty / aligned_quantity) if aligned_quantity > 0 else 0
+                    
                     # 获取当前最大的 grid_index
                     max_grid_index = 0
                     for pb in bot_data.get('pending_buys', []):
                         max_grid_index = max(max_grid_index, pb.get('grid_index', 0))
                     
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 补单计算: 缺少数量={missing_qty:.6g}, 需补单={orders_to_add}笔, max_grid_index={max_grid_index}")
+                    
                     bot_data['is_placing_order'] = True
                     try:
-                        # 补挂缺少的买单（从 max_grid_index + 1 开始）
-                        for grid_index in range(max_grid_index + 1, order_grid + 1):
+                        # 只补挂缺少数量对应的买单
+                        for i in range(orders_to_add):
+                            grid_index = max_grid_index + 1 + i
                             # 计算每格买单目标价: 现价 * (1 + grid_index * offset_percent)
                             grid_offset = grid_index * offset_percent
                             target_price = exchange.calculate_buy_target_price(
