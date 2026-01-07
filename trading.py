@@ -1054,17 +1054,16 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                 print(f"  pending_sells({len(pending_sells)}笔): {sell_orders}")
                 print(f"  total={total_pending_qty:.6g}, target={target_qty:.6g}")
             
-            # 下单前检查和修复 grid_index（在 query_success 时执行）
-            if query_success and not is_placing_order:
+            # 取消超出 order_grid 的订单（在 query_success 时立即执行）
+            if query_success:
                 pending_buys = bot_data.get('pending_buys', [])
                 pending_sells = bot_data.get('pending_sells', [])
                 
-                # 1. 取消超出 order_grid 的订单
                 # 买单的最大 grid_index = order_grid - 卖单数量
                 max_buy_grid_index = order_grid - len(pending_sells)
                 orders_to_cancel = [pb for pb in pending_buys if pb.get('grid_index', 1) > max_buy_grid_index]
                 if orders_to_cancel:
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 发现 {len(orders_to_cancel)} 笔超出网格范围的订单，准备取消")
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 发现 {len(orders_to_cancel)} 笔超出网格范围的订单，准备取消 (max_grid_index={max_buy_grid_index})")
                     for pb in orders_to_cancel:
                         try:
                             exchange.cancel_order(pb['order_id'])
@@ -1075,8 +1074,10 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                             ]
                         except Exception as e:
                             print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 取消订单失败 {pb['order_id']}: {e}")
-                
-                # 2. 检查 grid_index 重复
+            
+            # 下单前检查和修复 grid_index（在 query_success 且不在下单中时执行）
+            if query_success and not is_placing_order:
+                # 检查 grid_index 重复
                 pending_buys = bot_data.get('pending_buys', [])
                 grid_index_map = {}
                 for pb in pending_buys:
