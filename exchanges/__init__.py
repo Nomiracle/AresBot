@@ -1,8 +1,5 @@
 # Exchange adapters package
 from .base import BaseExchange
-from .binance_adapterv2 import NativeBinanceSpot
-from .binance_futures_adapter import NativeBinanceFutures
-from .backpack_adapter import NativeBackpackSpot
 from .polymarket_adapter import NativePolymarketSpot
 from .updown_15m import UpDown15m, BtcUpDown15m
 from .ccxt_binance_adapter import CcxtBinanceSpot
