@@ -873,7 +873,8 @@
       let currentTab = "trading";
       let desiredSymbolFromConfig = null;
       let exchangesData = []; // 存储从服务端获取的交易所列表
-      let exchangeDisplayNames = {}; // 交易所显示名称映射
+      let exchangeDisplayNames = {}; // 交易所显示名称映射 (value -> display_name)
+      let exchangeIdMap = {}; // 交易所 ID 映射 (value -> id)
 
       // Toast通知函数
       function showToast(message, type = 'info') {
@@ -948,10 +949,12 @@
             if (data.success && data.exchanges) {
               exchangesData = data.exchanges;
               
-              // 构建显示名称映射
+              // 构建显示名称映射和 ID 映射
               exchangeDisplayNames = {};
+              exchangeIdMap = {};
               data.exchanges.forEach(ex => {
                 exchangeDisplayNames[ex.value] = ex.display_name;
+                exchangeIdMap[ex.value] = ex.id;  // 存储 id 用于判断交易所类型
               });
               
               // 填充交易配置页面的交易所下拉框
@@ -1058,6 +1061,7 @@
       // 交易所切换时更新 UI
       function updateExchangeUI() {
         const exchange = document.getElementById("exchange").value;
+        const exchangeId = exchangeIdMap[exchange] || exchange;  // 获取交易所 ID
         const apiKeyInput = document.getElementById("apiKey");
         const apiSecretInput = document.getElementById("apiSecret");
         const marketInfoBox = document.getElementById("marketInfoBox");
@@ -1071,7 +1075,7 @@
         apiSecretInput.placeholder = "输入 Binance API Secret";
         
         // Polymarket 交易所显示搜索组件和价格阈值配置
-        if (exchange === 'polymarket') {
+        if (exchangeId === 'native_polymarket_spot') {
           symbolGroup.style.display = 'block';
           marketInfoBox.style.display = 'none';
           polymarketSearchContainer.style.display = 'block';
@@ -1079,7 +1083,7 @@
           marketCloseThresholdGroup.style.display = 'none';
         }
         // UpDown 交易所显示两个阈值配置
-        else if (exchange === 'btc_updown_15m' || exchange === 'updown_15m' || exchange === 'updown_4h') {
+        else if (exchangeId === 'native_updown_15m' || exchangeId === 'native_updown_4h') {
           symbolGroup.style.display = 'block';
           marketInfoBox.style.display = 'none';
           polymarketSearchContainer.style.display = 'none';
@@ -1463,10 +1467,11 @@
         };
         
         // Polymarket/UpDown15m 阈值参数
-        if (exchange === 'polymarket' || exchange === 'btc_updown_15m' || exchange === 'updown_15m' || exchange === 'updown_4h') {
+        const exchangeId = exchangeIdMap[exchange] || exchange;
+        if (exchangeId === 'native_polymarket_spot' || exchangeId === 'native_updown_15m' || exchangeId === 'native_updown_4h') {
           config.min_price_threshold = parseFloat(document.getElementById("minPriceThreshold").value);
         }
-        if (exchange === 'btc_updown_15m' || exchange === 'updown_15m' || exchange === 'updown_4h') {
+        if (exchangeId === 'native_updown_15m' || exchangeId === 'native_updown_4h') {
           config.market_close_threshold = parseInt(document.getElementById("marketCloseThreshold").value);
         }
 
@@ -1527,10 +1532,11 @@
         };
         
         // Polymarket/UpDown15m 阈值参数
-        if (exchange === 'polymarket' || exchange === 'btc_updown_15m' || exchange === 'updown_15m' || exchange === 'updown_4h') {
+        const exchangeId = exchangeIdMap[exchange] || exchange;
+        if (exchangeId === 'native_polymarket_spot' || exchangeId === 'native_updown_15m' || exchangeId === 'native_updown_4h') {
           config.min_price_threshold = parseFloat(document.getElementById("minPriceThreshold").value);
         }
-        if (exchange === 'btc_updown_15m' || exchange === 'updown_15m' || exchange === 'updown_4h') {
+        if (exchangeId === 'native_updown_15m' || exchangeId === 'native_updown_4h') {
           config.market_close_threshold = parseInt(document.getElementById("marketCloseThreshold").value);
         }
 
@@ -1752,26 +1758,19 @@
         const select = document.getElementById("symbol");
         const currentExchange = document.getElementById("exchange").value;
         
-        // 交易所名称映射 - 将不同的交易所名称映射到基础名称
-        const exchangeBaseMap = {
+        // 根据交易所 ID 映射到基础交易所名称
+        const exchangeId = exchangeIdMap[currentExchange] || currentExchange;
+        const idToBaseMap = {
           'ccxt_binance_spot': 'binance',
-          'ccxt_binance': 'binance',
           'ccxt_binance_futures': 'binance',
           'ccxt_binance_futures_short': 'binance',
-          'ccxt_futures': 'binance',
-          'ccxt_futures_short': 'binance',
           'ccxt_backpack_spot': 'backpack',
-          'backpack': 'backpack',
-          'bpx': 'backpack',
-          'polymarket': 'polymarket',
           'native_polymarket_spot': 'polymarket',
-          'btc_updown_15m': 'polymarket',
-          'native_btc_updown_15m': 'polymarket',
-          'updown_15m': 'polymarket',
-          'updown_4h': 'polymarket'
+          'native_updown_15m': 'polymarket',
+          'native_updown_4h': 'polymarket'
         };
         
-        const baseExchange = exchangeBaseMap[currentExchange] || currentExchange;
+        const baseExchange = idToBaseMap[exchangeId] || currentExchange;
         
         // 过滤出支持当前交易所的交易对
         const filteredPairs = pairs.filter(pair => {

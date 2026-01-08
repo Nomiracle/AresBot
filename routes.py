@@ -963,44 +963,52 @@ def register_routes(app):
 
     @app.route('/api/exchanges')
     def api_exchanges():
-        """获取支持的交易所列表"""
-        exchanges = ExchangeFactory.get_supported_exchanges()
+        """获取支持的交易所列表
         
-        # 交易所显示名称映射
-        exchange_display_names = {
-            'ccxt_binance_spot': 'Binance 现货 (CCXT)',
-            'ccxt_binance_futures': 'Binance 合约 (CCXT)',
-            'ccxt_binance_futures_short': 'Binance 合约做空 (CCXT)',
-            'ccxt_backpack_spot': 'Backpack 现货 (CCXT)',
-            'ccxt_binance': 'Binance 现货 (CCXT)',
-            'ccxt_futures': 'Binance 合约 (CCXT)',
-            'backpack': 'Backpack 现货 (CCXT)',
-            'bpx': 'Backpack 现货 (CCXT)',
-            'polymarket': 'Polymarket (预测市场)',
-            'native_polymarket_spot': 'Polymarket (预测市场)',
-            'btc_updown_15m': 'Polymarket - UPDOWN 15分钟 (自动)',
-            'native_btc_updown_15m': 'Polymarket - UPDOWN 15分钟 (自动)',
-            'updown_15m': 'Polymarket - UPDOWN 15分钟 (自动)',
-            'native_updown_15m': 'Polymarket - UPDOWN 15分钟 (自动)',
-            'updown_4h': 'Polymarket - UPDOWN 4小时 (自动)',
-            'native_updown_4h': 'Polymarket - UPDOWN 4小时 (自动)',
-        }
+        从各交易所适配器的 get_exchange_info() 方法获取 id 和 name
+        """
+        # 获取工厂中注册的交易所类（去重）
+        exchange_classes = {}
+        for name, cls in ExchangeFactory.SUPPORTED_EXCHANGES.items():
+            # 使用类本身作为 key 去重（同一个类可能有多个别名）
+            if cls not in exchange_classes.values():
+                exchange_classes[name] = cls
         
-        # 去重并构建返回数据
-        unique_exchanges = {}
-        for exchange in exchanges:
-            # 统一使用下划线格式
-            normalized = exchange.replace('-', '_')
-            if normalized not in unique_exchanges:
-                unique_exchanges[normalized] = {
-                    'value': normalized,
-                    'display_name': exchange_display_names.get(exchange, exchange.upper())
-                }
+        # 从每个交易所类获取 exchange_info
+        result = []
+        seen_ids = set()
+        
+        for factory_name, cls in exchange_classes.items():
+            try:
+                # 尝试获取类的 get_exchange_info 静态信息
+                # 由于 get_exchange_info 是实例方法，我们需要创建一个临时实例或使用硬编码映射
+                # 这里使用硬编码映射，因为某些适配器需要实例化参数
+                exchange_info = _get_exchange_info_by_class(cls, factory_name)
+                
+                if exchange_info and exchange_info['id'] not in seen_ids:
+                    seen_ids.add(exchange_info['id'])
+                    result.append({
+                        'value': factory_name,  # 工厂使用的名称
+                        'id': exchange_info['id'],
+                        'display_name': exchange_info['name']
+                    })
+            except Exception as e:
+                print(f"获取交易所信息失败 {factory_name}: {e}")
         
         return jsonify({
             'success': True,
-            'exchanges': list(unique_exchanges.values())
+            'exchanges': result
         })
+    
+    def _get_exchange_info_by_class(cls, factory_name: str) -> dict:
+        """根据交易所类获取 exchange_info
+        
+        直接调用类的 get_exchange_info 类方法
+        """
+        try:
+            return cls.get_exchange_info()
+        except Exception:
+            return {'id': factory_name, 'name': factory_name}
     
     @app.route('/api/polymarket/search', methods=['GET'])
     def api_polymarket_search():

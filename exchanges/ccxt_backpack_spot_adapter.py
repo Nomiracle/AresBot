@@ -48,10 +48,11 @@ class CcxtBackpackSpot(CcxtBinanceSpot):
         api_key_short = self.api_key[:6] if self.api_key else "NOKEY"
         return f"[{datetime.now().isoformat()}] [ccxt-backpack-{api_key_short}-{self.symbol}]"
 
-    def get_exchange_info(self) -> Dict:
-        """获取交易所信息"""
+    @classmethod
+    def get_exchange_info(cls) -> Dict:
+        """获取交易所信息（类方法）"""
         return {
-            'id': 'backpack-spot',
+            'id': 'ccxt_backpack_spot',
             'name': 'Backpack-现货',
             'description': 'Backpack Exchange Spot Trading (CCXT)'
         }

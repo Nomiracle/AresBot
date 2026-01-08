@@ -106,14 +106,13 @@ class UpDown15m(NativePolymarketSpot):
         outcome = getattr(self, 'outcome', 'N/A')
         return f"[{datetime.now().isoformat()}] [{api_key_short}-{market_slug}-{outcome}]"
 
-    def get_exchange_info(self) -> Dict:
-        """获取交易所信息"""
-        market = self.market_prefix.upper()
-        outcome = self.outcome
+    @classmethod
+    def get_exchange_info(cls) -> Dict:
+        """获取交易所信息（类方法）"""
         return {
-            'id': f'polymarket-updown15m-{self.market_prefix}-{outcome.lower()}',
-            'name': f'Polymarket-涨跌15分钟-{market}-{outcome}',
-            'description': f'Polymarket Up/Down 15m - {market} {outcome} (Auto)'
+            'id': 'native_updown_15m',
+            'name': 'Polymarket-涨跌15分钟',
+            'description': 'Polymarket Up/Down 15m (Auto)'
         }
     
     def _calculate_next_timestamp(self) -> int:

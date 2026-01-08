@@ -33,9 +33,10 @@ class BaseExchange(ABC):
         """获取交易对当前价格（内部使用）"""
         pass
     
+    @classmethod
     @abstractmethod
-    def get_exchange_info(self) -> Dict:
-        """获取交易所信息
+    def get_exchange_info(cls) -> Dict:
+        """获取交易所信息（类方法）
         
         Returns:
             {

@@ -142,10 +142,11 @@ class NativePolymarketSpot(BaseExchange):
             print(f"{self._get_log_prefix()} ❌ ping 失败: {e}")
             return False
 
-    def get_exchange_info(self) -> Dict:
-        """获取交易所信息"""
+    @classmethod
+    def get_exchange_info(cls) -> Dict:
+        """获取交易所信息（类方法）"""
         return {
-            'id': 'polymarket-prediction',
+            'id': 'native_polymarket_spot',
             'name': 'Polymarket-预测市场',
             'description': 'Polymarket Prediction Market (Native SDK)'
         }

@@ -21,14 +21,13 @@ class UpDown4h(UpDown15m):
     MARKET_PERIOD = '4h'
     MARKET_PERIOD_SECONDS = 4 * 60 * 60  # 市场周期时长（秒）
 
-    def get_exchange_info(self) -> Dict:
-        """获取交易所信息"""
-        market = self.market_prefix.upper()
-        outcome = self.outcome
+    @classmethod
+    def get_exchange_info(cls) -> Dict:
+        """获取交易所信息（类方法）"""
         return {
-            'id': f'polymarket-updown4h-{self.market_prefix}-{outcome.lower()}',
-            'name': f'Polymarket-涨跌4小时-{market}-{outcome}',
-            'description': f'Polymarket Up/Down 4h - {market} {outcome} (Auto)'
+            'id': 'native_updown_4h',
+            'name': 'Polymarket-涨跌4小时',
+            'description': 'Polymarket Up/Down 4h (Auto)'
         }
     
     def _calculate_next_timestamp(self) -> int:

@@ -27,10 +27,11 @@ class CcxtBinanceFuturesShort(CcxtBinanceFutures):
         api_key_short = self.api_key[:6] if self.api_key else "NOKEY"
         return f"[{datetime.now().isoformat()}] [SHORT-{api_key_short}-{self.symbol}]"
     
-    def get_exchange_info(self) -> Dict:
-        """获取交易所信息"""
+    @classmethod
+    def get_exchange_info(cls) -> Dict:
+        """获取交易所信息（类方法）"""
         return {
-            'id': 'binance-futures-short',
+            'id': 'ccxt_binance_futures_short',
             'name': '币安-合约-做空',
             'description': 'Binance Futures Short Trading (CCXT)'
         }
