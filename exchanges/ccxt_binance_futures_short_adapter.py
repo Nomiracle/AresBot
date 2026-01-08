@@ -27,6 +27,14 @@ class CcxtBinanceFuturesShort(CcxtBinanceFutures):
         api_key_short = self.api_key[:6] if self.api_key else "NOKEY"
         return f"[{datetime.now().isoformat()}] [SHORT-{api_key_short}-{self.symbol}]"
     
+    def get_exchange_info(self) -> Dict:
+        """获取交易所信息"""
+        return {
+            'id': 'binance-futures-short',
+            'name': '币安-合约-做空',
+            'description': 'Binance Futures Short Trading (CCXT)'
+        }
+    
     # ====================== 核心：反转买卖方向 ======================
     
     def order_limit_buy(self, quantity: float, price: str, **kwargs) -> Dict:

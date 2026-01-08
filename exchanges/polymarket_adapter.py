@@ -141,6 +141,14 @@ class NativePolymarketSpot(BaseExchange):
         except Exception as e:
             print(f"{self._get_log_prefix()} ❌ ping 失败: {e}")
             return False
+
+    def get_exchange_info(self) -> Dict:
+        """获取交易所信息"""
+        return {
+            'id': 'polymarket-prediction',
+            'name': 'Polymarket-预测市场',
+            'description': 'Polymarket Prediction Market (Native SDK)'
+        }
     
     def get_symbol_ticker(self) -> Dict:
         """获取交易对当前价格"""

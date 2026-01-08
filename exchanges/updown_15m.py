@@ -106,6 +106,15 @@ class UpDown15m(NativePolymarketSpot):
         outcome = getattr(self, 'outcome', 'N/A')
         return f"[{datetime.now().isoformat()}] [{api_key_short}-{market_slug}-{outcome}]"
 
+    def get_exchange_info(self) -> Dict:
+        """获取交易所信息"""
+        market = self.market_prefix.upper()
+        outcome = self.outcome
+        return {
+            'id': f'polymarket-updown15m-{self.market_prefix}-{outcome.lower()}',
+            'name': f'Polymarket-涨跌15分钟-{market}-{outcome}',
+            'description': f'Polymarket Up/Down 15m - {market} {outcome} (Auto)'
+        }
     
     def _calculate_next_timestamp(self) -> int:
         """计算下一个 15 分钟时间戳 (使用 ET 时区)
@@ -855,6 +864,16 @@ class UpDown4h(UpDown15m):
     
     MARKET_PERIOD = '4h'
     MARKET_PERIOD_SECONDS = 4 * 60 * 60  # 市场周期时长（秒）
+
+    def get_exchange_info(self) -> Dict:
+        """获取交易所信息"""
+        market = self.market_prefix.upper()
+        outcome = self.outcome
+        return {
+            'id': f'polymarket-updown4h-{self.market_prefix}-{outcome.lower()}',
+            'name': f'Polymarket-涨跌4小时-{market}-{outcome}',
+            'description': f'Polymarket Up/Down 4h - {market} {outcome} (Auto)'
+        }
     
     def _calculate_next_timestamp(self) -> int:
         """计算下一个 4 小时时间戳 (使用 ET 时区)

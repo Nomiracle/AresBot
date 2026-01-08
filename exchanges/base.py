@@ -33,6 +33,19 @@ class BaseExchange(ABC):
         """获取交易对当前价格（内部使用）"""
         pass
     
+    @abstractmethod
+    def get_exchange_info(self) -> Dict:
+        """获取交易所信息
+        
+        Returns:
+            {
+                'id': str,          # 交易所ID，格式: 交易所-市场-方向（如 'binance-spot', 'binance-futures-short'）
+                'name': str,        # 中文名称，包含交易所、市场、方向信息（如 '币安-现货', '币安-合约-做空'）
+                'description': str  # 交易所描述信息
+            }
+        """
+        pass
+    
     def calculate_estimated_buy_price(self, sell_price: float, sell_offset_percent: float, tick_size: float, price_decimals: int, order: Optional[Dict] = None) -> float:
         """根据卖单价格反推估算的买入价格（用于恢复程序状态）
         

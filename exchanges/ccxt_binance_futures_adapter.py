@@ -125,6 +125,14 @@ class CcxtBinanceFutures(BaseExchange):
             print(f"{self._get_log_prefix()} Error: {e}")
             return False
 
+    def get_exchange_info(self) -> Dict:
+        """获取交易所信息"""
+        return {
+            'id': 'binance-futures',
+            'name': '币安-合约',
+            'description': 'Binance Futures Trading (CCXT)'
+        }
+
     def _get_symbol_info(self) -> Dict:
         """获取合约交易对信息（内部使用）"""
         if self._symbol_info_cache:

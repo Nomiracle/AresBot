@@ -145,6 +145,14 @@ class CcxtBinanceSpot(BaseExchange):
             traceback.print_exc()
             return False
 
+    def get_exchange_info(self) -> Dict:
+        """获取交易所信息"""
+        return {
+            'id': 'binance-spot',
+            'name': '币安-现货',
+            'description': 'Binance Spot Trading (CCXT)'
+        }
+
     def _get_symbol_info(self) -> Dict:
         """获取现货交易对信息（内部使用）"""
         if self._symbol_info_cache:
