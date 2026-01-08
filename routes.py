@@ -460,11 +460,12 @@ def register_routes(app):
         data = request.json
         symbol = data.get('symbol', '').strip().upper()
         display_name = data.get('display_name', '').strip()
+        exchanges = data.get('exchanges', '').strip()
         
         if not symbol or not display_name:
             return jsonify({'success': False, 'message': '交易对和显示名称不能为空'})
         
-        if add_trading_pair(username, symbol, display_name):
+        if add_trading_pair(username, symbol, display_name, exchanges):
             return jsonify({'success': True, 'message': '交易对添加成功'})
         else:
             return jsonify({'success': False, 'message': '交易对已存在或添加失败'})

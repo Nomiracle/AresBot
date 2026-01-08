@@ -793,33 +793,45 @@
       <div id="pairs-tab" class="tab-content">
         <h3>交易对管理</h3>
         <div style="margin-bottom: 20px">
-          <div style="display: flex; gap: 10px; margin-bottom: 15px">
-            <input
-              type="text"
-              id="newSymbol"
-              placeholder="交易对 (如 BTCUSDT)"
-              style="
-                flex: 1;
-                padding: 10px;
-                border: 2px solid #ddd;
-                border-radius: 6px;
-              "
-            />
-            <input
-              type="text"
-              id="newDisplayName"
-              placeholder="显示名称 (如 BTC/USDT)"
-              style="
-                flex: 1;
-                padding: 10px;
-                border: 2px solid #ddd;
-                border-radius: 6px;
-              "
-            />
-            <button class="btn btn-success" onclick="addTradingPair()">
-              ➕ 添加
-            </button>
+          <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; margin-bottom: 15px; align-items: end;">
+            <div>
+              <label style="display: block; margin-bottom: 5px; font-weight: 600;">交易对</label>
+              <input
+                type="text"
+                id="newSymbol"
+                placeholder="交易对 (如 BTCUSDT)"
+                style="
+                  width: 100%;
+                  padding: 10px;
+                  border: 2px solid #ddd;
+                  border-radius: 6px;
+                "
+              />
+            </div>
+            <div>
+              <label style="display: block; margin-bottom: 5px; font-weight: 600;">显示名称</label>
+              <input
+                type="text"
+                id="newDisplayName"
+                placeholder="显示名称 (如 BTC/USDT)"
+                style="
+                  width: 100%;
+                  padding: 10px;
+                  border: 2px solid #ddd;
+                  border-radius: 6px;
+                "
+              />
+            </div>
+            <div>
+              <label style="display: block; margin-bottom: 5px; font-weight: 600;">支持的交易所</label>
+              <div id="newPairExchanges" style="display: flex; flex-wrap: wrap; gap: 5px; min-height: 38px; padding: 5px; border: 2px solid #ddd; border-radius: 6px; background: #f9f9f9;">
+                <!-- 交易所复选框将在这里动态生成 -->
+              </div>
+            </div>
           </div>
+          <button class="btn btn-success" onclick="addTradingPair()" style="width: 100%;">
+            ➕ 添加交易对
+          </button>
         </div>
 
         <div id="pairsList" class="order-history">
@@ -1794,19 +1806,25 @@
           .getElementById("newSymbol")
           .value.trim()
           .toUpperCase();
-        const displayName = document
+        const display_name = document
           .getElementById("newDisplayName")
           .value.trim();
+        const exchanges = getSelectedExchanges();
 
-        if (!symbol || !displayName) {
+        if (!symbol || !display_name) {
           showToast("请输入交易对和显示名称", 'warning');
+          return;
+        }
+
+        if (!exchanges) {
+          showToast("请至少选择一个支持的交易所", 'warning');
           return;
         }
 
         fetch("/api/trading_pairs/add", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ symbol, display_name: displayName }),
+          body: JSON.stringify({ symbol, display_name, exchanges }),
         })
           .then((r) => r.json())
           .then((data) => {
@@ -2355,11 +2373,32 @@
           });
       }
 
+      // 生成交易所复选框
+      function generateExchangeCheckboxes() {
+        const container = document.getElementById('newPairExchanges');
+        if (!container || !exchangesData) return;
+        
+        container.innerHTML = exchangesData.map(ex => `
+          <label style="display: inline-flex; align-items: center; gap: 3px; font-size: 12px; cursor: pointer;">
+            <input type="checkbox" value="${ex.value}" checked style="margin: 0;">
+            <span>${ex.display_name}</span>
+          </label>
+        `).join('');
+      }
+      
+      // 获取选中的交易所
+      function getSelectedExchanges() {
+        const checkboxes = document.querySelectorAll('#newPairExchanges input[type="checkbox"]:checked');
+        return Array.from(checkboxes).map(cb => cb.value).join(',');
+      }
+      
       window.onload = function () {
         // 页面加载时即加载交易对列表，确保"交易配置"页的下拉框完整
         loadTradingPairs();
         // 初始化密钥选择器
         updateCredentialSelect();
+        // 生成交易所复选框（等待 exchangesData 加载）
+        setTimeout(() => generateExchangeCheckboxes(), 500);
         // 注意：配置加载已由 updateConfigSelect(true) 在第766行处理，此处不再重复加载
       };
     </script>

@@ -704,7 +704,7 @@ def get_user_trading_pairs(username):
     ]
 
 
-def add_trading_pair(username, symbol, display_name):
+def add_trading_pair(username, symbol, display_name, exchanges=None):
     """添加交易对"""
     user_id = get_user_id(username)
     if not user_id:
@@ -712,11 +712,11 @@ def add_trading_pair(username, symbol, display_name):
 
     with db_pool.get_cursor() as (conn, c):
         try:
-            c.execute("""INSERT INTO trading_pairs (user_id, symbol, display_name, created_at)
-                         VALUES (?, ?, ?, ?)""",
-                      (user_id, symbol.upper(), display_name, datetime.now().isoformat()))
+            c.execute("""INSERT INTO trading_pairs (user_id, symbol, display_name, exchanges, created_at)
+                         VALUES (?, ?, ?, ?, ?)""",
+                      (user_id, symbol.upper(), display_name, exchanges, datetime.now().isoformat()))
             pair_id = c.lastrowid
-            print(f"[{datetime.now().isoformat()}] ✅ 添加交易对: {symbol}")
+            print(f"[{datetime.now().isoformat()}] ✅ 添加交易对: {symbol} (支持交易所: {exchanges})")
             return pair_id
         except sqlite3.IntegrityError:
             return False
