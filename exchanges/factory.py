@@ -9,13 +9,14 @@ from .updown_15m import UpDown15m, BtcUpDown15m, UpDown4h
 from .ccxt_binance_futures_adapter import CcxtBinanceFutures
 from .ccxt_binance_spot_adapter import CcxtBinanceSpot
 from .ccxt_binance_futures_short_adapter import CcxtBinanceFuturesShort
+from .ccxt_backpack_spot_adapter import CcxtBackpackSpot
 
 class ExchangeFactory:
     """交易所工厂"""
     
     # 命名规则: 框架_交易所_市场
     # 框架: native(原生SDK) / ccxt
-    # 交易所: binance / polymarket / ...
+    # 交易所: binance / backpack / polymarket / ...
     # 市场: spot(现货) / futures(合约) / futures_short(合约做空)
     SUPPORTED_EXCHANGES = {
         # Native SDK 实现
@@ -27,6 +28,7 @@ class ExchangeFactory:
         'ccxt_binance_spot': CcxtBinanceSpot,
         'ccxt_binance_futures': CcxtBinanceFutures,
         'ccxt_binance_futures_short': CcxtBinanceFuturesShort,
+        'ccxt_backpack_spot': CcxtBackpackSpot,
         # 兼容旧名称（别名）
         'polymarket': NativePolymarketSpot,
         'updown_15m': UpDown15m,
@@ -34,6 +36,8 @@ class ExchangeFactory:
         'updown_4h': UpDown4h,
         'ccxt_futures': CcxtBinanceFutures,
         'ccxt_binance': CcxtBinanceSpot,
+        'backpack': CcxtBackpackSpot,
+        'bpx': CcxtBackpackSpot,
     }
     
     @classmethod

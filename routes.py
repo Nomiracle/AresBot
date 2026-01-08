@@ -968,15 +968,22 @@ def register_routes(app):
         
         # 交易所显示名称映射
         exchange_display_names = {
-            'binance': 'Binance (币安现货)',
-            'binance_futures': 'Binance (币安合约)',
-            'binance-futures': 'Binance (币安合约)',
-            'backpack': 'Backpack (BPX)',
-            'bpx': 'Backpack (BPX)',
+            'ccxt_binance_spot': 'Binance 现货 (CCXT)',
+            'ccxt_binance_futures': 'Binance 合约 (CCXT)',
+            'ccxt_binance_futures_short': 'Binance 合约做空 (CCXT)',
+            'ccxt_backpack_spot': 'Backpack 现货 (CCXT)',
+            'ccxt_binance': 'Binance 现货 (CCXT)',
+            'ccxt_futures': 'Binance 合约 (CCXT)',
+            'backpack': 'Backpack 现货 (CCXT)',
+            'bpx': 'Backpack 现货 (CCXT)',
             'polymarket': 'Polymarket (预测市场)',
+            'native_polymarket_spot': 'Polymarket (预测市场)',
             'btc_updown_15m': 'Polymarket - UPDOWN 15分钟 (自动)',
+            'native_btc_updown_15m': 'Polymarket - UPDOWN 15分钟 (自动)',
             'updown_15m': 'Polymarket - UPDOWN 15分钟 (自动)',
+            'native_updown_15m': 'Polymarket - UPDOWN 15分钟 (自动)',
             'updown_4h': 'Polymarket - UPDOWN 4小时 (自动)',
+            'native_updown_4h': 'Polymarket - UPDOWN 4小时 (自动)',
         }
         
         # 去重并构建返回数据

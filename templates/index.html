@@ -498,7 +498,7 @@
             ⚔️ AresBot 控制台 <span class="security-badge">🔒 加密存储</span>
           </h1>
           <p class="subtitle">
-            多交易所自动交易机器人 v3.1 - 支持 Binance (CCXT) - 默认模拟模式
+            多交易所自动交易机器人 v3.1 - 支持 Binance & Backpack (CCXT) - 默认模拟模式
           </p>
         </div>
         <div class="user-info">
@@ -715,7 +715,7 @@
           </select>
           
           <label style="font-weight: 600; margin-bottom: 5px; display: block;">配置别名（保存时使用）</label>
-          <input type="text" id="configAlias" placeholder="输入配置别名，如: binance-btc, binance-sol" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px;" value="default" />
+          <input type="text" id="configAlias" placeholder="输入配置别名，如: binance-btc, backpack-sol" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px;" value="default" />
           <small style="color: #666;">提示：输入新别名可创建新配置，使用现有别名会覆盖该配置</small>
         </div>
 
@@ -1721,7 +1721,7 @@
               container.innerHTML = data.pairs
                 .map(
                   (pair) => {
-                    const exchanges = pair.exchanges || 'binance';
+                    const exchanges = pair.exchanges || 'binance,backpack';
                     const exchangeList = exchanges.split(',').map(e => {
                       return exchangeDisplayNames[e] || e;
                     }).join(', ');
@@ -1760,6 +1760,9 @@
           'ccxt_binance_futures_short': 'binance',
           'ccxt_futures': 'binance',
           'ccxt_futures_short': 'binance',
+          'ccxt_backpack_spot': 'backpack',
+          'backpack': 'backpack',
+          'bpx': 'backpack',
           'polymarket': 'polymarket',
           'native_polymarket_spot': 'polymarket',
           'btc_updown_15m': 'polymarket',
@@ -1772,7 +1775,7 @@
         
         // 过滤出支持当前交易所的交易对
         const filteredPairs = pairs.filter(pair => {
-          const exchanges = pair.exchanges || 'binance';
+          const exchanges = pair.exchanges || 'binance,backpack';
           const exchangeList = exchanges.split(',');
           // 检查是否包含基础交易所名称
           return exchangeList.includes(baseExchange) || exchangeList.includes(currentExchange);
