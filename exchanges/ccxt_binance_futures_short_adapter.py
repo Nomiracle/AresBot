@@ -11,7 +11,7 @@ import asyncio
 import math
 from datetime import datetime
 from typing import Dict, List, Callable
-from exchanges.ccxt_futures_adapter import CcxtBinanceFutures
+from .ccxt_binance_futures_adapter import CcxtBinanceFutures
 
 
 class CcxtBinanceFuturesShort(CcxtBinanceFutures):

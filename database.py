@@ -832,8 +832,8 @@ def delete_credential(username, credential_id):
     return {'success': False, 'message': '删除失败'}
 
 
-def update_credential(username, credential_id, alias, api_key=None, api_secret=None):
-    """更新API凭证(可选择性更新key和secret)"""
+def update_credential(username, credential_id, alias, api_key=None, api_secret=None, exchange=None):
+    """更新API凭证(可选择性更新key、secret和exchange)"""
     user_id = get_user_id(username)
     if not user_id:
         return False
@@ -843,12 +843,22 @@ def update_credential(username, credential_id, alias, api_key=None, api_secret=N
             now = datetime.now().isoformat()
             
             if api_key and api_secret:
-                # 更新完整信息
+                # 更新完整信息（包括可选的exchange）
                 encrypted_api_key = encrypt_data(api_key)
                 encrypted_api_secret = encrypt_data(api_secret)
-                c.execute("""UPDATE api_credentials SET alias=?, api_key=?, api_secret=?, updated_at=?
+                if exchange:
+                    c.execute("""UPDATE api_credentials SET alias=?, exchange=?, api_key=?, api_secret=?, updated_at=?
+                             WHERE id=? AND user_id=?""",
+                              (alias, exchange, encrypted_api_key, encrypted_api_secret, now, credential_id, user_id))
+                else:
+                    c.execute("""UPDATE api_credentials SET alias=?, api_key=?, api_secret=?, updated_at=?
+                             WHERE id=? AND user_id=?""",
+                              (alias, encrypted_api_key, encrypted_api_secret, now, credential_id, user_id))
+            elif exchange:
+                # 更新别名和交易所
+                c.execute("""UPDATE api_credentials SET alias=?, exchange=?, updated_at=?
                          WHERE id=? AND user_id=?""",
-                          (alias, encrypted_api_key, encrypted_api_secret, now, credential_id, user_id))
+                          (alias, exchange, now, credential_id, user_id))
             else:
                 # 只更新别名
                 c.execute("""UPDATE api_credentials SET alias=?, updated_at=?

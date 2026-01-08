@@ -2240,20 +2240,20 @@
             }
             list.innerHTML = data.credentials
               .map((cred) => {
-                const exchangeDisplay = cred.exchange.toUpperCase();
+                const exchangeDisplayName = exchangeDisplayNames[cred.exchange] || cred.exchange.toUpperCase();
                 const keyDisplay = cred.api_key.substring(0, 8) + "..." + cred.api_key.substring(cred.api_key.length - 4);
                 return `
                   <div class="pair-item">
                     <div class="pair-info">
                       <strong style="font-size: 16px;">${cred.alias}</strong>
                       <div style="margin-top: 5px; color: #666;">
-                        <div>交易所: <strong>${exchangeDisplay}</strong></div>
+                        <div>交易所: <strong>${exchangeDisplayName}</strong></div>
                         <div>API Key: <code>${keyDisplay}</code></div>
                         <div style="font-size: 12px; color: #999;">创建时间: ${new Date(cred.created_at).toLocaleString('zh-CN')}</div>
                       </div>
                     </div>
                     <div class="pair-actions">
-                      <button class="btn btn-primary btn-sm" onclick="editCredential(${cred.id}, '${cred.alias}')">✏️ 编辑别名</button>
+                      <button class="btn btn-primary btn-sm" onclick="editCredential(${cred.id}, '${cred.alias}', '${cred.exchange}')">✏️ 编辑</button>
                       <button class="btn btn-danger btn-sm" onclick="deleteCredential(${cred.id})">🗑️ 删除</button>
                     </div>
                   </div>
@@ -2310,21 +2310,61 @@
           });
       }
 
-      function editCredential(id, currentAlias) {
-        const newAlias = prompt("请输入新的别名:", currentAlias);
-        if (!newAlias || newAlias === currentAlias) return;
-
+      function editCredential(id, currentAlias, currentExchange) {
+        // 构建交易所选项
+        const exchangeOptions = exchangesData.map(ex => 
+          `<option value="${ex.value}" ${ex.value === currentExchange ? 'selected' : ''}>${ex.display_name}</option>`
+        ).join('');
+        
+        // 创建编辑对话框
+        const dialog = document.createElement('div');
+        dialog.id = 'editCredentialDialog';
+        dialog.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:10000;';
+        dialog.innerHTML = `
+          <div style="background:white;padding:25px;border-radius:12px;min-width:400px;max-width:500px;">
+            <h3 style="margin-bottom:20px;">✏️ 编辑 API 密钥</h3>
+            <div style="margin-bottom:15px;">
+              <label style="display:block;margin-bottom:5px;font-weight:600;">别名</label>
+              <input type="text" id="editCredAlias" value="${currentAlias}" style="width:100%;padding:10px;border:2px solid #ddd;border-radius:6px;"/>
+            </div>
+            <div style="margin-bottom:20px;">
+              <label style="display:block;margin-bottom:5px;font-weight:600;">交易所</label>
+              <select id="editCredExchange" style="width:100%;padding:10px;border:2px solid #ddd;border-radius:6px;">
+                ${exchangeOptions}
+              </select>
+            </div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+              <button class="btn" style="background:#6c757d;color:white;" onclick="this.closest('div').parentElement.remove()">取消</button>
+              <button class="btn btn-primary" onclick="submitEditCredential(${id})">保存</button>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(dialog);
+        document.getElementById('editCredAlias').focus();
+      }
+      
+      function submitEditCredential(id) {
+        const newAlias = document.getElementById('editCredAlias').value.trim();
+        const newExchange = document.getElementById('editCredExchange').value;
+        
+        if (!newAlias) {
+          showToast('别名不能为空', 'warning');
+          return;
+        }
+        
         fetch("/api/credentials/update", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id, alias: newAlias }),
+          body: JSON.stringify({ id, alias: newAlias, exchange: newExchange }),
         })
           .then((r) => r.json())
           .then((data) => {
             showResponseToast(data);
             if (data.success) {
+              // 关闭对话框
+              document.getElementById('editCredentialDialog').remove();
               loadCredentials();
-              updateCredentialSelect(); // 同时更新密钥选择器
+              updateCredentialSelect();
             }
           });
       }

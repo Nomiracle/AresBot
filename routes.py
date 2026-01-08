@@ -857,6 +857,7 @@ def register_routes(app):
         data = request.json
         credential_id = data.get('id')
         alias = data.get('alias', '').strip()
+        exchange = data.get('exchange', '').strip() if data.get('exchange') else None
         api_key = data.get('api_key', '').strip() if data.get('api_key') else None
         api_secret = data.get('api_secret', '').strip() if data.get('api_secret') else None
         
@@ -867,7 +868,7 @@ def register_routes(app):
         if (api_key and not api_secret) or (not api_key and api_secret):
             return jsonify({'success': False, 'message': 'API Key和Secret必须同时提供'})
         
-        if update_credential(username, credential_id, alias, api_key, api_secret):
+        if update_credential(username, credential_id, alias, api_key, api_secret, exchange):
             return jsonify({'success': True, 'message': 'API凭证更新成功'})
         else:
             return jsonify({'success': False, 'message': '更新失败或别名已存在'})
