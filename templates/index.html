@@ -521,6 +521,7 @@
         <button class="tab" onclick="switchTab('credentials')">API密钥管理</button>
         <button class="tab" onclick="switchTab('pairs')">交易对管理</button>
         <button class="tab" onclick="switchTab('bots')">挂单机器人</button>
+        <button class="tab" onclick="switchTab('batch')">批量管理</button>
         <button class="tab" onclick="switchTab('history')">盈利统计</button>
         <button class="tab" onclick="switchTab('security')">安全设置</button>
       </div>
@@ -847,6 +848,31 @@
         </div>
       </div>
 
+      <div id="batch-tab" class="tab-content">
+        <h3>批量启动管理</h3>
+        <div style="margin-bottom: 20px;">
+          <div style="display: flex; gap: 10px; margin-bottom: 15px; align-items: center;">
+            <button class="btn btn-success" onclick="batchStartBots()">
+              ▶️ 批量启动
+            </button>
+            <button class="btn btn-danger" onclick="batchStopBots()">
+              ⏹️ 批量停止
+            </button>
+            <button class="btn btn-warning" onclick="batchDeleteConfigs()">
+              🗑️ 批量删除配置
+            </button>
+            <label style="display: inline-flex; align-items: center; gap: 5px; cursor: pointer; font-weight: 600;">
+              <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()" style="margin: 0;">
+              <span>全选</span>
+            </label>
+          </div>
+        </div>
+        
+        <div id="batchConfigsList" class="order-history">
+          <p>加载中...</p>
+        </div>
+      </div>
+
       <div id="history-tab" class="tab-content">
         <h3>盈利统计</h3>
         <div id="profitSummary" style="margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 5px;">
@@ -944,6 +970,8 @@
           // 启动自动刷新
           if (botsRefreshInterval) clearInterval(botsRefreshInterval);
           botsRefreshInterval = setInterval(loadBots, 1000);
+        } else if (tabName === "batch") {
+          loadBatchConfigs();
         } else {
           // 切换到其他标签时停止自动刷新
           if (botsRefreshInterval) {
@@ -2390,6 +2418,150 @@
       function getSelectedExchanges() {
         const checkboxes = document.querySelectorAll('#newPairExchanges input[type="checkbox"]:checked');
         return Array.from(checkboxes).map(cb => cb.value).join(',');
+      }
+      
+      // 批量管理功能
+      function loadBatchConfigs() {
+        fetch("/api/configs/all")
+          .then((r) => r.json())
+          .then((data) => {
+            const container = document.getElementById("batchConfigsList");
+            if (!data.success || data.configs.length === 0) {
+              container.innerHTML = "<p>暂无交易配置</p>";
+              return;
+            }
+            
+            container.innerHTML = data.configs.map(config => {
+              const exchangeDisplayName = exchangeDisplayNames[config.exchange] || config.exchange.toUpperCase();
+              // 使用后端返回的状态信息
+              const botStatus = config.bot_status || '🔴 未启动';
+              
+              return `
+                <div class="config-item" style="display: flex; align-items: center; padding: 8px; border-bottom: 1px solid #eee;">
+                  <input type="checkbox" id="batch-${config.id}" value="${config.id}" onchange="updateSelectAllCheckbox()" style="margin-right: 8px;">
+                  <div style="flex: 1; font-size: 13px;">
+                    <span style="font-weight: 600;">${config.config_name}</span>
+                    <span style="margin: 0 5px;">-</span>
+                    <span>${config.symbol}</span>
+                    <span style="margin: 0 5px;">@</span>
+                    <span>${exchangeDisplayName}</span>
+                    <span style="margin-left: 10px; color: #666;">${botStatus}</span>
+                    <span style="margin: 0 10px; color: #999;">|</span>
+                    <span>偏移:${config.offset_percent}%</span>
+                    <span style="margin: 0 5px;">卖加:${config.sell_offset_percent || 0.5}%</span>
+                    <span style="margin: 0 5px;">数量:${config.quantity}</span>
+                    <span style="margin: 0 5px;">间隔:${config.interval}s</span>
+                    <span style="margin: 0 5px;">网格:${config.order_grid || 1}</span>
+                    <span style="margin: 0 5px;">密钥:${config.credential_alias || '未设置'}</span>
+                    <span style="margin: 0 5px;">模式:${config.simulate_trading ? '模拟' : '实盘'}</span>
+                  </div>
+                </div>
+              `;
+            }).join('');
+          });
+      }
+      
+      function toggleSelectAll() {
+        const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+        const checkboxes = document.querySelectorAll('#batchConfigsList input[type="checkbox"]');
+        checkboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
+      }
+      
+      function updateSelectAllCheckbox() {
+        const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+        const checkboxes = document.querySelectorAll('#batchConfigsList input[type="checkbox"]');
+        const checkedCount = document.querySelectorAll('#batchConfigsList input[type="checkbox"]:checked').length;
+        
+        // 如果没有选中的，全选框不选中
+        // 如果全部选中，全选框选中
+        // 如果部分选中，全选框不选中（indeterminate状态）
+        if (checkedCount === 0) {
+          selectAllCheckbox.checked = false;
+          selectAllCheckbox.indeterminate = false;
+        } else if (checkedCount === checkboxes.length) {
+          selectAllCheckbox.checked = true;
+          selectAllCheckbox.indeterminate = false;
+        } else {
+          selectAllCheckbox.checked = false;
+          selectAllCheckbox.indeterminate = true;
+        }
+      }
+      
+      function getSelectedConfigIds() {
+        const checkboxes = document.querySelectorAll('#batchConfigsList input[type="checkbox"]:checked');
+        return Array.from(checkboxes).map(cb => parseInt(cb.value));
+      }
+      
+      function batchStartBots() {
+        const configIds = getSelectedConfigIds();
+        if (configIds.length === 0) {
+          showToast('请先选择要启动的配置', 'warning');
+          return;
+        }
+        
+        if (!confirm(`确定要启动选中的 ${configIds.length} 个机器人吗？`)) return;
+        
+        fetch("/api/bots/batch_start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ config_ids: configIds }),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            showResponseToast(data);
+            if (data.success) {
+              loadBatchConfigs();
+              loadBots();
+            }
+          });
+      }
+      
+      function batchStopBots() {
+        const configIds = getSelectedConfigIds();
+        if (configIds.length === 0) {
+          showToast('请先选择要停止的配置', 'warning');
+          return;
+        }
+        
+        if (!confirm(`确定要停止选中的 ${configIds.length} 个机器人吗？`)) return;
+        
+        fetch("/api/bots/batch_stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ config_ids: configIds }),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            showResponseToast(data);
+            if (data.success) {
+              loadBatchConfigs();
+              loadBots();
+            }
+          });
+      }
+      
+      function batchDeleteConfigs() {
+        const configIds = getSelectedConfigIds();
+        if (configIds.length === 0) {
+          showToast('请先选择要删除的配置', 'warning');
+          return;
+        }
+        
+        if (!confirm(`确定要删除选中的 ${configIds.length} 个配置吗？此操作不可恢复！`)) return;
+        
+        fetch("/api/configs/batch_delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ config_ids: configIds }),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            showResponseToast(data);
+            if (data.success) {
+              loadBatchConfigs();
+              updateConfigSelect();
+            }
+          });
       }
       
       window.onload = function () {

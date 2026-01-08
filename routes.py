@@ -346,6 +346,71 @@ def register_routes(app):
         configs = get_user_config_list(username)
         return jsonify({'success': True, 'configs': configs})
     
+    @app.route('/api/configs/all')
+    def api_configs_all():
+        """获取用户的所有配置详细信息（包含密钥别名和机器人状态）"""
+        if 'user' not in session:
+            return jsonify({'success': False, 'configs': []}), 401
+        
+        username = session['user']
+        from database import get_user_config_list_with_details
+        configs = get_user_config_list_with_details(username, include_default=True)
+        
+        # 为每个配置添加机器人状态信息
+        for config in configs:
+            exchange_name = config['exchange'].lower()
+            symbol = config['symbol']
+            bot_key = f"{exchange_name}:{symbol}"
+            
+            user_data = user_bots.get(username, {})
+            bot = None
+            if isinstance(user_data, dict):
+                bot = user_data.get('bots', {}).get(bot_key)
+            
+            if bot:
+                # 机器人存在，检查是否基于当前配置
+                bot_config = bot.get('config', {})
+                
+                # 比较关键参数是否匹配
+                is_same_config = (
+                    bot_config.get('symbol') == config['symbol'] and
+                    bot_config.get('exchange') == config['exchange'] and
+                    bot_config.get('offset_percent') == config['offset_percent'] and
+                    bot_config.get('sell_offset_percent') == config['sell_offset_percent'] and
+                    bot_config.get('quantity') == config['quantity'] and
+                    bot_config.get('interval') == config['interval'] and
+                    bot_config.get('testnet') == config['testnet'] and
+                    bot_config.get('simulate_trading') == config['simulate_trading']
+                )
+                
+                if is_same_config:
+                    # 基于当前配置的机器人
+                    if bot.get('running'):
+                        if bot.get('healthy'):
+                            config['bot_status'] = '🟢 运行中'
+                            config['bot_running'] = True
+                            config['bot_healthy'] = True
+                        else:
+                            config['bot_status'] = '🟡 异常'
+                            config['bot_running'] = True
+                            config['bot_healthy'] = False
+                    else:
+                        config['bot_status'] = '🔴 已停止'
+                        config['bot_running'] = False
+                        config['bot_healthy'] = False
+                else:
+                    # 机器人存在但配置不匹配
+                    config['bot_status'] = '🔴 配置不匹配'
+                    config['bot_running'] = False
+                    config['bot_healthy'] = False
+            else:
+                # 机器人不存在
+                config['bot_status'] = '🔴 未启动'
+                config['bot_running'] = False
+                config['bot_healthy'] = False
+        
+        return jsonify({'success': True, 'configs': configs})
+    
     @app.route('/api/config/delete', methods=['POST'])
     def api_delete_config():
         """删除指定配置"""
@@ -776,6 +841,256 @@ def register_routes(app):
                 print(f"[{datetime.now().isoformat()}] {log_prefix} 🗑️ 已从内存中删除机器人")
         
         return jsonify({'success': True, 'message': f'{symbol} 机器人已删除，所有订单已取消'})
+
+    @app.route('/api/bots/batch_start', methods=['POST'])
+    def api_bots_batch_start():
+        """批量启动机器人"""
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未授权'}), 401
+        
+        username = session['user']
+        data = request.json or {}
+        config_ids = data.get('config_ids', [])
+        
+        if not config_ids:
+            return jsonify({'success': False, 'message': '请选择要启动的配置'}), 400
+        
+        from database import get_user_configs_by_ids
+        configs = get_user_configs_by_ids(username, config_ids)
+        
+        if not configs:
+            return jsonify({'success': False, 'message': '未找到选中的配置'}), 404
+        
+        success_count = 0
+        error_messages = []
+        
+        for config in configs:
+            try:
+                # 直接调用启动逻辑
+                from database import load_user_config, get_credential_by_id
+                
+                # 加载完整配置
+                full_config = load_user_config(username, config['config_name'])
+                if not full_config:
+                    error_messages.append(f"{config['config_name']}: 配置加载失败")
+                    continue
+                
+                # 获取 API 密钥
+                credential_id = full_config.get('credential_id')
+                if credential_id:
+                    credential = get_credential_by_id(get_user_id(username), credential_id)
+                    if not credential:
+                        error_messages.append(f"{config['config_name']}: API凭证不存在")
+                        continue
+                    api_key = credential['api_key']
+                    api_secret = credential['api_secret']
+                else:
+                    error_messages.append(f"{config['config_name']}: 缺少API凭证")
+                    continue
+                
+                # 验证必要参数
+                if not api_key or not api_secret:
+                    error_messages.append(f"{config['config_name']}: API密钥不能为空")
+                    continue
+                if not config.get('symbol'):
+                    error_messages.append(f"{config['config_name']}: 缺少symbol")
+                    continue
+                
+                # 创建交易所实例
+                testnet = bool(config.get('testnet', 1))
+                exchange_name = config.get('exchange', 'binance').lower()
+                symbol = config['symbol']
+                min_price_threshold = config.get('min_price_threshold')
+                market_close_threshold = config.get('market_close_threshold')
+                
+                if min_price_threshold is not None:
+                    min_price_threshold = float(min_price_threshold)
+                if market_close_threshold is not None:
+                    market_close_threshold = int(market_close_threshold)
+                
+                exchange = ExchangeFactory.create(
+                    exchange_name,
+                    api_key,
+                    api_secret,
+                    symbol=symbol,
+                    testnet=testnet,
+                    min_price_threshold=min_price_threshold,
+                    market_close_threshold=market_close_threshold
+                )
+                
+                if not exchange:
+                    error_messages.append(f"{config['config_name']}: 不支持的交易所: {exchange_name}")
+                    continue
+                
+                # 启动机器人逻辑（从 api_start 复制）
+                from trading import trading_loop, user_bots
+                bot_key = f"{exchange_name}:{symbol}"
+                
+                if username not in user_bots:
+                    user_bots[username] = {'bots': {}}
+                
+                if bot_key in user_bots[username]['bots']:
+                    error_messages.append(f"{config['config_name']}: 机器人已存在")
+                    continue
+                
+                # 创建机器人数据
+                bot_data = {
+                    'config': full_config,
+                    'exchange': exchange,
+                    'running': False,
+                    'thread': None,
+                    'monitor_started': False,
+                    'order_monitor_enabled': False,
+                    'pending_buys': [],
+                    'pending_sells': [],
+                    'last_error': None,
+                    'error_count': 0,
+                    'last_error_time': None,
+                    'last_warning': None,
+                    'warning_count': 0,
+                    'start_timestamp': None
+                }
+                
+                user_bots[username]['bots'][bot_key] = bot_data
+                
+                # 启动交易线程
+                thread = threading.Thread(
+                    target=trading_loop,
+                    args=(username, full_config, exchange, bot_data),
+                    daemon=True
+                )
+                bot_data['thread'] = thread
+                bot_data['running'] = True
+                bot_data['start_timestamp'] = int(time.time() * 1000)
+                thread.start()
+                
+                success_count += 1
+                    
+            except Exception as e:
+                error_messages.append(f"{config['config_name']}: {str(e)}")
+                print(f"[{datetime.now().isoformat()}] 批量启动失败 - {config['config_name']}: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        message = f"成功启动 {success_count}/{len(configs)} 个机器人"
+        if error_messages:
+            message += f"。失败: {', '.join(error_messages[:3])}"
+            if len(error_messages) > 3:
+                message += f" 等{len(error_messages)}个"
+        
+        return jsonify({'success': success_count > 0, 'message': message})
+
+    @app.route('/api/bots/batch_stop', methods=['POST'])
+    def api_bots_batch_stop():
+        """批量停止机器人"""
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未授权'}), 401
+        
+        username = session['user']
+        data = request.json or {}
+        config_ids = data.get('config_ids', [])
+        
+        if not config_ids:
+            return jsonify({'success': False, 'message': '请选择要停止的配置'}), 400
+        
+        from database import get_user_configs_by_ids
+        configs = get_user_configs_by_ids(username, config_ids)
+        
+        if not configs:
+            return jsonify({'success': False, 'message': '未找到选中的配置'}), 404
+        
+        success_count = 0
+        error_messages = []
+        
+        for config in configs:
+            try:
+                # 直接调用停止逻辑
+                exchange_name = config['exchange'].lower()
+                symbol = config['symbol']
+                bot_key = f"{exchange_name}:{symbol}"
+                
+                user_data = user_bots.get(username, {})
+                bot = None
+                if isinstance(user_data, dict):
+                    bot = user_data.get('bots', {}).get(bot_key)
+                
+                if not bot:
+                    error_messages.append(f"{config['config_name']}: 机器人不存在")
+                    continue
+                
+                # 停止机器人
+                bot['running'] = False
+                
+                # 取消订单
+                exchange = bot.get('exchange')
+                if exchange:
+                    try:
+                        open_orders = exchange.get_open_orders()
+                        if open_orders:
+                            for order in open_orders:
+                                try:
+                                    order_id = str(order.get('orderId') or order.get('id'))
+                                    exchange.cancel_order(order_id=order_id)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+                    
+                    # 清理连接
+                    if hasattr(exchange, 'cleanup'):
+                        exchange.cleanup()
+                    else:
+                        exchange.stop_ws()
+                
+                # 从内存中删除
+                if isinstance(user_data, dict) and 'bots' in user_data:
+                    if bot_key in user_data['bots']:
+                        del user_data['bots'][bot_key]
+                
+                success_count += 1
+                    
+            except Exception as e:
+                error_messages.append(f"{config['config_name']}: {str(e)}")
+                print(f"[{datetime.now().isoformat()}] 批量停止失败 - {config['config_name']}: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        message = f"成功停止 {success_count}/{len(configs)} 个机器人"
+        if error_messages:
+            message += f"。失败: {', '.join(error_messages[:3])}"
+            if len(error_messages) > 3:
+                message += f" 等{len(error_messages)}个"
+        
+        return jsonify({'success': success_count > 0, 'message': message})
+
+    @app.route('/api/configs/batch_delete', methods=['POST'])
+    def api_configs_batch_delete():
+        """批量删除配置"""
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未授权'}), 401
+        
+        username = session['user']
+        data = request.json or {}
+        config_ids = data.get('config_ids', [])
+        
+        if not config_ids:
+            return jsonify({'success': False, 'message': '请选择要删除的配置'}), 400
+        
+        from database import delete_user_configs_by_ids
+        try:
+            result = delete_user_configs_by_ids(username, config_ids)
+            
+            if result:
+                print(f"[{datetime.now().isoformat()}] 批量删除配置成功: {result} 个")
+                return jsonify({'success': True, 'message': f'成功删除 {result} 个配置'})
+            else:
+                print(f"[{datetime.now().isoformat()}] 批量删除配置失败: 没有配置被删除")
+                return jsonify({'success': False, 'message': '删除失败'})
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] 批量删除配置异常: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'success': False, 'message': f'删除失败: {str(e)}'})
 
     @app.route('/api/bot/update', methods=['POST'])
     def api_bot_update():

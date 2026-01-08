@@ -301,6 +301,13 @@ def init_db(recreate=False):
         print(f"[{datetime.now().isoformat()}] user_configs 表已添加 credential_id 列")
     except sqlite3.OperationalError:
         pass  # 列已存在
+    
+    # 为user_configs表添加created_at列(如果不存在)
+    try:
+        c.execute("ALTER TABLE user_configs ADD COLUMN created_at TEXT")
+        print(f"[{datetime.now().isoformat()}] user_configs 表已添加 created_at 列")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
 
     # 新增：系统配置表（存储钉钉webhook等配置）
     c.execute('''CREATE TABLE IF NOT EXISTS system_config
@@ -386,15 +393,15 @@ def save_user_config(username, config, config_name='default'):
                        datetime.now().isoformat(), user_id, config_name))
         else:
             c.execute("""INSERT INTO user_configs
-                         (user_id, config_name, exchange, credential_id, symbol, offset_percent, sell_offset_percent, quantity, interval, testnet, simulate_trading, min_price_threshold, market_close_threshold, order_grid, sell_decay_count, updated_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                         (user_id, config_name, exchange, credential_id, symbol, offset_percent, sell_offset_percent, quantity, interval, testnet, simulate_trading, min_price_threshold, market_close_threshold, order_grid, sell_decay_count, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                       (user_id, config_name, exchange, credential_id, config['symbol'],
                        config['offset_percent'], config.get('sell_offset_percent', 0.5),
                        config['quantity'], config['interval'],
                        config.get('testnet', 1), config.get('simulate_trading', 1),
                        config.get('min_price_threshold', 0.15), config.get('market_close_threshold', 180),
                        config.get('order_grid', 1), config.get('sell_decay_count', 0),
-                       datetime.now().isoformat()))
+                       datetime.now().isoformat(), datetime.now().isoformat()))
 
     print(f"[{datetime.now().isoformat()}] ✅ 配置已保存到 DB (user={username}, config={config_name}, credential_id={credential_id})")
     return True
@@ -444,6 +451,120 @@ def load_user_config(username, config_name='default'):
         'order_grid': result[12] if result[12] is not None else 1,
         'sell_decay_count': result[13] if result[13] is not None else 0
     }
+
+
+def get_user_config_list(username):
+    """获取用户的所有配置名称"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return []
+    
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("""SELECT config_name FROM user_configs 
+                     WHERE user_id=? AND config_name!='default' 
+                     ORDER BY created_at DESC""", (user_id,))
+        configs = c.fetchall()
+    
+    return [config[0] for config in configs]
+
+
+def get_user_config_list_with_details(username, include_default=False):
+    """获取用户的所有配置详细信息（包含密钥别名）"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return []
+    
+    with db_pool.get_cursor() as (conn, c):
+        if include_default:
+            # 包含 default 配置
+            c.execute("""SELECT c.id, c.config_name, c.symbol, c.exchange, c.offset_percent, 
+                               c.sell_offset_percent, c.quantity, c.interval, c.order_grid,
+                               c.testnet, c.simulate_trading, cr.alias as credential_alias
+                         FROM user_configs c
+                         LEFT JOIN api_credentials cr ON c.credential_id = cr.id
+                         WHERE c.user_id=?
+                         ORDER BY c.created_at DESC""", (user_id,))
+        else:
+            # 不包含 default 配置
+            c.execute("""SELECT c.id, c.config_name, c.symbol, c.exchange, c.offset_percent, 
+                               c.sell_offset_percent, c.quantity, c.interval, c.order_grid,
+                               c.testnet, c.simulate_trading, cr.alias as credential_alias
+                         FROM user_configs c
+                         LEFT JOIN api_credentials cr ON c.credential_id = cr.id
+                         WHERE c.user_id=? AND c.config_name!='default'
+                         ORDER BY c.created_at DESC""", (user_id,))
+        configs = c.fetchall()
+    
+    return [
+        {
+            'id': cfg[0],
+            'config_name': cfg[1],
+            'symbol': cfg[2],
+            'exchange': cfg[3],
+            'offset_percent': cfg[4],
+            'sell_offset_percent': cfg[5],
+            'quantity': cfg[6],
+            'interval': cfg[7],
+            'order_grid': cfg[8],
+            'testnet': cfg[9],
+            'simulate_trading': cfg[10],
+            'credential_alias': cfg[11]
+        }
+        for cfg in configs
+    ]
+
+
+def get_user_configs_by_ids(username, config_ids):
+    """根据ID列表获取用户配置"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return []
+    
+    with db_pool.get_cursor() as (conn, c):
+        placeholders = ','.join(['?' for _ in config_ids])
+        c.execute(f"""SELECT c.id, c.config_name, c.symbol, c.exchange, c.offset_percent, 
+                           c.sell_offset_percent, c.quantity, c.interval, c.order_grid,
+                           c.testnet, c.simulate_trading, cr.alias as credential_alias
+                     FROM user_configs c
+                     LEFT JOIN api_credentials cr ON c.credential_id = cr.id
+                     WHERE c.user_id=? AND c.id IN ({placeholders})
+                     ORDER BY c.created_at DESC""", [user_id] + config_ids)
+        configs = c.fetchall()
+    
+    return [
+        {
+            'id': cfg[0],
+            'config_name': cfg[1],
+            'symbol': cfg[2],
+            'exchange': cfg[3],
+            'offset_percent': cfg[4],
+            'sell_offset_percent': cfg[5],
+            'quantity': cfg[6],
+            'interval': cfg[7],
+            'order_grid': cfg[8],
+            'testnet': cfg[9],
+            'simulate_trading': cfg[10],
+            'credential_alias': cfg[11]
+        }
+        for cfg in configs
+    ]
+
+
+def delete_user_configs_by_ids(username, config_ids):
+    """批量删除用户配置"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return 0
+    
+    with db_pool.get_cursor() as (conn, c):
+        placeholders = ','.join(['?' for _ in config_ids])
+        c.execute(f"DELETE FROM user_configs WHERE user_id=? AND id IN ({placeholders})", 
+                  [user_id] + config_ids)
+        deleted = c.rowcount
+    
+    if deleted > 0:
+        print(f"[{datetime.now().isoformat()}] ✅ 批量删除配置: {deleted} 个 (user={username})")
+    return deleted
 
 
 def get_user_config_list(username):
