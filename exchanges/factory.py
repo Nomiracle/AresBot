@@ -2,7 +2,7 @@
 交易所工厂类
 根据配置创建对应的交易所适配器实例
 """
-from typing import Optional
+from typing import Optional, Dict
 from .base import BaseExchange
 from .polymarket_adapter import NativePolymarketSpot
 from .polymarket_updown15m_adapter import UpDown15m, BtcUpDown15m
@@ -15,31 +15,38 @@ from .ccxt_backpack_spot_adapter import CcxtBackpackSpot
 class ExchangeFactory:
     """交易所工厂"""
     
-    # 命名规则: 框架_交易所_市场
-    # 框架: native(原生SDK) / ccxt
-    # 交易所: binance / backpack / polymarket / ...
-    # 市场: spot(现货) / futures(合约) / futures_short(合约做空)
-    SUPPORTED_EXCHANGES = {
-        # Native SDK 实现
-        'native_polymarket_spot': NativePolymarketSpot,
-        'native_updown_15m': UpDown15m,
-        'native_btc_updown_15m': BtcUpDown15m,  # 向后兼容
-        'native_updown_4h': UpDown4h,
-        # CCXT 实现
-        'ccxt_binance_spot': CcxtBinanceSpot,
-        'ccxt_binance_futures': CcxtBinanceFutures,
-        'ccxt_binance_futures_short': CcxtBinanceFuturesShort,
-        'ccxt_backpack_spot': CcxtBackpackSpot,
-        # 兼容旧名称（别名）
-        'polymarket': NativePolymarketSpot,
-        'updown_15m': UpDown15m,
-        'btc_updown_15m': BtcUpDown15m,  # 向后兼容
-        'updown_4h': UpDown4h,
-        'ccxt_futures': CcxtBinanceFutures,
-        'ccxt_binance': CcxtBinanceSpot,
-        'backpack': CcxtBackpackSpot,
-        'bpx': CcxtBackpackSpot,
+    # 支持的交易所适配器类列表
+    ADAPTER_CLASSES = [
+        NativePolymarketSpot,
+        UpDown15m,
+        BtcUpDown15m,  # 向后兼容
+        UpDown4h,
+        CcxtBinanceSpot,
+        CcxtBinanceFutures,
+        CcxtBinanceFuturesShort,
+        CcxtBackpackSpot,
+    ]
+    
+    # 兼容旧名称的映射
+    ALIAS_MAP = {
+        'polymarket': 'native_polymarket_spot',
+        'updown_15m': 'native_updown_15m',
+        'btc_updown_15m': 'native_btc_updown_15m',
+        'updown_4h': 'native_updown_4h',
+        'ccxt_futures': 'ccxt_binance_futures',
+        'ccxt_binance': 'ccxt_binance_spot',
+        'backpack': 'ccxt_backpack_spot',
+        'bpx': 'ccxt_backpack_spot',
     }
+    
+    @classmethod
+    def get_exchange_id_map(cls) -> Dict[str, type]:
+        """获取交易所ID到适配器类的映射"""
+        id_map = {}
+        for adapter_class in cls.ADAPTER_CLASSES:
+            info = adapter_class.get_exchange_info()
+            id_map[info['id']] = adapter_class
+        return id_map
     
     @classmethod
     def create(cls, exchange_name: str, api_key: str, api_secret: str, 
@@ -62,7 +69,13 @@ class ExchangeFactory:
         Returns:
             BaseExchange 实例，如果不支持则返回 None
         """
-        adapter_class = cls.SUPPORTED_EXCHANGES.get(exchange_name.lower())
+        # 首先检查是否是别名
+        exchange_name = cls.ALIAS_MAP.get(exchange_name.lower(), exchange_name.lower())
+        
+        # 获取交易所ID映射
+        id_map = cls.get_exchange_id_map()
+        adapter_class = id_map.get(exchange_name)
+        
         if adapter_class:
             # UpDown15m/UpDown4h 使用额外的阈值参数
             if adapter_class in (UpDown15m, BtcUpDown15m, UpDown4h):
@@ -80,4 +93,5 @@ class ExchangeFactory:
     @classmethod
     def get_supported_exchanges(cls) -> list:
         """获取支持的交易所列表"""
-        return list(cls.SUPPORTED_EXCHANGES.keys())
+        id_map = cls.get_exchange_id_map()
+        return list(id_map.keys())

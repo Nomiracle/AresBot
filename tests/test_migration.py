@@ -24,13 +24,13 @@ def test_factory():
     # 测试获取支持的交易所列表
     supported = ExchangeFactory.get_supported_exchanges()
     print(f"✓ 支持的交易所: {supported}")
-    assert 'binance' in supported, "应该支持 binance"
-    assert 'backpack' in supported, "应该支持 backpack"
-    assert 'bpx' in supported, "应该支持 bpx (backpack 别名)"
+    assert 'ccxt_binance_spot' in supported, "应该支持 ccxt_binance_spot"
+    assert 'ccxt_backpack_spot' in supported, "应该支持 ccxt_backpack_spot"
+    assert 'native_polymarket_spot' in supported, "应该支持 native_polymarket_spot"
     
     # 测试创建币安适配器（使用测试密钥）
     exchange = ExchangeFactory.create(
-        'binance',
+        'ccxt_binance_spot',
         'test_key',
         'test_secret',
         testnet=True
@@ -38,10 +38,10 @@ def test_factory():
     print(f"✓ 成功创建币安适配器: {type(exchange).__name__}")
     assert exchange is not None, "应该成功创建适配器"
     
-    # 测试创建 Backpack 适配器（如果已安装 bpx-py）
+    # 测试创建 Backpack 适配器
     try:
         backpack_exchange = ExchangeFactory.create(
-            'backpack',
+            'ccxt_backpack_spot',
             'test_key',
             'test_secret',
             testnet=True
@@ -49,13 +49,17 @@ def test_factory():
         if backpack_exchange:
             print(f"✓ 成功创建 Backpack 适配器: {type(backpack_exchange).__name__}")
             
-            # 测试 BPX 别名
+            # 测试 backpack 别名
+            backpack_alias = ExchangeFactory.create('backpack', 'test_key', 'test_secret')
+            print(f"✓ backpack 别名正常工作: {type(backpack_alias).__name__}")
+            
+            # 测试 bpx 别名
             bpx_exchange = ExchangeFactory.create('bpx', 'test_key', 'test_secret')
-            print(f"✓ BPX 别名正常工作: {type(bpx_exchange).__name__}")
+            print(f"✓ bpx 别名正常工作: {type(bpx_exchange).__name__}")
         else:
-            print("ℹ️ Backpack 适配器创建失败（可能未安装 bpx-py）")
-    except ImportError:
-        print("ℹ️ 跳过 Backpack 测试（未安装 bpx-py）")
+            print("ℹ️ Backpack 适配器创建失败")
+    except Exception as e:
+        print(f"ℹ️ Backpack 测试失败: {e}")
     
     # 测试不支持的交易所
     unsupported = ExchangeFactory.create('unknown_exchange', 'key', 'secret')

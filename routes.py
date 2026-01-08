@@ -968,12 +968,11 @@ def register_routes(app):
         
         从各交易所适配器的 get_exchange_info() 方法获取 id 和 name
         """
-        # 获取工厂中注册的交易所类（去重）
+        # 获取工厂中注册的交易所类（通过 get_exchange_info 获取）
+        id_map = ExchangeFactory.get_exchange_id_map()
         exchange_classes = {}
-        for name, cls in ExchangeFactory.SUPPORTED_EXCHANGES.items():
-            # 使用类本身作为 key 去重（同一个类可能有多个别名）
-            if cls not in exchange_classes.values():
-                exchange_classes[name] = cls
+        for exchange_id, cls in id_map.items():
+            exchange_classes[exchange_id] = cls
         
         # 从每个交易所类获取 exchange_info
         result = []
@@ -981,9 +980,7 @@ def register_routes(app):
         
         for factory_name, cls in exchange_classes.items():
             try:
-                # 尝试获取类的 get_exchange_info 静态信息
-                # 由于 get_exchange_info 是实例方法，我们需要创建一个临时实例或使用硬编码映射
-                # 这里使用硬编码映射，因为某些适配器需要实例化参数
+                # 直接调用类的 get_exchange_info 类方法
                 exchange_info = _get_exchange_info_by_class(cls, factory_name)
                 
                 if exchange_info and exchange_info['id'] not in seen_ids:

@@ -1758,26 +1758,12 @@
         const select = document.getElementById("symbol");
         const currentExchange = document.getElementById("exchange").value;
         
-        // 根据交易所 ID 映射到基础交易所名称
-        const exchangeId = exchangeIdMap[currentExchange] || currentExchange;
-        const idToBaseMap = {
-          'ccxt_binance_spot': 'binance',
-          'ccxt_binance_futures': 'binance',
-          'ccxt_binance_futures_short': 'binance',
-          'ccxt_backpack_spot': 'backpack',
-          'native_polymarket_spot': 'polymarket',
-          'native_updown_15m': 'polymarket',
-          'native_updown_4h': 'polymarket'
-        };
-        
-        const baseExchange = idToBaseMap[exchangeId] || currentExchange;
-        
         // 过滤出支持当前交易所的交易对
         const filteredPairs = pairs.filter(pair => {
           const exchanges = pair.exchanges || 'binance,backpack';
           const exchangeList = exchanges.split(',');
-          // 检查是否包含基础交易所名称
-          return exchangeList.includes(baseExchange) || exchangeList.includes(currentExchange);
+          // 直接使用交易所 ID 进行匹配
+          return exchangeList.includes(currentExchange);
         });
         
         const currentValue = select.value;
@@ -1785,7 +1771,7 @@
         // 如果没有找到匹配的交易对,显示提示信息
         if (filteredPairs.length === 0) {
           select.innerHTML = '<option value="">暂无支持该交易所的交易对,请在"交易对管理"中添加</option>';
-          console.log(`没有找到支持 ${currentExchange} (基础: ${baseExchange}) 的交易对`);
+          console.log(`没有找到支持 ${currentExchange} 的交易对`);
           return;
         }
         
