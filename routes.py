@@ -957,7 +957,7 @@ def register_routes(app):
                 # 启动交易线程
                 thread = threading.Thread(
                     target=trading_loop,
-                    args=(username, full_config, exchange, bot_data),
+                    args=(username, bot_key),
                     daemon=True
                 )
                 bot_data['thread'] = thread
