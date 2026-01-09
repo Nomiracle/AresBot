@@ -51,7 +51,8 @@ class ExchangeFactory:
     @classmethod
     def create(cls, exchange_name: str, api_key: str, api_secret: str, 
                symbol: str, testnet: bool = True,
-               min_price_threshold: float = None, market_close_threshold: int = None) -> Optional[BaseExchange]:
+               min_price_threshold: float = None, market_close_threshold: int = None,
+               username: str = None) -> Optional[BaseExchange]:
         """创建交易所适配器实例
         
         Args:
@@ -65,6 +66,7 @@ class ExchangeFactory:
             testnet: 是否使用测试网
             min_price_threshold: 最低价格阈值（仅 Polymarket 类适配器使用）
             market_close_threshold: 市场关闭前阈值秒数（仅 UpDown15m 使用）
+            username: 用户名（用于通知等功能）
             
         Returns:
             BaseExchange 实例，如果不支持则返回 None
@@ -81,7 +83,8 @@ class ExchangeFactory:
             if adapter_class in (UpDown15m, BtcUpDown15m, UpDown4h):
                 return adapter_class(api_key, api_secret, symbol, testnet,
                                     min_price_threshold=min_price_threshold,
-                                    market_close_threshold=market_close_threshold)
+                                    market_close_threshold=market_close_threshold,
+                                    username=username)
             # Polymarket 使用价格阈值参数
             elif adapter_class == NativePolymarketSpot:
                 return adapter_class(api_key, api_secret, symbol, testnet,

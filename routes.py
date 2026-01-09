@@ -214,7 +214,8 @@ def register_routes(app):
                 symbol=symbol,
                 testnet=testnet,
                 min_price_threshold=min_price_threshold,
-                market_close_threshold=market_close_threshold
+                market_close_threshold=market_close_threshold,
+                username=username
             )
             
             if not exchange:
@@ -732,6 +733,7 @@ def register_routes(app):
         
         if not api_key or not api_secret:
             return jsonify({'success': False, 'message': 'API密钥不能为空'}), 400
+
         try:
             testnet = bool(config.get('testnet', 1))
             exchange_name = config.get('exchange', 'binance').lower()
@@ -750,7 +752,8 @@ def register_routes(app):
                 symbol=symbol,
                 testnet=testnet,
                 min_price_threshold=min_price_threshold,
-                market_close_threshold=market_close_threshold
+                market_close_threshold=market_close_threshold,
+                username=username
             )
             
             if not exchange:
@@ -934,7 +937,8 @@ def register_routes(app):
                     symbol=symbol,
                     testnet=testnet,
                     min_price_threshold=min_price_threshold,
-                    market_close_threshold=market_close_threshold
+                    market_close_threshold=market_close_threshold,
+                    username=username
                 )
                 
                 if not exchange:
