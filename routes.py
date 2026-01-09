@@ -257,6 +257,11 @@ def register_routes(app):
             log_prefix = f"[{username}-{exchange_name}-{symbol}]"
             print(f"[{datetime.now().isoformat()}] {log_prefix} ▶️ 机器人已启动 (mode={'SIM' if config.get('simulate_trading',1)==1 else 'REAL'})")
             
+            # 递增启动次数
+            from database import increment_start_count
+            config_name = config.get('config_name', 'default')
+            increment_start_count(username, config_name)
+            
             # 构建返回消息
             success_msg = f'{symbol} 机器人已启动 ({"模拟" if config.get("simulate_trading",1)==1 else "实盘"})'
             if limit_msg and '调整' in limit_msg:
@@ -977,6 +982,10 @@ def register_routes(app):
                 bot_data['running'] = True
                 bot_data['start_timestamp'] = int(time.time() * 1000)
                 thread.start()
+                
+                # 递增启动次数
+                from database import increment_start_count
+                increment_start_count(username, config['config_name'])
                 
                 success_count += 1
                     

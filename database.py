@@ -163,6 +163,12 @@ def init_db(recreate=False):
         print(f"[{datetime.now().isoformat()}] ✅ user_configs 表已添加 sell_decay_count 列")
     except sqlite3.OperationalError:
         pass  # 列已存在
+    
+    try:
+        c.execute("ALTER TABLE user_configs ADD COLUMN start_count INTEGER DEFAULT 0")
+        print(f"[{datetime.now().isoformat()}] ✅ user_configs 表已添加 start_count 列")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
 
     c.execute('''CREATE TABLE IF NOT EXISTS orders
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -479,20 +485,20 @@ def get_user_config_list_with_details(username, include_default=False):
             # 包含 default 配置
             c.execute("""SELECT c.id, c.config_name, c.symbol, c.exchange, c.offset_percent, 
                                c.sell_offset_percent, c.quantity, c.interval, c.order_grid,
-                               c.testnet, c.simulate_trading, cr.alias as credential_alias
+                               c.testnet, c.simulate_trading, c.start_count, cr.alias as credential_alias
                          FROM user_configs c
                          LEFT JOIN api_credentials cr ON c.credential_id = cr.id
                          WHERE c.user_id=?
-                         ORDER BY c.created_at DESC""", (user_id,))
+                         ORDER BY c.start_count DESC, c.created_at DESC""", (user_id,))
         else:
             # 不包含 default 配置
             c.execute("""SELECT c.id, c.config_name, c.symbol, c.exchange, c.offset_percent, 
                                c.sell_offset_percent, c.quantity, c.interval, c.order_grid,
-                               c.testnet, c.simulate_trading, cr.alias as credential_alias
+                               c.testnet, c.simulate_trading, c.start_count, cr.alias as credential_alias
                          FROM user_configs c
                          LEFT JOIN api_credentials cr ON c.credential_id = cr.id
                          WHERE c.user_id=? AND c.config_name!='default'
-                         ORDER BY c.created_at DESC""", (user_id,))
+                         ORDER BY c.start_count DESC, c.created_at DESC""", (user_id,))
         configs = c.fetchall()
     
     return [
@@ -508,7 +514,8 @@ def get_user_config_list_with_details(username, include_default=False):
             'order_grid': cfg[8],
             'testnet': cfg[9],
             'simulate_trading': cfg[10],
-            'credential_alias': cfg[11]
+            'start_count': cfg[11] if cfg[11] is not None else 0,
+            'credential_alias': cfg[12]
         }
         for cfg in configs
     ]
@@ -524,11 +531,11 @@ def get_user_configs_by_ids(username, config_ids):
         placeholders = ','.join(['?' for _ in config_ids])
         c.execute(f"""SELECT c.id, c.config_name, c.symbol, c.exchange, c.offset_percent, 
                            c.sell_offset_percent, c.quantity, c.interval, c.order_grid,
-                           c.testnet, c.simulate_trading, cr.alias as credential_alias
+                           c.testnet, c.simulate_trading, c.start_count, cr.alias as credential_alias
                      FROM user_configs c
                      LEFT JOIN api_credentials cr ON c.credential_id = cr.id
                      WHERE c.user_id=? AND c.id IN ({placeholders})
-                     ORDER BY c.created_at DESC""", [user_id] + config_ids)
+                     ORDER BY c.start_count DESC, c.created_at DESC""", [user_id] + config_ids)
         configs = c.fetchall()
     
     return [
@@ -544,7 +551,8 @@ def get_user_configs_by_ids(username, config_ids):
             'order_grid': cfg[8],
             'testnet': cfg[9],
             'simulate_trading': cfg[10],
-            'credential_alias': cfg[11]
+            'start_count': cfg[11] if cfg[11] is not None else 0,
+            'credential_alias': cfg[12]
         }
         for cfg in configs
     ]
@@ -612,6 +620,22 @@ def get_user_config_list(username):
         }]
     
     return config_list
+
+
+def increment_start_count(username, config_name='default'):
+    """递增指定配置的启动次数"""
+    user_id = get_user_id(username)
+    if not user_id:
+        return False
+    
+    with db_pool.get_cursor() as (conn, c):
+        c.execute("UPDATE user_configs SET start_count = start_count + 1 WHERE user_id=? AND config_name=?", 
+                  (user_id, config_name))
+        updated = c.rowcount > 0
+    
+    if updated:
+        print(f"[{datetime.now().isoformat()}] ✅ 配置启动次数已递增: {config_name} (user={username})")
+    return updated
 
 
 def delete_user_config(username, config_name):
