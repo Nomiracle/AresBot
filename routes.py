@@ -385,20 +385,33 @@ def register_routes(app):
                 )
                 
                 if is_same_config:
-                    # 基于当前配置的机器人
-                    if bot.get('running'):
-                        if bot.get('healthy'):
+                    # 基于当前配置的机器人 - 使用健康检查逻辑
+                    is_running = bool(bot.get('running'))
+                    
+                    # 检查线程状态
+                    thread = bot.get('thread')
+                    thread_alive = thread.is_alive() if thread else False
+                    
+                    # 获取监听器状态
+                    monitor_started = bot.get('monitor_started', False)
+                    
+                    # 获取错误和警告信息
+                    last_error = bot.get('last_error')
+                    last_warning = bot.get('last_warning')
+                    
+                    # 判断机器人健康状态
+                    is_healthy = is_running and thread_alive and monitor_started and not last_error and not last_warning
+                    
+                    if is_running:
+                        if is_healthy:
                             config['bot_status'] = '🟢 运行中'
-                            config['bot_running'] = True
-                            config['bot_healthy'] = True
                         else:
                             config['bot_status'] = '🟡 异常'
-                            config['bot_running'] = True
-                            config['bot_healthy'] = False
                     else:
                         config['bot_status'] = '🔴 已停止'
-                        config['bot_running'] = False
-                        config['bot_healthy'] = False
+                    
+                    config['bot_running'] = is_running
+                    config['bot_healthy'] = is_healthy
                 else:
                     # 机器人存在但配置不匹配
                     config['bot_status'] = '🔴 配置不匹配'
