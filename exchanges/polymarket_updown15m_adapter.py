@@ -59,6 +59,7 @@ class UpDown15m(NativePolymarketSpot):
         # 止损相关属性
         self._stop_loss_timers = {}  # 止损定时器字典 {market_slug: timer}
         self._stop_loss_lock = threading.Lock()  # 止损定时器锁
+        self._stop_loss_cache = {}  # 止损状态缓存 {order_id: {'buy_price': float, 'market_slug': str}}
         
         # 保存用户名用于通知
         self.username = username
@@ -82,6 +83,99 @@ class UpDown15m(NativePolymarketSpot):
         print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  市场关闭阈值: {self.market_close_threshold}秒")
         
         # 注意: 定时器将在 start_ws() 中设置,确保客户端已完成认证
+    
+    def _cache_sell_order_for_stop_loss(self, order_id: str, buy_price: float) -> None:
+        """缓存卖单信息用于止损
+        
+        Args:
+            order_id: 卖单ID
+            buy_price: 买入价格
+        """
+        self._stop_loss_cache[order_id] = {
+            'buy_price': buy_price,
+            'market_slug': self.market_slug,
+            'timestamp': datetime.now().isoformat()
+        }
+        print(f"{self._get_log_prefix()} 💾 已缓存卖单 {order_id} 止损信息，买入价格: {buy_price}")
+    
+    def _update_stop_loss_cache_on_replace(self, old_order_id: str, new_order_id: str, buy_price: float) -> None:
+        """改价时更新止损缓存
+        
+        Args:
+            old_order_id: 原卖单ID
+            new_order_id: 新卖单ID
+            buy_price: 买入价格
+        """
+        # 如果原订单在缓存中，更新到新订单
+        if old_order_id in self._stop_loss_cache:
+            cache_data = self._stop_loss_cache.pop(old_order_id)
+            cache_data['buy_price'] = buy_price  # 更新买入价格
+            self._stop_loss_cache[new_order_id] = cache_data
+            print(f"{self._get_log_prefix()} 🔄 已更新止损缓存：{old_order_id} -> {new_order_id}，买入价格: {buy_price}")
+        else:
+            # 如果原订单不在缓存中，直接缓存新订单
+            self._cache_sell_order_for_stop_loss(new_order_id, buy_price)
+    
+    def _clear_stop_loss_cache(self, order_id: str) -> None:
+        """清除止损缓存（订单正常成交或取消时）
+        
+        Args:
+            order_id: 订单ID
+        """
+        if order_id in self._stop_loss_cache:
+            del self._stop_loss_cache[order_id]
+            print(f"{self._get_log_prefix()} 🗑️ 已清除订单 {order_id} 的止损缓存")
+    
+    def _insert_stop_loss_order_to_database(self, original_order_id: str, market_order_id: str, 
+                                           executed_price: float, quantity: float) -> bool:
+        """插入止损订单记录到数据库（使用现有字段）
+        
+        Args:
+            original_order_id: 原始卖单ID
+            market_order_id: 市价卖单ID
+            executed_price: 执行价格
+            quantity: 数量
+            
+        Returns:
+            bool: 是否成功插入
+        """
+        try:
+            if not self.username:
+                print(f"{self._get_log_prefix()} ⚠️ 用户名为空，无法更新数据库")
+                return False
+            
+            # 获取缓存的买入价格
+            cache_data = self._stop_loss_cache.get(original_order_id)
+            if not cache_data:
+                print(f"{self._get_log_prefix()} ⚠️ 未找到订单 {original_order_id} 的止损缓存")
+                return False
+            
+            buy_price = cache_data['buy_price']
+            
+            # 使用现有的insert_order函数插入止损订单记录
+            from database import insert_order
+            
+            success = insert_order(
+                username=self.username,
+                symbol=self.original_symbol,
+                price=str(executed_price),  # 市价执行价格
+                quantity=str(quantity),
+                side='SELL',
+                status='FILLED',
+                order_id=market_order_id,
+                buy_price=str(buy_price),  # 原始买入价格
+                exchange='polymarket'
+            )
+            
+            if success:
+                print(f"{self._get_log_prefix()} ✅ 已插入止损订单记录：买入{buy_price} -> 卖出{executed_price} （{original_order_id} -> {market_order_id}）")
+                # 注意：缓存已在_execute_market_sell中清除，这里不需要重复清除
+            
+            return success
+            
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ❌ 插入止损订单记录失败: {e}")
+            return False
     
     def _parse_symbol(self, symbol: str) -> tuple:
         """解析 symbol 格式
@@ -820,21 +914,102 @@ class UpDown15m(NativePolymarketSpot):
     def order_limit_sell(self, quantity: float, price: str, **kwargs) -> Dict:
         """限价卖单(带市场关闭检查)
         
-        重写父类方法,添加市场关闭前的检查
+        重写父类方法,添加市场关闭前的检查和止损缓存
         
+        Args:
+            quantity: 数量
+            price: 价格
+            **kwargs: 其他参数，包括 entry_price（用于止损计算）
+            
         Raises:
             RuntimeError: 如果市场即将关闭
         """
         # 检查市场是否即将关闭(会抛出异常)
         self._check_market_close_before_order()
         
-        # 调用父类方法
-        return super().order_limit_sell(quantity, price, **kwargs)
-    
-    def stop_ws(self) -> None:
-        """停止 WebSocket 并清理所有定时器
+        # 从kwargs获取买入价格
+        entry_price = kwargs.get('entry_price')
         
-        重写父类方法以清理定时器（程序退出时调用）
+        # 调用父类方法下单
+        result = super().order_limit_sell(quantity, price, **kwargs)
+        
+        # 如果下单成功且提供了买入价格，缓存止损信息
+        if result and entry_price:
+            order_id = result.get('orderId') or result.get('id')
+            if order_id:
+                self._cache_sell_order_for_stop_loss(order_id, entry_price)
+        
+        return result
+    
+    def cancel_replace_order(self, side: str, order_type: str, 
+                            quantity: float, price: str, cancel_order_id: str, **kwargs) -> Dict:
+        """取消并替换订单（改价）- 重写父类方法，添加止损缓存更新
+        
+        Args:
+            side: 订单方向 ('BUY' 或 'SELL')
+            order_type: 订单类型 ('LIMIT' 等)
+            quantity: 数量
+            price: 新价格
+            cancel_order_id: 要取消的订单ID
+            **kwargs: 其他参数，包括 entry_price（用于止损缓存更新）
+            
+        Returns:
+            Dict: 包含新订单信息的字典
+        """
+        # 如果不是卖单，直接调用父类方法
+        if side.upper() != 'SELL':
+            return super().cancel_replace_order(side, order_type, quantity, price, cancel_order_id, **kwargs)
+        
+        # 只有卖单才执行以下重写逻辑
+        try:
+            # 从kwargs获取买入价格
+            entry_price = kwargs.get('entry_price')
+            
+            print(f"{self._get_log_prefix()} 🔄 开始改价: orderID={cancel_order_id}, side={side}, new_price={price}, quantity={quantity}")
+            
+            # 检查是否为虚拟订单（来自持仓的虚拟卖单）
+            is_virtual = cancel_order_id.startswith('pos_token_')
+            
+            if is_virtual:
+                # 虚拟订单不需要取消，直接创建新订单
+                print(f"{self._get_log_prefix()} 💰 虚拟订单无需取消，直接创建新订单")
+            else:
+                # Polymarket不支持原子性的cancel_replace,需要分两步
+                # 1. 取消旧订单
+                print(f"{self._get_log_prefix()} 🚫 改价步骤1: 取消旧订单 {cancel_order_id}")
+                self.cancel_order(cancel_order_id)
+                
+                # 清除对应的止损缓存
+                print(f"{self._get_log_prefix()} 🗑️ 已清除订单 {cancel_order_id} 的止损缓存")
+                self._clear_stop_loss_cache(cancel_order_id)
+                
+                # 短暂延迟确保取消完成
+                time.sleep(0.1)
+            
+            # 2. 创建新订单
+            print(f"{self._get_log_prefix()} 📝 改价步骤2: 创建新订单 price={price}, quantity={quantity}")
+            new_order = self.order_limit_sell(quantity, price, entry_price=entry_price, **kwargs)
+            
+            new_order_id = new_order.get('orderId') or new_order.get('id')
+            print(f"{self._get_log_prefix()} ✅ 改价完成: 旧订单={cancel_order_id}, 新订单={new_order_id}")
+            
+            # 如果提供了买入价格，更新止损缓存
+            if entry_price and new_order_id:
+                self._update_stop_loss_cache_on_replace(cancel_order_id, new_order_id, entry_price)
+            
+            # 返回 Binance 兼容的格式,包含 newOrderResponse
+            return {
+                'newOrderResponse': new_order
+            }
+                
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ❌ 改价失败: orderID={cancel_order_id}, error={e}")
+            raise
+        
+    def stop_ws(self) -> None:
+        """停止 WebSocket
+        
+        重写父类方法，取消定时器和止损定时器
         """
         # 取消定时器
         with self._timer_lock:
@@ -1086,6 +1261,10 @@ class UpDown15m(NativePolymarketSpot):
                     if order_id in canceled:
                         print(f"{self._get_log_prefix()} ✅ [市价抛售] 订单 {order_id} 原卖单已取消")
                         
+                        # 清除对应的止损缓存
+                        print(f"{self._get_log_prefix()} 🗑️ 已清除订单 {order_id} 的止损缓存")
+                        self._clear_stop_loss_cache(order_id)
+                        
                         # 执行市价卖单
                         print(f"{self._get_log_prefix()} 🚀 [市价抛售] 订单 {order_id} 执行市价抛售，数量: {quantity}")
                         
@@ -1094,6 +1273,19 @@ class UpDown15m(NativePolymarketSpot):
                         if market_sell_result:
                             market_order_id = market_sell_result.get('orderId') or market_sell_result.get('id')
                             print(f"{self._get_log_prefix()} ✅ [市价抛售] 订单 {order_id} 市价抛售成功，新订单号: {market_order_id}")
+                            
+                            # 获取执行价格（如果市价单返回了价格）
+                            executed_price = market_sell_result.get('price') or price
+                            if isinstance(executed_price, str):
+                                executed_price = float(executed_price)
+                            
+                            # 插入止损订单记录到数据库
+                            self._insert_stop_loss_order_to_database(
+                                original_order_id=order_id,
+                                market_order_id=market_order_id,
+                                executed_price=executed_price,
+                                quantity=float(quantity)
+                            )
                             
                             # 发送通知
                             self._send_stop_loss_notification(market_slug, order_id, price, quantity, market_order_id)
@@ -1108,10 +1300,41 @@ class UpDown15m(NativePolymarketSpot):
                 except Exception as order_error:
                     print(f"{self._get_log_prefix()} ❌ [市价抛售] 订单 {order_id} 处理失败: {order_error}")
             
+            # 执行完成后，清除所有非当前slug的缓存
+            self._clear_other_markets_cache(market_slug)
+            
         except Exception as e:
             print(f"{self._get_log_prefix()} ❌ 市价抛售执行失败: {e}")
             import traceback
             traceback.print_exc()
+    
+    def _clear_other_markets_cache(self, current_market_slug: str) -> None:
+        """清除所有非当前市场的止损缓存
+        
+        Args:
+            current_market_slug: 当前市场的slug
+        """
+        try:
+            if not self._stop_loss_cache:
+                return
+            
+            # 找出需要清除的缓存项（非当前市场的）
+            orders_to_remove = []
+            for order_id, cache_data in self._stop_loss_cache.items():
+                cached_market_slug = cache_data.get('market_slug')
+                if cached_market_slug != current_market_slug:
+                    orders_to_remove.append(order_id)
+            
+            # 清除这些缓存项
+            for order_id in orders_to_remove:
+                del self._stop_loss_cache[order_id]
+                print(f"{self._get_log_prefix()} 🗑️ 已清除其他市场订单 {order_id} 的止损缓存")
+            
+            if orders_to_remove:
+                print(f"{self._get_log_prefix()} ✅ 已清除 {len(orders_to_remove)} 个其他市场的止损缓存")
+            
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ❌ 清除其他市场缓存失败: {e}")
     
     def _send_stop_loss_notification(self, market_slug: str, original_order_id: str, 
                                    original_price: str, quantity: str, market_order_id: str) -> None:
