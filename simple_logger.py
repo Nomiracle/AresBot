@@ -5,7 +5,7 @@
 
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 class Logger(object):
@@ -45,6 +45,48 @@ class Logger(object):
             log_filename = os.path.join(self.log_dir, f"{self.prefix}_{today}.log")
             self.log_file = open(log_filename, 'a', encoding='utf-8')
             self.current_date = today
+            
+            # 清理超过10天的旧日志文件
+            self.cleanup_old_logs()
+    
+    def cleanup_old_logs(self, days_to_keep=10):
+        """清理超过指定天数的旧日志文件
+        
+        Args:
+            days_to_keep: 保留的天数，默认10天
+        """
+        try:
+            if not os.path.exists(self.log_dir):
+                return
+            
+            # 计算截止日期
+            cutoff_date = datetime.now() - timedelta(days=days_to_keep)
+            cutoff_str = cutoff_date.strftime('%Y-%m-%d')
+            
+            # 遍历日志目录中的文件
+            deleted_count = 0
+            for filename in os.listdir(self.log_dir):
+                if filename.startswith(f"{self.prefix}_") and filename.endswith('.log'):
+                    # 提取日期部分
+                    try:
+                        date_part = filename[len(f"{self.prefix}_"):-len('.log')]
+                        file_date = datetime.strptime(date_part, '%Y-%m-%d')
+                        
+                        # 如果文件日期早于截止日期，删除文件
+                        if file_date < cutoff_date:
+                            file_path = os.path.join(self.log_dir, filename)
+                            os.remove(file_path)
+                            deleted_count += 1
+                            print(f"[{datetime.now().isoformat()}] 🗑️ 已删除旧日志文件: {filename}")
+                    except (ValueError, IndexError):
+                        # 如果文件名格式不正确，跳过
+                        continue
+            
+            if deleted_count > 0:
+                print(f"[{datetime.now().isoformat()}] ✅ 已清理 {deleted_count} 个超过 {days_to_keep} 天的旧日志文件")
+            
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ 清理旧日志文件失败: {e}")
     
     def write(self, message):
         """写入消息到控制台和文件"""
@@ -90,6 +132,9 @@ def setup_logging(log_dir='logs', prefix='trading'):
     # 重定向标准错误到同一个日志文件（使用 stdout_logger 的日志文件）
     stderr_logger = Logger(log_dir, f"{prefix}_stdout", sys.stderr)
     sys.stderr = stderr_logger
+    
+    # 初始化时清理旧日志文件
+    stdout_logger.cleanup_old_logs(days_to_keep=10)
     
     print(f"[{datetime.now().isoformat()}] 📝 日志系统已启动，日志目录: {log_dir}")
     
