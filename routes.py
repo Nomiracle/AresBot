@@ -169,34 +169,39 @@ def register_routes(app):
         session.pop('user', None)
         return redirect(url_for('login'))
 
-    @app.route('/api/start', methods=['POST'])
-    def api_start():
-        if 'user' not in session:
-            return jsonify({'success': False, 'message': '未授权'}), 401
-
-        username = session['user']
-        user_id = get_user_id(username)
-        config = request.json or {}
+    def start_bot(username, config, user_id=None):
+        """启动机器人的通用函数
         
-        # 支持通过credential_id引用密钥
-        credential_id = config.get('credential_id')
-        if credential_id:
-            from database import get_credential_by_id
-            credential = get_credential_by_id(user_id, credential_id)
-            if not credential:
-                return jsonify({'success': False, 'message': 'API凭证不存在'}), 400
-            api_key = credential['api_key']
-            api_secret = credential['api_secret']
-        else:
-            api_key = config.get('api_key')
-            api_secret = config.get('api_secret')
+        Args:
+            username: 用户名
+            config: 配置字典
+            user_id: 用户ID（可选，如果不提供会自动获取）
         
-        if not api_key or not api_secret:
-            return jsonify({'success': False, 'message': 'API密钥不能为空'}), 400
-        if not config.get('symbol'):
-            return jsonify({'success': False, 'message': '缺少symbol'}), 400
-
+        Returns:
+            tuple: (success: bool, message: str, bot_data: dict or None)
+        """
         try:
+            if user_id is None:
+                user_id = get_user_id(username)
+            
+            # 支持通过credential_id引用密钥
+            credential_id = config.get('credential_id')
+            if credential_id:
+                from database import get_credential_by_id
+                credential = get_credential_by_id(user_id, credential_id)
+                if not credential:
+                    return False, 'API凭证不存在', None
+                api_key = credential['api_key']
+                api_secret = credential['api_secret']
+            else:
+                api_key = config.get('api_key')
+                api_secret = config.get('api_secret')
+            
+            if not api_key or not api_secret:
+                return False, 'API密钥不能为空', None
+            if not config.get('symbol'):
+                return False, '缺少symbol', None
+
             testnet = bool(config.get('testnet', 1))
             exchange_name = config.get('exchange', 'binance').lower()
             symbol = config['symbol']
@@ -207,6 +212,7 @@ def register_routes(app):
                 min_price_threshold = float(min_price_threshold)
             if market_close_threshold is not None:
                 market_close_threshold = int(market_close_threshold)
+            
             exchange = ExchangeFactory.create(
                 exchange_name,
                 api_key,
@@ -219,28 +225,25 @@ def register_routes(app):
             )
             
             if not exchange:
-                return jsonify({'success': False, 'message': f'不支持的交易所: {exchange_name}'}), 400
-
+                return False, f'不支持的交易所: {exchange_name}', None
+                
             exchange.ping()
-            if username not in user_bots or not isinstance(user_bots.get(username), dict):
-                user_bots[username] = {'bots': {}}
-            bot_key = f"{exchange_name}:{symbol}"
-            if bot_key in user_bots[username]['bots'] and user_bots[username]['bots'][bot_key].get('running'):
-                return jsonify({'success': False, 'message': f'{exchange_name} 交易所的 {symbol} 机器人已运行'})
-
+            
             # 只对币安交易所检查并调整API限制
             limit_msg = ""
             if exchange_name == 'binance':
+                from trading import check_and_adjust_rate_limit
                 can_start, limit_msg, adjusted_config = check_and_adjust_rate_limit(user_bots, config, api_key)
                 if not can_start:
-                    return jsonify({'success': False, 'message': f'API限制检查失败:\n{limit_msg}'}), 400
+                    return False, f'API限制检查失败:\n{limit_msg}', None
                 
                 # 使用调整后的配置
                 config = adjusted_config
                 if limit_msg:
                     print(f"[{datetime.now().isoformat()}] {limit_msg}")
-
-            user_bots[username]['bots'][bot_key] = {
+            
+            # 创建机器人数据（遵循 api_start 的结构）
+            bot_data = {
                 'running': True,
                 'exchange': exchange,
                 'config': config,
@@ -249,13 +252,26 @@ def register_routes(app):
                 'pending_buys': [],
                 'start_time': datetime.now()
             }
-
+            
+            # 启动交易线程
+            from trading import trading_loop
+            bot_key = f"{exchange_name}:{symbol}"
+            
+            if username not in user_bots or not isinstance(user_bots.get(username), dict):
+                user_bots[username] = {'bots': {}}
+                
+            if bot_key in user_bots[username]['bots'] and user_bots[username]['bots'][bot_key].get('running'):
+                return False, f'{exchange_name} 交易所的 {symbol} 机器人已运行', None
+            
+            user_bots[username]['bots'][bot_key] = bot_data
+            
             thread = threading.Thread(target=trading_loop, args=(username, bot_key), daemon=True)
             thread.start()
-            user_bots[username]['bots'][bot_key]['thread'] = thread
+            bot_data['thread'] = thread
 
-            exchange_name = config.get('exchange', 'binance').upper()
-            log_prefix = f"[{username}-{exchange_name}-{symbol}]"
+            # 日志输出（遵循 api_start 的格式）
+            exchange_name_display = config.get('exchange', 'binance').upper()
+            log_prefix = f"[{username}-{exchange_name_display}-{symbol}]"
             print(f"[{datetime.now().isoformat()}] {log_prefix} ▶️ 机器人已启动 (mode={'SIM' if config.get('simulate_trading',1)==1 else 'REAL'})")
             
             # 递增启动次数
@@ -263,15 +279,32 @@ def register_routes(app):
             config_name = config.get('config_name', 'default')
             increment_start_count(username, config_name)
             
-            # 构建返回消息
+            # 构建返回消息（遵循 api_start 的格式）
             success_msg = f'{symbol} 机器人已启动 ({"模拟" if config.get("simulate_trading",1)==1 else "实盘"})'
             if limit_msg and '调整' in limit_msg:
                 success_msg += '\n' + limit_msg
             
-            return jsonify({'success': True, 'message': success_msg})
+            return True, success_msg, bot_data
+            
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ 启动失败: {e}")
-            return jsonify({'success': False, 'message': f'启动失败: {str(e)}'}), 500
+            return False, f'启动失败: {str(e)}', None
+
+    @app.route('/api/start', methods=['POST'])
+    def api_start():
+        if 'user' not in session:
+            return jsonify({'success': False, 'message': '未授权'}), 401
+
+        username = session['user']
+        user_id = get_user_id(username)
+        config = request.json or {}
+        
+        success, message, bot_data = start_bot(username, config, user_id)
+        
+        if success:
+            return jsonify({'success': True, 'message': message})
+        else:
+            return jsonify({'success': False, 'message': message}), 400
 
     @app.route('/api/stop', methods=['POST'])
     def api_stop():
@@ -798,110 +831,20 @@ def register_routes(app):
         
         for config in configs:
             try:
-                # 直接调用启动逻辑
-                from database import load_user_config, get_credential_by_id
-                
                 # 加载完整配置
+                from database import load_user_config
                 full_config = load_user_config(username, config['config_name'])
                 if not full_config:
                     error_messages.append(f"{config['config_name']}: 配置加载失败")
                     continue
                 
-                # 获取 API 密钥
-                credential_id = full_config.get('credential_id')
-                if credential_id:
-                    credential = get_credential_by_id(get_user_id(username), credential_id)
-                    if not credential:
-                        error_messages.append(f"{config['config_name']}: API凭证不存在")
-                        continue
-                    api_key = credential['api_key']
-                    api_secret = credential['api_secret']
+                # 使用通用启动函数
+                success, message, bot_data = start_bot(username, full_config)
+                
+                if success:
+                    success_count += 1
                 else:
-                    error_messages.append(f"{config['config_name']}: 缺少API凭证")
-                    continue
-                
-                # 验证必要参数
-                if not api_key or not api_secret:
-                    error_messages.append(f"{config['config_name']}: API密钥不能为空")
-                    continue
-                if not config.get('symbol'):
-                    error_messages.append(f"{config['config_name']}: 缺少symbol")
-                    continue
-                
-                # 创建交易所实例
-                testnet = bool(config.get('testnet', 1))
-                exchange_name = config.get('exchange', 'binance').lower()
-                symbol = config['symbol']
-                min_price_threshold = config.get('min_price_threshold')
-                market_close_threshold = config.get('market_close_threshold')
-                
-                if min_price_threshold is not None:
-                    min_price_threshold = float(min_price_threshold)
-                if market_close_threshold is not None:
-                    market_close_threshold = int(market_close_threshold)
-                
-                exchange = ExchangeFactory.create(
-                    exchange_name,
-                    api_key,
-                    api_secret,
-                    symbol=symbol,
-                    testnet=testnet,
-                    min_price_threshold=min_price_threshold,
-                    market_close_threshold=market_close_threshold,
-                    username=username
-                )
-                
-                if not exchange:
-                    error_messages.append(f"{config['config_name']}: 不支持的交易所: {exchange_name}")
-                    continue
-                
-                # 启动机器人逻辑（从 api_start 复制）
-                from trading import trading_loop, user_bots
-                bot_key = f"{exchange_name}:{symbol}"
-                
-                if username not in user_bots:
-                    user_bots[username] = {'bots': {}}
-                
-                if bot_key in user_bots[username]['bots']:
-                    error_messages.append(f"{config['config_name']}: 机器人已存在")
-                    continue
-                
-                # 创建机器人数据
-                bot_data = {
-                    'config': full_config,
-                    'exchange': exchange,
-                    'running': False,
-                    'thread': None,
-                    'monitor_started': False,
-                    'order_monitor_enabled': False,
-                    'pending_buys': [],
-                    'pending_sells': [],
-                    'last_error': None,
-                    'error_count': 0,
-                    'last_error_time': None,
-                    'last_warning': None,
-                    'warning_count': 0,
-                    'start_timestamp': None
-                }
-                
-                user_bots[username]['bots'][bot_key] = bot_data
-                
-                # 启动交易线程
-                thread = threading.Thread(
-                    target=trading_loop,
-                    args=(username, bot_key),
-                    daemon=True
-                )
-                bot_data['thread'] = thread
-                bot_data['running'] = True
-                bot_data['start_timestamp'] = int(time.time() * 1000)
-                thread.start()
-                
-                # 递增启动次数
-                from database import increment_start_count
-                increment_start_count(username, config['config_name'])
-                
-                success_count += 1
+                    error_messages.append(f"{config['config_name']}: {message}")
                     
             except Exception as e:
                 error_messages.append(f"{config['config_name']}: {str(e)}")

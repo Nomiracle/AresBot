@@ -485,7 +485,9 @@ def get_user_config_list_with_details(username, include_default=False):
             # 包含 default 配置
             c.execute("""SELECT c.id, c.config_name, c.symbol, c.exchange, c.offset_percent, 
                                c.sell_offset_percent, c.quantity, c.interval, c.order_grid,
-                               c.testnet, c.simulate_trading, c.start_count, cr.alias as credential_alias
+                               c.testnet, c.simulate_trading, c.start_count, c.credential_id,
+                               c.min_price_threshold, c.market_close_threshold, c.sell_decay_count,
+                               c.created_at, c.updated_at, cr.alias as credential_alias
                          FROM user_configs c
                          LEFT JOIN api_credentials cr ON c.credential_id = cr.id
                          WHERE c.user_id=?
@@ -494,7 +496,9 @@ def get_user_config_list_with_details(username, include_default=False):
             # 不包含 default 配置
             c.execute("""SELECT c.id, c.config_name, c.symbol, c.exchange, c.offset_percent, 
                                c.sell_offset_percent, c.quantity, c.interval, c.order_grid,
-                               c.testnet, c.simulate_trading, c.start_count, cr.alias as credential_alias
+                               c.testnet, c.simulate_trading, c.start_count, c.credential_id,
+                               c.min_price_threshold, c.market_close_threshold, c.sell_decay_count,
+                               c.created_at, c.updated_at, cr.alias as credential_alias
                          FROM user_configs c
                          LEFT JOIN api_credentials cr ON c.credential_id = cr.id
                          WHERE c.user_id=? AND c.config_name!='default'
@@ -515,7 +519,12 @@ def get_user_config_list_with_details(username, include_default=False):
             'testnet': cfg[9],
             'simulate_trading': cfg[10],
             'start_count': cfg[11] if cfg[11] is not None else 0,
-            'credential_alias': cfg[12]
+            'min_price_threshold': cfg[12],
+            'market_close_threshold': cfg[13],
+            'sell_decay_count': cfg[14],
+            'created_at': cfg[15],
+            'updated_at': cfg[16],
+            'credential_alias': cfg[17]
         }
         for cfg in configs
     ]
@@ -531,7 +540,9 @@ def get_user_configs_by_ids(username, config_ids):
         placeholders = ','.join(['?' for _ in config_ids])
         c.execute(f"""SELECT c.id, c.config_name, c.symbol, c.exchange, c.offset_percent, 
                            c.sell_offset_percent, c.quantity, c.interval, c.order_grid,
-                           c.testnet, c.simulate_trading, c.start_count, cr.alias as credential_alias
+                           c.testnet, c.simulate_trading, c.start_count, c.credential_id,
+                           c.min_price_threshold, c.market_close_threshold, c.sell_decay_count,
+                           c.created_at, c.updated_at, cr.alias as credential_alias
                      FROM user_configs c
                      LEFT JOIN api_credentials cr ON c.credential_id = cr.id
                      WHERE c.user_id=? AND c.id IN ({placeholders})
@@ -552,7 +563,12 @@ def get_user_configs_by_ids(username, config_ids):
             'testnet': cfg[9],
             'simulate_trading': cfg[10],
             'start_count': cfg[11] if cfg[11] is not None else 0,
-            'credential_alias': cfg[12]
+            'min_price_threshold': cfg[12],
+            'market_close_threshold': cfg[13],
+            'sell_decay_count': cfg[14],
+            'created_at': cfg[15],
+            'updated_at': cfg[16],
+            'credential_alias': cfg[17]
         }
         for cfg in configs
     ]
