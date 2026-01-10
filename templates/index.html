@@ -511,6 +511,10 @@
       .batch-table tr:hover {
         background-color: #f8f9fa;
       }
+      .batch-table tr.selected {
+        background-color: #e3f2fd !important;
+        border-left: 3px solid #2196f3;
+      }
       .batch-table tr:last-child td {
         border-bottom: none;
       }
@@ -2598,9 +2602,9 @@
               }
               
               html += `
-                <tr>
+                <tr onclick="toggleRowCheckbox(${config.id})" style="cursor: pointer;">
                   <td>${index + 1}</td>
-                  <td>
+                  <td onclick="event.stopPropagation()">
                     <input type="checkbox" id="batch-${config.id}" value="${config.id}" onchange="updateSelectAllCheckbox()">
                   </td>
                   <td class="config-name">${config.config_name}</td>
@@ -2624,13 +2628,48 @@
       function toggleSelectAll() {
         const selectAllCheckbox = document.getElementById('selectAllCheckbox');
         const checkboxes = document.querySelectorAll('#batchConfigsList input[type="checkbox"]');
-        checkboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
+        checkboxes.forEach(cb => {
+          cb.checked = selectAllCheckbox.checked;
+          // 更新行的选中样式
+          const row = cb.closest('tr');
+          if (cb.checked) {
+            row.classList.add('selected');
+          } else {
+            row.classList.remove('selected');
+          }
+        });
+      }
+      
+      function toggleRowCheckbox(configId) {
+        const checkbox = document.getElementById(`batch-${configId}`);
+        if (checkbox) {
+          checkbox.checked = !checkbox.checked;
+          updateSelectAllCheckbox();
+          
+          // 更新行的选中样式
+          const row = checkbox.closest('tr');
+          if (checkbox.checked) {
+            row.classList.add('selected');
+          } else {
+            row.classList.remove('selected');
+          }
+        }
       }
       
       function updateSelectAllCheckbox() {
         const selectAllCheckbox = document.getElementById('selectAllCheckbox');
         const checkboxes = document.querySelectorAll('#batchConfigsList input[type="checkbox"]');
         const checkedCount = document.querySelectorAll('#batchConfigsList input[type="checkbox"]:checked').length;
+        
+        // 更新所有行的选中样式
+        checkboxes.forEach(checkbox => {
+          const row = checkbox.closest('tr');
+          if (checkbox.checked) {
+            row.classList.add('selected');
+          } else {
+            row.classList.remove('selected');
+          }
+        });
         
         // 如果没有选中的，全选框不选中
         // 如果全部选中，全选框选中
