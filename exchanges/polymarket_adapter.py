@@ -238,8 +238,11 @@ class NativePolymarketSpot(BaseExchange):
         with self._cancelled_order_ids_lock:
             return order_id in self._cancelled_order_ids
     
-    def get_open_orders(self) -> List[Dict]:
+    def get_open_orders(self, asset_id: str = None) -> List[Dict]:
         """获取未完成订单
+        
+        Args:
+            asset_id: 指定的 asset_id，为 None 时使用当前 self.symbol
         
         Returns:
             list: 未完成订单列表
@@ -247,7 +250,7 @@ class NativePolymarketSpot(BaseExchange):
         # 清理过期的已取消订单缓存
         self._cleanup_cancelled_cache()
         
-        target_asset_id = self.symbol
+        target_asset_id = asset_id if asset_id is not None else self.symbol
         try:
             print(f"{self._get_log_prefix()} 🔍 查询未完成订单 (asset_id={target_asset_id})...")
             # 使用 asset_id 过滤，只查询指定 symbol 的订单
