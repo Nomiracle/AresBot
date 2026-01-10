@@ -525,21 +525,6 @@ class UpDown15m(NativePolymarketSpot):
             self._is_switching_market = False
             return False
     
-    def order_limit_buy(self, quantity: float, price: str, **kwargs) -> Dict:
-        """限价买单 - 重写父类方法，检查市场切换状态"""
-        if self._is_switching_market:
-            error_msg = "市场切换中，禁止下单"
-            print(f"{self._get_log_prefix()} 🚫 {error_msg}")
-            raise RuntimeError(error_msg)
-        return super().order_limit_buy(quantity, price, **kwargs)
-    
-    def order_limit_sell(self, quantity: float, price: str, **kwargs) -> Dict:
-        """限价卖单 - 重写父类方法，检查市场切换状态"""
-        if self._is_switching_market:
-            error_msg = "市场切换中，禁止下单"
-            print(f"{self._get_log_prefix()} 🚫 {error_msg}")
-            raise RuntimeError(error_msg)
-        return super().order_limit_sell(quantity, price, **kwargs)
     
     def modify_order(self, cancel_order_id: str, new_price: str, new_quantity: float = None, side: str = None) -> Dict:
         """改价 - 重写父类方法，检查市场切换状态"""
@@ -797,6 +782,12 @@ class UpDown15m(NativePolymarketSpot):
         
         seconds_left = self.get_seconds_until_market_close()
         
+        # 优先检查市场切换状态
+        if self._is_switching_market:
+            error_msg = "市场切换中，禁止下单"
+            print(f"{self._get_log_prefix()} 🚫 {error_msg}")
+            raise RuntimeError(error_msg)
+        
         # 市场已关闭
         if seconds_left == 0:
             error_msg = f"市场已关闭,无法下单"
@@ -808,6 +799,9 @@ class UpDown15m(NativePolymarketSpot):
             error_msg = f"市场将在 {seconds_left} 秒后关闭,拒绝下单"
             print(f"{self._get_log_prefix()} ❌ {error_msg}")
             raise RuntimeError(error_msg)
+        
+        # 检查通过，可以下单
+        return
     
     def order_limit_buy(self, quantity: float, price: str, **kwargs) -> Dict:
         """限价买单(带市场关闭检查)
