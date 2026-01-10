@@ -1113,9 +1113,11 @@ class UpDown15m(NativePolymarketSpot):
                 try:
                     print(f"{self._generate_log_prefix_by_slug(market_slug)} 🛡️ [止损执行] 开始执行市场 {market_slug} 的止损检查")
                     
-                    # 3. 遍历_stop_loss_cache
+                    # 3. 遍历_stop_loss_cache（创建副本避免迭代时修改字典）
                     existing_orders = []
-                    for order_id, cache_data in self._stop_loss_cache.items():
+                    orders_to_remove = []  # 记录需要删除的订单ID
+                    
+                    for order_id, cache_data in list(self._stop_loss_cache.items()):  # 使用list()创建副本
                         # 只处理指定市场的订单
                         if cache_data.get('market_slug') == market_slug:
                             try:
@@ -1137,23 +1139,25 @@ class UpDown15m(NativePolymarketSpot):
                                     }
                                     existing_orders.append(order_info)
                                     
-                                    # 清除对应的止损缓存
-                                    self._clear_stop_loss_cache(order_id)
+                                    # 记录需要删除的订单ID，而不是立即删除
+                                    orders_to_remove.append(order_id)
                                 else:
                                     print(f"{self._generate_log_prefix_by_slug(market_slug)} ℹ️ [止损执行] 订单 {order_id} 不存在或已成交")
-                                    # 清除不存在的订单缓存
-                                    self._clear_stop_loss_cache(order_id)
+                                    # 记录需要删除的订单ID
+                                    orders_to_remove.append(order_id)
                                     
                             except Exception as cancel_error:
                                 print(f"{self._generate_log_prefix_by_slug(market_slug)} ⚠️ [止损执行] 取消订单 {order_id} 时出错: {cancel_error}")
-                                # 取消出错时也清除缓存，避免重复处理
-                                self._clear_stop_loss_cache(order_id)
+                                # 取消出错时也记录删除，避免重复处理
+                                orders_to_remove.append(order_id)
+                    
+                    # 批量删除缓存记录（避免迭代时修改字典）
+                    for order_id in orders_to_remove:
+                        self._clear_stop_loss_cache(order_id)
                     
                     if not existing_orders:
                         print(f"{self._generate_log_prefix_by_slug(market_slug)} ✅ [止损执行] 市场 {market_slug} 所有卖单已成交或不存在，无需止损")
                         return
-                    
-                    # 提取存在的订单号用于日志
                     existing_order_ids = [order.get('orderId') for order in existing_orders]
                     existing_order_ids_str = ', '.join(existing_order_ids) if existing_order_ids else '无订单号'
                     
