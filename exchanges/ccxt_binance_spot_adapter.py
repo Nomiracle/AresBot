@@ -339,35 +339,72 @@ class CcxtBinanceSpot(BaseExchange):
         """取消并替换订单（优先使用 editOrderWs 原子操作，失败则回退到取消+新建）"""
         print(f"{self._get_log_prefix()} 🔄 取消并替换订单: cancel_id={cancel_order_id}, side={side}, qty={quantity}, price={price}")
         
-        # 尝试使用 editOrderWs（WebSocket 原子改单）
-        if self._ws_client and self._event_loop and self._event_loop.is_running():
-            try:
-                future = asyncio.run_coroutine_threadsafe(
-                    self._ws_client.edit_order_ws(
-                        id=cancel_order_id,
-                        symbol=self._market_symbol,
-                        type='limit',
-                        side=side.lower(),
-                        amount=quantity,
-                        price=float(price)
-                    ),
-                    self._event_loop
-                )
-                result = future.result(timeout=10)  # 10秒超时
-                new_order_id = str(result.get('id') or result.get('orderId'))
-                print(f"{self._get_log_prefix()} ✅ editOrderWs 改单成功: {cancel_order_id} → {new_order_id}")
-                return {
-                    "cancelResult": "SUCCESS",
-                    "newOrderResult": "SUCCESS",
-                    "newOrderResponse": {
-                        "orderId": new_order_id,
-                        "id": new_order_id,
-                        **result
-                    },
-                }
-            except Exception as e:
-                print(f"{self._get_log_prefix()} ❌ editOrderWs 失败 (order_id={cancel_order_id}): {e}")
-                raise
+        # 检查是否强制使用取消+新建模式
+        notusews = kwargs.get('notusews', False)
+        if notusews:
+            print(f"{self._get_log_prefix()} 📌 检测到 notusews=True，直接使用取消+新建模式")
+        else:
+            # 尝试使用 editOrderWs（WebSocket 原子改单）
+            if self._ws_client and self._event_loop and self._event_loop.is_running():
+                try:
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._ws_client.edit_order_ws(
+                            id=cancel_order_id,
+                            symbol=self._market_symbol,
+                            type='limit',
+                            side=side.lower(),
+                            amount=quantity,
+                            price=float(price)
+                        ),
+                        self._event_loop
+                    )
+                    result = future.result(timeout=10)  # 10秒超时
+                    new_order_id = str(result.get('id') or result.get('orderId'))
+                    print(f"{self._get_log_prefix()} ✅ editOrderWs 改单成功: {cancel_order_id} → {new_order_id}")
+                    return {
+                        "cancelResult": "SUCCESS",
+                        "newOrderResult": "SUCCESS",
+                        "newOrderResponse": {
+                            "orderId": new_order_id,
+                            "id": new_order_id,
+                            **result
+                        },
+                    }
+                except Exception as e:
+                    print(f"{self._get_log_prefix()} ❌ editOrderWs 失败 (order_id={cancel_order_id}): {e}")
+                    print(f"{self._get_log_prefix()} 🔄 回退到取消+新建模式")
+        
+        # 回退到取消+新建模式（或直接使用此模式）
+        try:
+            # 步骤1: 取消原订单
+            print(f"{self._get_log_prefix()} 🚫 步骤1: 取消订单 {cancel_order_id}")
+            cancel_result = self.cancel_order(cancel_order_id)
+            print(f"{self._get_log_prefix()} ✅ 订单取消成功: {cancel_order_id}")
+            
+            # 短暂延迟确保取消完成
+            import time
+            time.sleep(0.1)
+            
+            # 步骤2: 创建新订单
+            print(f"{self._get_log_prefix()} 📝 步骤2: 创建新订单 price={price}, quantity={quantity}")
+            if side.upper() == 'BUY':
+                new_order = self.order_limit_buy(quantity, price)
+            else:
+                new_order = self.order_limit_sell(quantity, price)
+            
+            new_order_id = str(new_order.get('orderId') or new_order.get('id'))
+            print(f"{self._get_log_prefix()} ✅ 新订单创建成功: {new_order_id}")
+            
+            # 返回标准格式的结果
+            return {
+                "cancelResult": "SUCCESS",
+                "newOrderResult": "SUCCESS", 
+                "newOrderResponse": new_order
+            }
+            
+        except Exception as fallback_error:
+            print(f"{self._get_log_prefix()} ❌ 取消+新建模式失败: {fallback_error}")
+            raise fallback_error
 
     def _get_price_precision(self, symbol_info: Dict) -> Tuple[float, int]:
         """从现货交易对信息中提取价格精度（内部使用）"""

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 
 import ccxt.pro as ccxtpro
 import ccxt
@@ -47,6 +47,31 @@ class CcxtBackpackSpot(CcxtBinanceSpot):
         """生成日志前缀"""
         api_key_short = self.api_key[:6] if self.api_key else "NOKEY"
         return f"[{datetime.now().isoformat()}] [ccxt-backpack-{api_key_short}-{self.symbol}]"
+
+    def cancel_replace_order(
+        self,
+        side: str,
+        order_type: str,
+        quantity: float,
+        price: str,
+        cancel_order_id: str,
+        **kwargs,
+    ) -> Dict:
+        """取消并替换订单（Backpack 强制使用取消+新建模式）
+        
+        重写父类方法，强制使用 notusews=True，因为 Backpack 可能不支持 WebSocket 原子改单
+        """
+        
+        # 调用父类方法，强制使用取消+新建模式
+        return super().cancel_replace_order(
+            side=side,
+            order_type=order_type,
+            quantity=quantity,
+            price=price,
+            cancel_order_id=cancel_order_id,
+            notusews=True,  # 强制使用取消+新建模式
+            **kwargs
+        )
 
     @classmethod
     def get_exchange_info(cls) -> Dict:
