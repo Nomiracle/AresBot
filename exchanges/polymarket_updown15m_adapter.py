@@ -988,7 +988,7 @@ class UpDown15m(NativePolymarketSpot):
             
             # 2. 创建新订单
             print(f"{self._get_log_prefix()} 📝 改价步骤2: 创建新订单 price={price}, quantity={quantity}")
-            new_order = self.order_limit_sell(quantity, price, entry_price=entry_price, **kwargs)
+            new_order = self.order_limit_sell(quantity, price, **kwargs)
             
             new_order_id = new_order.get('orderId') or new_order.get('id')
             print(f"{self._get_log_prefix()} ✅ 改价完成: 旧订单={cancel_order_id}, 新订单={new_order_id}")
