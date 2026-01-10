@@ -473,6 +473,66 @@ class NativePolymarketSpot(BaseExchange):
             traceback.print_exc()
             raise
     
+    def order_market_sell(self, quantity: float, **kwargs) -> Dict:
+        """市价卖单（使用买价确保立即成交）"""
+        try:
+            import requests
+            
+            print(f"{self._get_log_prefix()} 🚀 创建市价卖单: token_id={self.symbol}, quantity={quantity}")
+            
+            # 获取当前买价（市价卖单使用买价确保立即成交）
+            print(f"{self._get_log_prefix()} 📊 获取买价...")
+            buy_url = f"https://clob.polymarket.com/price?token_id={self.symbol}&side=BUY"
+            
+            buy_response = requests.get(buy_url, timeout=10)
+            buy_response.raise_for_status()
+            buy_data = buy_response.json()
+            buy_price = float(buy_data.get('price', 0))
+            
+            if buy_price <= 0:
+                raise RuntimeError("无法获取有效买价")
+            
+            print(f"{self._get_log_prefix()} 📈 当前买价: {buy_price:.4f}")
+            
+            # 在下卖单前检查 token 余额
+            print(f"{self._get_log_prefix()} 🔍 检查 Conditional Token 余额...")
+            self._check_token_balance(quantity)
+            
+            print(f"{self._get_log_prefix()} 📝 创建市价卖单: token_id={self.symbol}, price={buy_price}, quantity={quantity}")
+            
+            from py_clob_client.clob_types import OrderArgs, SELL, OrderType
+            
+            order = OrderArgs(
+                token_id=self.symbol,
+                price=buy_price,
+                size=quantity,
+                side=SELL
+            )
+            
+            print(f"{self._get_log_prefix()} 🔏 签名订单...")
+            signed = self.client.create_order(order)
+            
+            print(f"{self._get_log_prefix()} 📤 提交订单...")
+            resp = self.client.post_order(signed, OrderType.GTC)
+            
+            order_id = resp.get('orderID')
+            print(f"{self._get_log_prefix()} ✅ 市价卖单创建成功: orderID={order_id}, price={buy_price}")
+            
+            return {
+                'orderId': order_id,
+                'status': 'NEW',
+                'side': 'SELL',
+                'price': buy_price,
+                'origQty': quantity,
+                'executedQty': 0
+            }
+            
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ❌ 市价卖单失败: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+    
     def _check_token_balance(self, required_quantity: float, max_wait: int = 30):
         """检查/等待 token 余额达到要求
         
