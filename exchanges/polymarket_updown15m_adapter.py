@@ -462,9 +462,9 @@ class UpDown15m(NativePolymarketSpot):
                 # 清空成交订单去重缓存（新市场的订单 ID 不会与旧市场冲突）
                 self.clear_filled_order_ids()
                 
-                # 关闭旧市场的 WebSocket
-                print(f"[{datetime.now().isoformat()}] 🔌 {self._get_log_prefix()}  关闭旧市场 WebSocket...")
-                self.stop_ws()
+                # 关闭旧市场的 WebSocket（保留止损定时器）
+                print(f"[{datetime.now().isoformat()}] 🔌 {self._get_log_prefix()}  关闭旧市场 WebSocket（保留止损定时器）...")
+                self.stop_ws_for_refresh()
                 
                 # 等待 WebSocket 完全关闭
                 time.sleep(1)
@@ -838,9 +838,9 @@ class UpDown15m(NativePolymarketSpot):
         return super().order_limit_sell(quantity, price, **kwargs)
     
     def stop_ws(self) -> None:
-        """停止 WebSocket 并清理定时器
+        """停止 WebSocket 并清理所有定时器
         
-        重写父类方法以清理定时器
+        重写父类方法以清理定时器（程序退出时调用）
         """
         # 取消定时器
         with self._timer_lock:
@@ -858,6 +858,21 @@ class UpDown15m(NativePolymarketSpot):
             self._stop_loss_timers.clear()
         
         # 调用父类方法
+        super().stop_ws()
+    
+    def stop_ws_for_refresh(self) -> None:
+        """停止 WebSocket 仅用于市场刷新（保留止损定时器）
+        
+        专门用于市场切换时停止 WebSocket，不影响止损定时器
+        """
+        # 只取消市场刷新定时器，保留止损定时器
+        with self._timer_lock:
+            if self._refresh_timer:
+                self._refresh_timer.cancel()
+                self._refresh_timer = None
+                print(f"{self._get_log_prefix()} ⏲️ 已取消市场刷新定时器（保留止损定时器）")
+        
+        # 调用父类方法停止 WebSocket
         super().stop_ws()
     
     def _setup_stop_loss_for_market(self, asset_id: str, market_slug: str) -> None:
