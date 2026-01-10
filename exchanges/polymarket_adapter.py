@@ -473,16 +473,16 @@ class NativePolymarketSpot(BaseExchange):
             traceback.print_exc()
             raise
     
-    def order_market_sell(self, quantity: float, **kwargs) -> Dict:
+    def order_market_sell(self, quantity: float, asset_id: str = None, **kwargs) -> Dict:
         """市价卖单（使用买价确保立即成交）"""
         try:
             import requests
-            
-            print(f"{self._get_log_prefix()} 🚀 创建市价卖单: token_id={self.symbol}, quantity={quantity}")
+            asset_id = asset_id if asset_id is not None else self.symbol
+            print(f"{self._get_log_prefix()} 🚀 创建市价卖单: token_id={asset_id}, quantity={quantity}")
             
             # 获取当前买价（市价卖单使用买价确保立即成交）
             print(f"{self._get_log_prefix()} 📊 获取买价...")
-            buy_url = f"https://clob.polymarket.com/price?token_id={self.symbol}&side=BUY"
+            buy_url = f"https://clob.polymarket.com/price?token_id={asset_id}&side=BUY"
             
             buy_response = requests.get(buy_url, timeout=10)
             buy_response.raise_for_status()
@@ -498,12 +498,10 @@ class NativePolymarketSpot(BaseExchange):
             print(f"{self._get_log_prefix()} 🔍 检查 Conditional Token 余额...")
             self._check_token_balance(quantity)
             
-            print(f"{self._get_log_prefix()} 📝 创建市价卖单: token_id={self.symbol}, price={buy_price}, quantity={quantity}")
-            
-            from py_clob_client.clob_types import OrderArgs, SELL, OrderType
+            print(f"{self._get_log_prefix()} 📝 创建市价卖单: token_id={asset_id}, price={buy_price}, quantity={quantity}")
             
             order = OrderArgs(
-                token_id=self.symbol,
+                token_id=asset_id,
                 price=buy_price,
                 size=quantity,
                 side=SELL
@@ -516,7 +514,7 @@ class NativePolymarketSpot(BaseExchange):
             resp = self.client.post_order(signed, OrderType.GTC)
             
             order_id = resp.get('orderID')
-            print(f"{self._get_log_prefix()} ✅ 市价卖单创建成功: orderID={order_id}, price={buy_price}")
+            print(f"{self._get_log_prefix()} ✅ 市价卖单创建成功: orderID={order_id}, price={buy_price}, quantity={quantity}")
             
             return {
                 'orderId': order_id,
