@@ -76,11 +76,11 @@ class UpDown15m(NativePolymarketSpot):
         # 调用父类初始化
         super().__init__(api_key, api_secret, token_id, testnet, min_price_threshold=min_price_threshold)
         
-        print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  使用市场: {self.market_slug}")
-        print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  市场前缀: {self.market_prefix}")
-        print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  交易方向: {self.outcome}")
-        print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  Token ID: {token_id}")
-        print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  市场关闭阈值: {self.market_close_threshold}秒")
+        print(f" ✅ {self._get_log_prefix()}  使用市场: {self.market_slug}")
+        print(f" ✅ {self._get_log_prefix()}  市场前缀: {self.market_prefix}")
+        print(f" ✅ {self._get_log_prefix()}  交易方向: {self.outcome}")
+        print(f" ✅ {self._get_log_prefix()}  Token ID: {token_id}")
+        print(f" ✅ {self._get_log_prefix()}  市场关闭阈值: {self.market_close_threshold}秒")
         
         # 注意: 定时器将在 start_ws() 中设置,确保客户端已完成认证
     
@@ -267,7 +267,7 @@ class UpDown15m(NativePolymarketSpot):
             # 使用动态市场前缀
             slug = f"{self.market_prefix}-updown-{self.MARKET_PERIOD}-{timestamp}"
             
-            print(f"[{datetime.now().isoformat()}] 🔍 {self._get_log_prefix()}  查询市场: {slug}")
+            print(f" 🔍 {self._get_log_prefix()}  查询市场: {slug}")
             
             # 通过 Gamma API 查询市场
             response = requests.get(
@@ -289,7 +289,7 @@ class UpDown15m(NativePolymarketSpot):
                             condition_id = market.get('conditionId') or market.get('condition_id')
                             if condition_id:
                                 self.condition_id = condition_id
-                                print(f"[{datetime.now().isoformat()}] 🔑 {self._get_log_prefix()}  Condition ID: {condition_id}")
+                                print(f" 🔑 {self._get_log_prefix()}  Condition ID: {condition_id}")
                         
                         import json
                         clob_token_ids_str = market.get('clobTokenIds', '[]')
@@ -307,12 +307,12 @@ class UpDown15m(NativePolymarketSpot):
                                         'outcome': outcomes[i]
                                     })
                         except (json.JSONDecodeError, Exception) as e:
-                            print(f"[{datetime.now().isoformat()}] ⚠️ {self._get_log_prefix()}  解析 clobTokenIds 失败: {e}")
+                            print(f" ⚠️ {self._get_log_prefix()}  解析 clobTokenIds 失败: {e}")
                         
                         # 查找对应方向的 token
-                        print(f"[{datetime.now().isoformat()}] 🔍 {self._get_log_prefix()}  市场 {slug} 有 {len(tokens)} 个 token")
+                        print(f" 🔍 {self._get_log_prefix()}  市场 {slug} 有 {len(tokens)} 个 token")
                         for token in tokens:
-                            print(f"[{datetime.now().isoformat()}] 🔍 {self._get_log_prefix()}    - {token.get('outcome')}: {token.get('token_id')}")
+                            print(f" 🔍 {self._get_log_prefix()}    - {token.get('outcome')}: {token.get('token_id')}")
                             if token.get('outcome', '').lower() == self.outcome.lower():
                                 token_id = token.get('token_id')
                                 
@@ -321,10 +321,10 @@ class UpDown15m(NativePolymarketSpot):
                                     # 市场结束时间 = 市场开始时间 + 周期时长
                                     self.market_end_time = timestamp + self.MARKET_PERIOD_SECONDS
                                 
-                                print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  找到 {self.outcome} token")
-                                print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  Slug: {slug} (开始: {datetime.fromtimestamp(timestamp, tz=pytz.UTC).strftime('%H:%M')} UTC)")
-                                print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  Token ID: {token_id}")
-                                print(f"[{datetime.now().isoformat()}] ⏰ {self._get_log_prefix()}  市场结束时间: {datetime.fromtimestamp(self.market_end_time, tz=pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
+                                print(f" ✅ {self._get_log_prefix()}  找到 {self.outcome} token")
+                                print(f" ✅ {self._get_log_prefix()}  Slug: {slug} (开始: {datetime.fromtimestamp(timestamp, tz=pytz.UTC).strftime('%H:%M')} UTC)")
+                                print(f" ✅ {self._get_log_prefix()}  Token ID: {token_id}")
+                                print(f" ⏰ {self._get_log_prefix()}  市场结束时间: {datetime.fromtimestamp(self.market_end_time, tz=pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
                                 return token_id
                         
                         # 如果没有找到指定方向,使用第一个 token
@@ -337,15 +337,15 @@ class UpDown15m(NativePolymarketSpot):
                                 # 市场结束时间 = 市场开始时间 + MARKET_PERIOD_SECONDS
                                 self.market_end_time = timestamp + self.MARKET_PERIOD_SECONDS
                             
-                            print(f"[{datetime.now().isoformat()}] ⚠️ {self._get_log_prefix()}  未找到 {self.outcome},使用 {actual_outcome}: {token_id}")
-                            print(f"[{datetime.now().isoformat()}] ⏰ {self._get_log_prefix()}  市场开始时间: {datetime.fromtimestamp(timestamp, tz=pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC, 当前时间: {datetime.now(pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
-                            print(f"[{datetime.now().isoformat()}] ⏰ {self._get_log_prefix()}  市场结束时间: {datetime.fromtimestamp(self.market_end_time, tz=pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
+                            print(f" ⚠️ {self._get_log_prefix()}  未找到 {self.outcome},使用 {actual_outcome}: {token_id}")
+                            print(f" ⏰ {self._get_log_prefix()}  市场开始时间: {datetime.fromtimestamp(timestamp, tz=pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC, 当前时间: {datetime.now(pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
+                            print(f" ⏰ {self._get_log_prefix()}  市场结束时间: {datetime.fromtimestamp(self.market_end_time, tz=pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC")
                             return token_id
             
-            print(f"[{datetime.now().isoformat()}] ⏭️ {self._get_log_prefix()}  市场 {slug} 不存在")
+            print(f" ⏭️ {self._get_log_prefix()}  市场 {slug} 不存在")
             
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ {self._get_log_prefix()}  查询失败: {e}")
+            print(f" ❌ {self._get_log_prefix()}  查询失败: {e}")
         
         return None
     
@@ -362,7 +362,7 @@ class UpDown15m(NativePolymarketSpot):
         token_id = self._get_market_token_by_timestamp(current_timestamp, update_state=True)
         
         if not token_id:
-            print(f"[{datetime.now().isoformat()}] ❌ {self._get_log_prefix()}  无法获取最新市场")
+            print(f" ❌ {self._get_log_prefix()}  无法获取最新市场")
         
         return token_id
     
@@ -388,24 +388,24 @@ class UpDown15m(NativePolymarketSpot):
             
             if token_id:
                 if attempt > 1:
-                    print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  第{attempt}次尝试成功获取市场")
+                    print(f" ✅ {self._get_log_prefix()}  第{attempt}次尝试成功获取市场")
                 return token_id
             
             # 检查是否还有时间继续重试
             if self.market_end_time:
                 seconds_left = self.get_seconds_until_market_close()
                 if seconds_left <= current_delay:
-                    print(f"[{datetime.now().isoformat()}] ⏰ {self._get_log_prefix()}  距离市场结束仅剩{seconds_left}秒,停止重试")
+                    print(f" ⏰ {self._get_log_prefix()}  距离市场结束仅剩{seconds_left}秒,停止重试")
                     break
             
             # 等待后重试
-            print(f"[{datetime.now().isoformat()}] ⏳ {self._get_log_prefix()}  市场尚未创建,{current_delay}秒后重试 (第{attempt}次尝试)")
+            print(f" ⏳ {self._get_log_prefix()}  市场尚未创建,{current_delay}秒后重试 (第{attempt}次尝试)")
             time.sleep(current_delay)
             
             # 递增重试间隔
             current_delay += initial_delay
         
-        print(f"[{datetime.now().isoformat()}] ❌ {self._get_log_prefix()}  尝试{attempt}次后仍无法获取下一个市场")
+        print(f" ❌ {self._get_log_prefix()}  尝试{attempt}次后仍无法获取下一个市场")
         return None
     
     def _check_and_schedule_refresh(self) -> None:
@@ -542,8 +542,8 @@ class UpDown15m(NativePolymarketSpot):
             bool: 是否成功刷新
         """
         try:
-            print(f"[{datetime.now().isoformat()}] 🔄 {self._get_log_prefix()}  刷新市场...")
-            print(f"[{datetime.now().isoformat()}] 🔍 {self._get_log_prefix()}  当前状态: slug={self.market_slug}, token_id={self.symbol}")
+            print(f" 🔄 {self._get_log_prefix()}  刷新市场...")
+            print(f" 🔍 {self._get_log_prefix()}  当前状态: slug={self.market_slug}, token_id={self.symbol}")
             
             old_token_id = self.symbol
             old_slug = self.market_slug
@@ -557,7 +557,7 @@ class UpDown15m(NativePolymarketSpot):
                 self.clear_filled_order_ids()
                 
                 # 关闭旧市场的 WebSocket（保留止损定时器）
-                print(f"[{datetime.now().isoformat()}] 🔌 {self._get_log_prefix()}  关闭旧市场 WebSocket（保留止损定时器）...")
+                print(f" 🔌 {self._get_log_prefix()}  关闭旧市场 WebSocket（保留止损定时器）...")
                 self.stop_ws_for_refresh()
                 
                 # 等待 WebSocket 完全关闭
@@ -568,15 +568,15 @@ class UpDown15m(NativePolymarketSpot):
                 
                 # 如果之前有 WebSocket 回调,重新启动新市场的 WebSocket
                 if self._ws_callbacks:
-                    print(f"[{datetime.now().isoformat()}] 🚀 {self._get_log_prefix()}  启动新市场 WebSocket...")
+                    print(f" 🚀 {self._get_log_prefix()}  启动新市场 WebSocket...")
                     self.start_ws(
                         on_price_update=self._ws_callbacks['price'],
                         on_order_update=self._ws_callbacks['order']
                     )
                 
-                print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  市场已更新")
-                print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  旧市场: token_id={old_token_id}")
-                print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  新市场: slug={self.market_slug}, token_id={new_token_id}")
+                print(f" ✅ {self._get_log_prefix()}  市场已更新")
+                print(f" ✅ {self._get_log_prefix()}  旧市场: token_id={old_token_id}")
+                print(f" ✅ {self._get_log_prefix()}  新市场: slug={self.market_slug}, token_id={new_token_id}")
                 
 
                 
@@ -589,30 +589,30 @@ class UpDown15m(NativePolymarketSpot):
                         'new_slug': new_slug
                     }
                     self._ws_callbacks['order'](refresh_event)
-                    print(f"[{datetime.now().isoformat()}] 📤 {self._get_log_prefix()}  已发送 refresh_market 事件")
+                    print(f" 📤 {self._get_log_prefix()}  已发送 refresh_market 事件")
                 time.sleep(1)
                 # 重置市场切换标志，允许下单和改价
                 self._is_switching_market = False
-                print(f"[{datetime.now().isoformat()}] ✅ {self._get_log_prefix()}  市场切换完成，允许下单和改价")
+                print(f" ✅ {self._get_log_prefix()}  市场切换完成，允许下单和改价")
                 
                 return True
             elif new_token_id == old_token_id:
-                print(f"[{datetime.now().isoformat()}] ℹ️ {self._get_log_prefix()}  已是最新市场: slug={self.market_slug}, token_id={self.symbol}")
+                print(f" ℹ️ {self._get_log_prefix()}  已是最新市场: slug={self.market_slug}, token_id={self.symbol}")
                 # 重置市场切换标志
                 self._is_switching_market = False
                 return True
             else:
                 # new_token_id 为 None，说明交易所可能在维护，继续尝试下一个市场
-                print(f"[{datetime.now().isoformat()}] ⚠️ {self._get_log_prefix()}  当前市场刷新失败，可能交易所维护中，继续尝试下一个市场...")
+                print(f" ⚠️ {self._get_log_prefix()}  当前市场刷新失败，可能交易所维护中，继续尝试下一个市场...")
                 # 不重置 _is_switching_market 标志，继续尝试
                 # 递归调用，尝试下一个市场（market_end_time 已在 _get_next_market_token 中更新）
                 retry_delay = random.randint(10, 20)  # 随机等待10-20秒
-                print(f"[{datetime.now().isoformat()}] ⏳ {self._get_log_prefix()}  等待 {retry_delay} 秒后重试...")
+                print(f" ⏳ {self._get_log_prefix()}  等待 {retry_delay} 秒后重试...")
                 time.sleep(retry_delay)
                 return self.refresh_market()
                 
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ {self._get_log_prefix()}  刷新市场失败: {e}")
+            print(f" ❌ {self._get_log_prefix()}  刷新市场失败: {e}")
             import traceback
             traceback.print_exc()
             # 异常时也要重置标志

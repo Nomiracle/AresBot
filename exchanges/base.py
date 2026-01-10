@@ -85,6 +85,15 @@ class BaseExchange(ABC):
         return round(estimated_buy_price, price_decimals)
     
     @abstractmethod
+    def _get_log_prefix(self) -> str:
+        """生成日志前缀
+        
+        Returns:
+            str: 用于日志消息的前缀字符串，包含时间戳和关键标识信息
+        """
+        pass
+    
+    @abstractmethod
     def get_order(self, order_id: str) -> Dict:
         """查询订单状态"""
         pass

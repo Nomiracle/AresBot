@@ -87,7 +87,7 @@ def place_sell_order_with_retry(exchange, bot_data, config, buy_order_id, buy_pr
             entry_price=buy_price
         )
         sell_order_id = str(sell_order.get('orderId') or sell_order.get('id'))
-        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单已挂 {sell_order_id}: 价格={sell_price}")
+        print(f"{log_prefix} ✅ 卖单已挂 {sell_order_id}: 价格={sell_price}")
         
         # 更新 target_price 为卖单价格
         bot_data['target_price'] = sell_price
@@ -134,14 +134,14 @@ def place_sell_order_with_retry(exchange, bot_data, config, buy_order_id, buy_pr
                     max_price_diff_percent=buy_max_diff_str,
                     avg_price_diff_percent=buy_avg_diff_str
                 )
-                print(f"[{datetime.now().isoformat()}] {log_prefix} 📝 卖单已记录到数据库 (买单差值: 最小={buy_min_diff_str}%, 最大={buy_max_diff_str}%, 平均={buy_avg_diff_str}%)")
+                print(f"{log_prefix} 📝 卖单已记录到数据库 (买单差值: 最小={buy_min_diff_str}%, 最大={buy_max_diff_str}%, 平均={buy_avg_diff_str}%)")
                 
                 # 重置买单差值统计数据
                 bot_data['buy_min_price_diff_percent'] = None
                 bot_data['buy_max_price_diff_percent'] = None
                 bot_data['buy_avg_price_diff_percent'] = None
             except Exception as db_e:
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 卖单记录失败: {db_e}")
+                print(f"{log_prefix} ⚠️ 卖单记录失败: {db_e}")
         
         # 挂卖单成功，清除错误和警告信息
         bot_data['last_error'] = None
@@ -154,7 +154,7 @@ def place_sell_order_with_retry(exchange, bot_data, config, buy_order_id, buy_pr
         error_type = type(e).__name__
         
         if retry_count < max_retry:
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 挂卖单失败 [{retry_count + 1}/{max_retry}]: {e}，1秒后重试...")
+            print(f"{log_prefix} ⚠️ 挂卖单失败 [{retry_count + 1}/{max_retry}]: {e}，1秒后重试...")
             time.sleep(1)
             return place_sell_order_with_retry(
                 exchange, bot_data, config, buy_order_id, buy_price,
@@ -162,7 +162,7 @@ def place_sell_order_with_retry(exchange, bot_data, config, buy_order_id, buy_pr
                 retry_count + 1, max_retry
             )
         else:
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 挂卖单失败，已重试{max_retry}次: {e}")
+            print(f"{log_prefix} ❌ 挂卖单失败，已重试{max_retry}次: {e}")
             bot_data['last_error'] = f"挂卖单失败 - {error_type}: {error_msg}"
             bot_data['error_count'] = bot_data.get('error_count', 0) + 1
             bot_data['last_error_time'] = datetime.now().isoformat()
@@ -176,7 +176,7 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
     
     # 去重检查
     if order_id in bot_data.get('processed_filled_orders', set()):
-        print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ [去重] 买单 {order_id} 已处理")
+        print(f"{log_prefix} ⏭️ [去重] 买单 {order_id} 已处理")
         return
     
     # 标记为已处理
@@ -191,7 +191,7 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
                 break
     
     if not buy_price:
-        print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 买单 {order_id} 无法获取价格")
+        print(f"{log_prefix} ⚠️ 买单 {order_id} 无法获取价格")
         bot_data.get('processed_filled_orders', set()).discard(order_id)
         return
     
@@ -207,16 +207,16 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
     use_decay = sell_decay_count > 0 and abs_buy_offset > base_sell_offset
     
     # 调试日志:显示衰减判断条件
-    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 衰减判断: sell_decay_count={sell_decay_count}, abs_buy_offset={abs_buy_offset:.4f}%, base_sell_offset={base_sell_offset:.4f}%, use_decay={use_decay}")
+    print(f"{log_prefix} 🔍 衰减判断: sell_decay_count={sell_decay_count}, abs_buy_offset={abs_buy_offset:.4f}%, base_sell_offset={base_sell_offset:.4f}%, use_decay={use_decay}")
     
     if use_decay:
         # 使用衰减逻辑: 初始使用买入偏移绝对值作为卖出偏移
         dynamic_sell_offset = abs_buy_offset
-        print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 启用衰减逻辑, 初始加价: {dynamic_sell_offset:.4f}% (买入偏移绝对值)")
+        print(f"{log_prefix} 📊 启用衰减逻辑, 初始加价: {dynamic_sell_offset:.4f}% (买入偏移绝对值)")
     else:
         # 不使用衰减逻辑: 使用固定卖单偏移
         dynamic_sell_offset = base_sell_offset
-        print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 使用固定卖单偏移加价: {dynamic_sell_offset:.4f}%")
+        print(f"{log_prefix} 📊 使用固定卖单偏移加价: {dynamic_sell_offset:.4f}%")
 
     # 计算卖出价格
     sell_price = exchange.calculate_sell_price(
@@ -236,7 +236,7 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
                 break
     
     if not executed_qty:
-        print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 买单 {order_id} 无法获取数量")
+        print(f"{log_prefix} ⚠️ 买单 {order_id} 无法获取数量")
         bot_data.get('processed_filled_orders', set()).discard(order_id)
         return
     
@@ -246,23 +246,23 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
         # 外部支付手续费，不扣除币种数量，使用配置的固定挂单数量
         aligned_qty = math.floor(config['quantity'] / step_size) * step_size if step_size else config['quantity']
         aligned_qty = round(aligned_qty, qty_decimals)
-        print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 外部支付手续费，使用固定数量: {aligned_qty}")
+        print(f"{log_prefix} 📊 外部支付手续费，使用固定数量: {aligned_qty}")
     else:
         # 从交易币种扣除手续费
         fee_rate = exchange.get_fee_rate() * 2
         actual_qty = executed_qty * (1 - fee_rate)
-        print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 成交数量: {executed_qty}, 手续费率: {fee_rate*100}%, 扣除后: {actual_qty}")
+        print(f"{log_prefix} 📊 成交数量: {executed_qty}, 手续费率: {fee_rate*100}%, 扣除后: {actual_qty}")
         
         # 对齐卖出数量
         aligned_qty = math.floor(actual_qty / step_size) * step_size if step_size else actual_qty
         aligned_qty = round(aligned_qty, qty_decimals)
     
     if aligned_qty <= 0:
-        print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 对齐后数量为 0，无法挂卖单")
+        print(f"{log_prefix} ❌ 对齐后数量为 0，无法挂卖单")
         bot_data.get('processed_filled_orders', set()).discard(order_id)
         return
     
-    print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单成交 {order_id}: 买价={buy_price}, 数量={aligned_qty}")
+    print(f"{log_prefix} ✅ 买单成交 {order_id}: 买价={buy_price}, 数量={aligned_qty}")
     
     # 发送钉钉通知
     market_info = exchange.get_notification_info() if hasattr(exchange, 'get_notification_info') else None
@@ -288,7 +288,7 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
             old_grid = pb.get('grid_index', 1)
             if old_grid > filled_grid_index:
                 pb['grid_index'] = old_grid - 1
-                print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 买单 {pb['order_id']} grid_index: {old_grid} → {pb['grid_index']}")
+                print(f"{log_prefix} 🔄 买单 {pb['order_id']} grid_index: {old_grid} → {pb['grid_index']}")
     
     # 挂卖单（带重试）
     place_sell_order_with_retry(
@@ -299,7 +299,7 @@ def handle_buy_order_filled(event, bot_data, exchange, config, tick_size, price_
 
 def handle_reconnected(bot_data, exchange, log_prefix, on_order_update):
     """处理重连事件，同步订单状态"""
-    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 WebSocket 已重连，同步订单状态...")
+    print(f"{log_prefix} 🔄 WebSocket 已重连，同步订单状态...")
     
     # 同步买单状态
     pending_buys = bot_data.get('pending_buys', [])
@@ -310,7 +310,7 @@ def handle_reconnected(bot_data, exchange, log_prefix, on_order_update):
             order_status = order_info.get('status')
             
             if order_status == 'FILLED':
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 发现已成交买单 {order_id}")
+                print(f"{log_prefix} ✅ 发现已成交买单 {order_id}")
                 # 构造成交事件
                 filled_event = {
                     'event_type': 'order_filled',
@@ -324,21 +324,21 @@ def handle_reconnected(bot_data, exchange, log_prefix, on_order_update):
                 }
                 on_order_update(filled_event)
             elif order_status == 'CANCELED':
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 发现已取消买单 {order_id}")
+                print(f"{log_prefix} ⏭️ 发现已取消买单 {order_id}")
                 # 从 pending_buys 移除
                 bot_data['pending_buys'] = [
                     pb for pb in bot_data.get('pending_buys', []) 
                     if pb['order_id'] != order_id
                 ]
             elif order_status == 'EXPIRED':
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 发现已过期买单 {order_id}")
+                print(f"{log_prefix} ⏭️ 发现已过期买单 {order_id}")
                 # 从 pending_buys 移除
                 bot_data['pending_buys'] = [
                     pb for pb in bot_data.get('pending_buys', []) 
                     if pb['order_id'] != order_id
                 ]
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 查询买单 {order_id} 失败: {e}")
+            print(f"{log_prefix} ⚠️ 查询买单 {order_id} 失败: {e}")
     
     # 同步卖单状态
     pending_sells = bot_data.get('pending_sells', [])
@@ -349,7 +349,7 @@ def handle_reconnected(bot_data, exchange, log_prefix, on_order_update):
             order_status = order_info.get('status')
             
             if order_status == 'FILLED':
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 发现已成交卖单 {order_id}")
+                print(f"{log_prefix} ✅ 发现已成交卖单 {order_id}")
                 # 构造成交事件
                 filled_event = {
                     'event_type': 'order_filled',
@@ -363,21 +363,21 @@ def handle_reconnected(bot_data, exchange, log_prefix, on_order_update):
                 }
                 on_order_update(filled_event)
             elif order_status == 'CANCELED':
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 发现已取消卖单 {order_id}")
+                print(f"{log_prefix} ⏭️ 发现已取消卖单 {order_id}")
                 # 从 pending_sells 移除
                 bot_data['pending_sells'] = [
                     ps for ps in bot_data.get('pending_sells', []) 
                     if ps['order_id'] != order_id
                 ]
             elif order_status == 'EXPIRED':
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 发现已过期卖单 {order_id}")
+                print(f"{log_prefix} ⏭️ 发现已过期卖单 {order_id}")
                 # 从 pending_sells 移除
                 bot_data['pending_sells'] = [
                     ps for ps in bot_data.get('pending_sells', []) 
                     if ps['order_id'] != order_id
                 ]
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 查询卖单 {order_id} 失败: {e}")
+            print(f"{log_prefix} ⚠️ 查询卖单 {order_id} 失败: {e}")
 
 
 def reprice_buy_orders(open_buy_orders, aligned_quantity, bot_data, 
@@ -398,14 +398,14 @@ def reprice_buy_orders(open_buy_orders, aligned_quantity, bot_data,
             old_grid = pb.get('grid_index', idx)
             if old_grid != idx:
                 pb['grid_index'] = idx
-                print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 改价前调整 买单 {pb['order_id']} grid_index: {old_grid} → {idx}")
+                print(f"{log_prefix} 🔄 改价前调整 买单 {pb['order_id']} grid_index: {old_grid} → {idx}")
     
     for order in open_buy_orders:
         order_id = str(order.get('orderId'))
         
         # 跳过已成交的订单（防止与成交回调并发冲突）
         if order_id in bot_data.get('processed_filled_orders', set()):
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 订单 {order_id} 已成交，跳过改价")
+            print(f"{log_prefix} ⏭️ 订单 {order_id} 已成交，跳过改价")
             continue
         
         # 从 pending_buys 中获取该订单的 grid_index
@@ -435,11 +435,11 @@ def reprice_buy_orders(open_buy_orders, aligned_quantity, bot_data,
         # 计算价格差异百分比
         price_diff_percent = abs(target_price - order_price) / order_price * 100
         if price_diff_percent < 0.01:
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 买单[{grid_index}]价格差异 {price_diff_percent:.4f}% < 0.01%，跳过改价")
+            print(f"{log_prefix} ⏭️ 买单[{grid_index}]价格差异 {price_diff_percent:.4f}% < 0.01%，跳过改价")
             continue
         
         try:
-            print(f"[{datetime.now().isoformat()}] {log_prefix} 🔧 准备改价买单[{grid_index}]: {order_id}, 目标价={target_price:.6f}")
+            print(f"{log_prefix} 🔧 准备改价买单[{grid_index}]: {order_id}, 目标价={target_price:.6f}")
             resp = exchange.cancel_replace_order(
                 side='BUY',
                 order_type='LIMIT',
@@ -449,7 +449,7 @@ def reprice_buy_orders(open_buy_orders, aligned_quantity, bot_data,
                 timeInForce='GTC',
                 current_price=current_price
             )
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 改价请求已完成: {order_id}")
+            print(f"{log_prefix} ✅ 改价请求已完成: {order_id}")
             
             # 提取新订单ID
             new_order_id = None
@@ -465,7 +465,7 @@ def reprice_buy_orders(open_buy_orders, aligned_quantity, bot_data,
                     if pb['order_id'] == order_id:
                         pb['price'] = target_price
                         break
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单[{grid_index}]改价成功: {order_id}, 目标价格={target_price:.6f}/当前价格={current_price:.6f}")
+                print(f"{log_prefix} ✅ 买单[{grid_index}]改价成功: {order_id}, 目标价格={target_price:.6f}/当前价格={current_price:.6f}")
             else:
                 # 订单 ID 变化，添加新条目并移除旧条目
                 bot_data.setdefault('pending_buys', []).append({
@@ -480,7 +480,7 @@ def reprice_buy_orders(open_buy_orders, aligned_quantity, bot_data,
                     pb for pb in bot_data.get('pending_buys', []) 
                     if pb['order_id'] != order_id
                 ]
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 买单[{grid_index}]改价成功: {order_id} → {new_order_id}, 目标价格={target_price:.6f}/当前价格={current_price:.6f}")
+                print(f"{log_prefix} ✅ 买单[{grid_index}]改价成功: {order_id} → {new_order_id}, 目标价格={target_price:.6f}/当前价格={current_price:.6f}")
                 
             # 改价成功，清除错误和警告信息
             bot_data['last_error'] = None
@@ -503,9 +503,9 @@ def reprice_buy_orders(open_buy_orders, aligned_quantity, bot_data,
                         pb for pb in bot_data.get('pending_buys', []) 
                         if pb['order_id'] != order_id
                     ]
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🧹 订单 {order_id} 不存在,已从缓存中移除")
+                    print(f"{log_prefix} 🧹 订单 {order_id} 不存在,已从缓存中移除")
             except Exception as check_error:
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 检查订单状态失败: {check_error}")
+                print(f"{log_prefix} ⚠️ 检查订单状态失败: {check_error}")
 
 
 def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size, 
@@ -551,10 +551,10 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
             # 如果计算值小于实际卖出偏移,使用实际卖出偏移
             if calculated_offset < base_sell_offset:
                 dynamic_sell_offset = base_sell_offset
-                print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 改价{reprice_count+1}: 计算值{calculated_offset:.4f}% < 基础{base_sell_offset}%, 使用基础偏移")
+                print(f"{log_prefix} 📊 改价{reprice_count+1}: 计算值{calculated_offset:.4f}% < 基础{base_sell_offset}%, 使用基础偏移")
             else:
                 dynamic_sell_offset = calculated_offset
-                print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 改价{reprice_count+1}: 使用衰减偏移 {dynamic_sell_offset:.4f}% (递减{decay_percent:.1f}%)")
+                print(f"{log_prefix} 📊 改价{reprice_count+1}: 使用衰减偏移 {dynamic_sell_offset:.4f}% (递减{decay_percent:.1f}%)")
         else:
             # 不使用衰减逻辑或已达到衰减次数上限: 使用实际卖出偏移
             dynamic_sell_offset = base_sell_offset
@@ -572,7 +572,7 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
         price_diff_percent = abs(target_sell_price - current_sell_price) / current_sell_price * 100
         # 首先检查是否小于 0.01%
         if price_diff_percent < 0.01:
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 卖单 {sell_order_id} 价格差异 {price_diff_percent:.4f}% < 0.01%，跳过改价")
+            print(f"{log_prefix} ⏭️ 卖单 {sell_order_id} 价格差异 {price_diff_percent:.4f}% < 0.01%，跳过改价")
             continue
         
         try:
@@ -608,7 +608,7 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
                         ps['price'] = target_sell_price
                         ps['reprice_count'] = reprice_count + 1  # 增加改价次数
                         break
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单改价成功: {sell_order_id}, 目标价格={target_sell_price:.6f}/当前价格={bot_data['current_price']:.6f}, 改价次数={reprice_count + 1}")
+                print(f"{log_prefix} ✅ 卖单改价成功: {sell_order_id}, 目标价格={target_sell_price:.6f}/当前价格={bot_data['current_price']:.6f}, 改价次数={reprice_count + 1}")
             else:
                 # 订单 ID 变化，添加新条目并移除旧条目
                 # 获取原始卖单号
@@ -632,14 +632,14 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
                     ps for ps in bot_data.get('pending_sells', []) 
                     if ps['order_id'] != sell_order_id
                 ]
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单改价成功: {sell_order_id} → {new_order_id}, 目标价格={target_sell_price:.6f}/当前价格={bot_data['current_price']:.6f}, 改价次数={reprice_count + 1}，原始卖单号={original_order_id}")
+                print(f"{log_prefix} ✅ 卖单改价成功: {sell_order_id} → {new_order_id}, 目标价格={target_sell_price:.6f}/当前价格={bot_data['current_price']:.6f}, 改价次数={reprice_count + 1}，原始卖单号={original_order_id}")
                 
             # 改价成功，清除错误和警告信息
             bot_data['last_error'] = None
             bot_data['last_error_time'] = None
             bot_data['last_warning'] = None
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 卖单改价失败 {sell_order_id}: {e}")
+            print(f"{log_prefix} ❌ 卖单改价失败 {sell_order_id}: {e}")
             
             # 检查缓存中的待处理卖单是否还存在
             # 如果改价失败,可能是订单已经成交或被取消,需要从缓存中移除
@@ -653,9 +653,9 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
                         ps for ps in bot_data.get('pending_sells', []) 
                         if ps['order_id'] != sell_order_id
                     ]
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🧹 订单 {sell_order_id} 不存在,已从缓存中移除")
+                    print(f"{log_prefix} 🧹 订单 {sell_order_id} 不存在,已从缓存中移除")
             except Exception as check_error:
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 检查订单状态失败: {check_error}")
+                print(f"{log_prefix} ⚠️ 检查订单状态失败: {check_error}")
         finally:
             # 清除改价标记
             bot_data['repricing_order_id'] = None
@@ -670,10 +670,14 @@ def trading_loop(username, bot_key):
     if not bot_data:
         return
 
-    exchange_name = bot_data.get('config', {}).get('exchange', 'binance').upper()
-    symbol = bot_data.get('config', {}).get('symbol', bot_key)
-    log_prefix = f"[{username}-{exchange_name}-{symbol}]"
-    print(f"[{datetime.now().isoformat()}] {log_prefix} ▶️ 交易循环已启动")
+    exchange = bot_data.get('exchange')
+    if not exchange:
+        print(f"[{datetime.now().isoformat()}] ❌ [{username}-{bot_key}] 交易所实例不存在，无法启动交易循环")
+        return
+    
+    # 使用交易所的 _get_log_prefix 方法生成日志前缀
+    log_prefix = f"{exchange._get_log_prefix()}[{username}]"
+    print(f"{log_prefix} ▶️ 交易循环已启动")
     
     # 顶层异常捕获 - 确保任何未预期的崩溃都能被记录
     try:
@@ -683,7 +687,7 @@ def trading_loop(username, bot_key):
         log_crash(fatal_error, context=log_prefix)
         
         # 打印到标准输出
-        error_msg = f"[{datetime.now().isoformat()}] {log_prefix} 💥 交易循环致命错误:\n"
+        error_msg = f"{log_prefix} 💥 交易循环致命错误:\n"
         error_msg += ''.join(traceback.format_exception(type(fatal_error), fatal_error, fatal_error.__traceback__))
         print(error_msg)
         
@@ -717,7 +721,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
         try:
             exchange = bot_data.get('exchange')
             config = bot_data.get('config', {})
-
+            log_prefix = f"{exchange._get_log_prefix()}[{username}]"
 
             if not exchange or not config:
                 time.sleep(1)
@@ -727,23 +731,23 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
             if tick_size is None:
                 try:
                     rules = exchange.get_trading_rules()
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 原始交易规则: {rules}")
+                    print(f"{log_prefix} 🔍 原始交易规则: {rules}")
                     tick_size = rules['tick_size']
                     price_decimals = rules['price_decimals']
                     step_size = rules['step_size']
                     qty_decimals = rules['qty_decimals']
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 交易规则: tick_size={tick_size}, price_decimals={price_decimals}, step_size={step_size}, qty_decimals={qty_decimals}")
+                    print(f"{log_prefix} ✅ 交易规则: tick_size={tick_size}, price_decimals={price_decimals}, step_size={step_size}, qty_decimals={qty_decimals}")
                 except Exception as e:
                     tick_size, price_decimals = 0.01, 2
                     step_size, qty_decimals = 0.000001, 6
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 获取交易规则失败，使用默认值: {e}")
+                    print(f"{log_prefix} ⚠️ 获取交易规则失败，使用默认值: {e}")
 
             # 启动监听（仅一次）
             if not bot_data.get('monitor_started'):
                 def _on_price_update(price: float):
-                    # print(f"[{datetime.now().isoformat()}] {log_prefix} 💰 价格更新回调被调用: {price}")
+                    # print(f"{log_prefix} 💰 价格更新回调被调用: {price}")
                     bot_data['current_price'] = price
-                    # print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ bot_data['current_price'] 已更新为: {bot_data['current_price']}")
+                    # print(f"{log_prefix} ✅ bot_data['current_price'] 已更新为: {bot_data['current_price']}")
                     
                     # 使用交易所适配器的方法计算价格差值统计(买卖分开)
                     target_price = bot_data.get('target_price')
@@ -784,14 +788,14 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                     try:
                         # 过滤其他交易对的订单事件
                         if event.get('symbol') != config['symbol']:
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} 🔇 忽略其他交易对事件: {event.get('symbol')}/{config['symbol']}")
+                            print(f"{log_prefix} 🔇 忽略其他交易对事件: {event.get('symbol')}/{config['symbol']}")
                             return
 
                         event_type = event.get('event_type')
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} 📥 收到订单事件: {event}")
+                        print(f"{log_prefix} 📥 收到订单事件: {event}")
                         
                         # 在处理每个事件前记录,方便定位崩溃点
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 开始处理事件类型: {event_type}")
+                        print(f"{log_prefix} 🔄 开始处理事件类型: {event_type}")
                         
                         # 重连事件
                         if event_type == 'reconnected':
@@ -802,7 +806,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                         if event_type == 'refresh_market':
                             old_slug = event.get('old_slug')
                             new_slug = event.get('new_slug')
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 市场已切换: {old_slug} → {new_slug}")
+                            print(f"{log_prefix} 🔄 市场已切换: {old_slug} → {new_slug}")
                             # 清除旧市场的缓存订单
                             old_buys = len(bot_data.get('pending_buys', []))
                             old_sells = len(bot_data.get('pending_sells', []))
@@ -811,12 +815,12 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                             # 重置价格，等待新市场价格推送
                             old_price = bot_data.get('current_price')
                             bot_data['current_price'] = None
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} 🧹 已清除缓存订单: {old_buys} 笔买单, {old_sells} 笔卖单, 旧价格: {old_price}")
+                            print(f"{log_prefix} 🧹 已清除缓存订单: {old_buys} 笔买单, {old_sells} 笔卖单, 旧价格: {old_price}")
                             return
                         
                         # 错误事件
                         if event_type == 'error':
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ {event.get('error_message')}")
+                            print(f"{log_prefix} ❌ {event.get('error_message')}")
                             return
                         
                         # 订单取消
@@ -825,7 +829,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                             # 检查是否正在改价中，如果是则跳过清理（改价会自己处理）
                             repricing_order_id = bot_data.get('repricing_order_id')
                             if repricing_order_id == order_id:
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 订单 {order_id} 正在改价中，跳过清理")
+                                print(f"{log_prefix} ⏭️ 订单 {order_id} 正在改价中，跳过清理")
                                 return
                             
                             if event.get('side') == 'BUY':
@@ -833,20 +837,20 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                                     pb for pb in bot_data.get('pending_buys', []) 
                                     if pb['order_id'] != order_id
                                 ]
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 买单取消 {order_id}")
+                                print(f"{log_prefix} ⏭️ 买单取消 {order_id}")
                             elif event.get('side') == 'SELL':
                                 bot_data['pending_sells'] = [
                                     ps for ps in bot_data.get('pending_sells', []) 
                                     if ps['order_id'] != order_id
                                 ]
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏭️ 卖单取消 {order_id}")
+                                print(f"{log_prefix} ⏭️ 卖单取消 {order_id}")
                             return
                         
                         # 买单成交
                         if event_type == 'order_filled' and event.get('side') == 'BUY':
                             # 设置禁止下单标志
                             bot_data['is_handling_buy_filled'] = True
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} 🔒 设置禁止下单标志")
+                            print(f"{log_prefix} 🔒 设置禁止下单标志")
                             try:
                                 handle_buy_order_filled(event, bot_data, exchange, config, 
                                                        tick_size, price_decimals, step_size, 
@@ -854,7 +858,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                             finally:
                                 # 清除禁止下单标志
                                 bot_data['is_handling_buy_filled'] = False
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} 🔓 清除禁止下单标志")
+                                print(f"{log_prefix} 🔓 清除禁止下单标志")
                         
                         # 卖单成交
                         if event_type == 'order_filled' and event.get('side') == 'SELL':
@@ -873,7 +877,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                                 ps for ps in bot_data.get('pending_sells', []) 
                                 if ps['order_id'] != order_id
                             ]
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单成交 {order_id}")
+                            print(f"{log_prefix} ✅ 卖单成交 {order_id}")
                             
                             # 发送钉钉通知（包含成本价）
                             sell_price = event.get('price', 0)
@@ -905,16 +909,16 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                                     sell_max_diff=sell_max_diff_str,
                                     sell_avg_diff=sell_avg_diff_str
                                 )
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} 📝 卖单状态已更新: FILLED, 当前订单ID={order_id}, 原始订单ID={original_order_id}, 成交价格={filled_price}, 卖单差值: 最小={sell_min_diff_str}%, 最大={sell_max_diff_str}%, 平均={sell_avg_diff_str}%")
+                                print(f"{log_prefix} 📝 卖单状态已更新: FILLED, 当前订单ID={order_id}, 原始订单ID={original_order_id}, 成交价格={filled_price}, 卖单差值: 最小={sell_min_diff_str}%, 最大={sell_max_diff_str}%, 平均={sell_avg_diff_str}%")
                                 
                                 # 重置卖单差值统计数据,为下一次交易做准备
                                 bot_data['sell_min_price_diff_percent'] = None
                                 bot_data['sell_max_price_diff_percent'] = None
                                 bot_data['sell_avg_price_diff_percent'] = None
                             except Exception as db_e:
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 更新卖单状态失败: {db_e}")
+                                print(f"{log_prefix} ⚠️ 更新卖单状态失败: {db_e}")
                     except Exception as e:
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 订单回调错误: {e}")
+                        print(f"{log_prefix} ❌ 订单回调错误: {e}")
                         traceback.print_exc()
 
                 exchange.start_ws(_on_price_update, _on_order_update)
@@ -953,7 +957,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                 current_price = bot_data.get('current_price')
                 # 恢复 pending_buys 和 pending_sells（仅启动时）
                 if not pending_buys_recovered:
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 启动恢复检查: open_buy_orders={len(open_buy_orders)}, open_sell_orders={len(open_sell_orders)}, pending_buys={len(bot_data.get('pending_buys', []))}, pending_sells={len(bot_data.get('pending_sells', []))}")
+                    print(f"{log_prefix} 🔍 启动恢复检查: open_buy_orders={len(open_buy_orders)}, open_sell_orders={len(open_sell_orders)}, pending_buys={len(bot_data.get('pending_buys', []))}, pending_sells={len(bot_data.get('pending_sells', []))}")
                     if not bot_data.get('pending_buys', []) and open_buy_orders:
                         buy_offset_percent = config.get('buy_offset_percent', 0.5)
                         order_grid = config.get('order_grid', 1)
@@ -977,8 +981,8 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                                 'user_id': user_id,
                                 'grid_index': grid_index
                             })
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复买单 {order['orderId']}，price={order_price}，grid_index={grid_index}")
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复 {len(open_buy_orders)} 笔买单")
+                            print(f"{log_prefix} ✅ 恢复买单 {order['orderId']}，price={order_price}，grid_index={grid_index}")
+                        print(f"{log_prefix} ✅ 恢复 {len(open_buy_orders)} 笔买单")
                     
                     if not bot_data.get('pending_sells', []) and open_sell_orders:
                         sell_offset_percent = config.get('sell_offset_percent', 0.5)
@@ -991,7 +995,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                             buy_price = get_order_buy_price(sell_order_id)
                             
                             if buy_price:
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 从数据库恢复买入价格: {buy_price}")
+                                print(f"{log_prefix} ✅ 从数据库恢复买入价格: {buy_price}")
                             else:
                                 # 兜底方案：使用交易所适配器计算估算的买入价格
                                 # 适配器内部处理了做多/做空的逻辑差异
@@ -1002,7 +1006,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                                     price_decimals,
                                     order=order
                                 )
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 数据库无买入价格，使用估算值: {buy_price}")
+                                print(f"{log_prefix} ⚠️ 数据库无买入价格，使用估算值: {buy_price}")
                             
                             bot_data.setdefault('pending_sells', []).append({
                                 'order_id': sell_order_id,
@@ -1010,8 +1014,8 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                                 'quantity': float(order['origQty']),
                                 'buy_price': buy_price
                             })
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复卖单 {sell_order_id}，buy_price={buy_price}")
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 恢复 {len(open_sell_orders)} 笔卖单")
+                            print(f"{log_prefix} ✅ 恢复卖单 {sell_order_id}，buy_price={buy_price}")
+                        print(f"{log_prefix} ✅ 恢复 {len(open_sell_orders)} 笔卖单")
                     
                     pending_buys_recovered = True
 
@@ -1031,7 +1035,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                             ps for ps in bot_data['pending_sells'] 
                             if ps['order_id'] not in removed_ids
                         ]
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 清理已完成卖单: {removed_ids}")
+                        print(f"{log_prefix} 🔄 清理已完成卖单: {removed_ids}")
                 
                 # 动态调整卖单（默认禁用）
                 if open_sell_orders:       
@@ -1039,7 +1043,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                                       tick_size, price_decimals, step_size, qty_decimals, log_prefix)
 
             except Exception as e:
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 查询订单失败: {e}")
+                print(f"{log_prefix} ⚠️ 查询订单失败: {e}")
                 # 查询失败时不下单，避免重复挂单
                 query_success = False
 
@@ -1060,7 +1064,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
             if total_pending_qty > target_qty:
                 buy_orders = [f"{pb['order_id']}({pb.get('quantity', 0)})" for pb in pending_buys]
                 sell_orders = [f"{ps['order_id']}({ps.get('quantity', 0)})" for ps in pending_sells]
-                print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 持仓超标详情:")
+                print(f"{log_prefix} 🔍 持仓超标详情:")
                 print(f"  pending_buys({len(pending_buys)}笔): {buy_orders}")
                 print(f"  pending_sells({len(pending_sells)}笔): {sell_orders}")
                 print(f"  total={total_pending_qty:.6g}, target={target_qty:.6g}")
@@ -1085,19 +1089,19 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                     # 打印保留和取消的grid_index
                     keep_indices = [pb.get('grid_index', 1) for pb in orders_to_keep]
                     cancel_indices = [pb.get('grid_index', 1) for pb in orders_to_cancel]
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 网格调整: 保留{len(orders_to_keep)}个订单(grid_index={keep_indices}), 取消{len(orders_to_cancel)}个订单(grid_index={cancel_indices})")
+                    print(f"{log_prefix} 📊 网格调整: 保留{len(orders_to_keep)}个订单(grid_index={keep_indices}), 取消{len(orders_to_cancel)}个订单(grid_index={cancel_indices})")
                 if orders_to_cancel:
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 发现 {len(orders_to_cancel)} 笔超出网格范围的订单，准备取消 (max_buy_orders={max_buy_orders})")
+                    print(f"{log_prefix} 🔍 发现 {len(orders_to_cancel)} 笔超出网格范围的订单，准备取消 (max_buy_orders={max_buy_orders})")
                     for pb in orders_to_cancel:
                         try:
                             exchange.cancel_order(pb['order_id'])
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 取消超范围订单: {pb['order_id']}, grid_index={pb.get('grid_index')}")
+                            print(f"{log_prefix} ✅ 取消超范围订单: {pb['order_id']}, grid_index={pb.get('grid_index')}")
                             bot_data['pending_buys'] = [
                                 p for p in bot_data.get('pending_buys', []) 
                                 if p['order_id'] != pb['order_id']
                             ]
                         except Exception as e:
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 取消订单失败 {pb['order_id']}: {e}")
+                            print(f"{log_prefix} ⚠️ 取消订单失败 {pb['order_id']}: {e}")
             
             # 下单前检查和修复 grid_index（在 query_success 且不在下单中时执行）
             if query_success and not is_placing_order:
@@ -1113,7 +1117,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                 # 找出重复的 grid_index
                 duplicates = {idx: orders for idx, orders in grid_index_map.items() if len(orders) > 1}
                 if duplicates:
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 发现 grid_index 重复: {list(duplicates.keys())}")
+                    print(f"{log_prefix} 🔍 发现 grid_index 重复: {list(duplicates.keys())}")
                     
                     # 直接重新分配 grid_index，后续改价会自动调整到正确价格
                     pending_buys = bot_data.get('pending_buys', [])
@@ -1121,7 +1125,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                         old_grid_index = pb.get('grid_index', 1)
                         pb['grid_index'] = idx
                         if old_grid_index != idx:
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} 🔄 订单 {pb['order_id']} grid_index: {old_grid_index} → {idx}")
+                            print(f"{log_prefix} 🔄 订单 {pb['order_id']} grid_index: {old_grid_index} → {idx}")
                     
                     bot_data['pending_buys'] = pending_buys
             
@@ -1139,7 +1143,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                     for pb in bot_data.get('pending_buys', []):
                         max_grid_index = max(max_grid_index, pb.get('grid_index', 0))
                     
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 补单计算: 缺少数量={missing_qty:.6g}, 需补单={orders_to_add}笔, max_grid_index={max_grid_index}")
+                    print(f"{log_prefix} 🔍 补单计算: 缺少数量={missing_qty:.6g}, 需补单={orders_to_add}笔, max_grid_index={max_grid_index}")
                     
                     bot_data['is_placing_order'] = True
                     try:
@@ -1161,7 +1165,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                             
                             # 检查是否正在处理买单成交（禁止下单）
                             if bot_data.get('is_handling_buy_filled', False):
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} ⏸️ 正在处理买单成交，跳过下单")
+                                print(f"{log_prefix} ⏸️ 正在处理买单成交，跳过下单")
                                 continue
                             
                             order = exchange.order_limit_buy(
@@ -1170,7 +1174,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                                 current_price=current_price
                             )
                             order_id = str(order.get('orderId') or order.get('id'))
-                            print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 新买单[{grid_index}/{order_grid}] {order_id}: 价格={target_price}, 数量={aligned_quantity}, 偏移={grid_offset:.2f}%")
+                            print(f"{log_prefix} ✅ 新买单[{grid_index}/{order_grid}] {order_id}: 价格={target_price}, 数量={aligned_quantity}, 偏移={grid_offset:.2f}%")
 
                             with _pending_buys_lock:
                                 bot_data.setdefault('pending_buys', []).append({
@@ -1189,7 +1193,7 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                     except Exception as e:
                         error_msg = str(e)
                         error_type = type(e).__name__
-                        print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 下单失败: {e}")
+                        print(f"{log_prefix} ❌ 下单失败: {e}")
                         
                         # 保存下单错误信息
                         bot_data['last_error'] = f"下单失败 - {error_type}: {error_msg}"
@@ -1207,14 +1211,14 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                 if is_placing_order:
                     skip_reasons.append("正在下单中")
                 if skip_reasons:
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} ⏸️ 跳过下单: {', '.join(skip_reasons)}")
+                    print(f"{log_prefix} ⏸️ 跳过下单: {', '.join(skip_reasons)}")
 
             time.sleep(config.get('interval', 1))
 
         except Exception as e:
             error_msg = str(e)
             error_type = type(e).__name__
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ❌ 循环错误: {e}")
+            print(f"{log_prefix} ❌ 循环错误: {e}")
             traceback.print_exc()
             
             # 保存错误信息到 bot_data
@@ -1224,4 +1228,4 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
             
             time.sleep(1)
 
-    print(f"[{datetime.now().isoformat()}] {log_prefix} ◼️ 交易循环已停止")
+    print(f"{log_prefix} ◼️ 交易循环已停止")
