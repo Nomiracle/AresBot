@@ -1027,15 +1027,20 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                 # 同步 pending_sells 状态（清理已成交或取消的卖单）
                 # 注意: 只有当查询到卖单时才清理,避免API延迟导致误清理
                 if bot_data.get('pending_sells') and open_sell_orders:
-                    open_sell_order_ids = {str(o['orderId']) for o in open_sell_orders}
-                    pending_sell_ids = {ps['order_id'] for ps in bot_data['pending_sells']}
-                    removed_ids = pending_sell_ids - open_sell_order_ids
-                    if removed_ids:
-                        bot_data['pending_sells'] = [
-                            ps for ps in bot_data['pending_sells'] 
-                            if ps['order_id'] not in removed_ids
-                        ]
-                        print(f"{log_prefix} 🔄 清理已完成卖单: {removed_ids}")
+                    # 检查是否只返回虚拟订单
+                    virtual_orders = [o for o in open_sell_orders if o.get('info', {}).get('virtual', False)]
+                    if len(virtual_orders) == len(open_sell_orders) and len(open_sell_orders) > 0:
+                        print(f"{log_prefix} ⚠️ 检测到只返回虚拟订单 {[o['orderId'] for o in virtual_orders]}，跳过 pending_sells 清理")
+                    else:
+                        open_sell_order_ids = {str(o['orderId']) for o in open_sell_orders}
+                        pending_sell_ids = {ps['order_id'] for ps in bot_data['pending_sells']}
+                        removed_ids = pending_sell_ids - open_sell_order_ids
+                        if removed_ids:
+                            bot_data['pending_sells'] = [
+                                ps for ps in bot_data['pending_sells'] 
+                                if ps['order_id'] not in removed_ids
+                            ]
+                            print(f"{log_prefix} 🔄 清理已完成卖单: {removed_ids}")
                 
                 # 动态调整卖单（默认禁用）
                 if open_sell_orders:       
