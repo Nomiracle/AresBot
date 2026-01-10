@@ -381,10 +381,6 @@ class CcxtBinanceSpot(BaseExchange):
             cancel_result = self.cancel_order(cancel_order_id)
             print(f"{self._get_log_prefix()} ✅ 订单取消成功: {cancel_order_id}")
             
-            # 短暂延迟确保取消完成
-            import time
-            time.sleep(0.1)
-            
             # 步骤2: 创建新订单
             print(f"{self._get_log_prefix()} 📝 步骤2: 创建新订单 price={price}, quantity={quantity}")
             if side.upper() == 'BUY':

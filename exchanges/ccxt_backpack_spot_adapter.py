@@ -61,7 +61,7 @@ class CcxtBackpackSpot(CcxtBinanceSpot):
         
         重写父类方法，强制使用 notusews=True，因为 Backpack 可能不支持 WebSocket 原子改单
         """
-        
+        print(f"{self._get_log_prefix()} 🔄 Backpack 取消并替换订单: cancel_id={cancel_order_id}, side={side}, qty={quantity}, price={price}")
         # 调用父类方法，强制使用取消+新建模式
         return super().cancel_replace_order(
             side=side,

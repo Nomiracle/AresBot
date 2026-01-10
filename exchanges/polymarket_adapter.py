@@ -495,8 +495,8 @@ class NativePolymarketSpot(BaseExchange):
             print(f"{self._get_log_prefix()} 📈 当前买价: {buy_price:.4f}")
             
             # 在下卖单前检查 token 余额
-            print(f"{self._get_log_prefix()} 🔍 检查 Conditional Token 余额...")
-            self._check_token_balance(quantity)
+            # print(f"{self._get_log_prefix()} 🔍 检查 Conditional Token 余额...")
+            # self._check_token_balance(quantity)
             
             print(f"{self._get_log_prefix()} 📝 创建市价卖单: token_id={asset_id}, price={buy_price}, quantity={quantity}")
             
