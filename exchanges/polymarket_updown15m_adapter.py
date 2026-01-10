@@ -894,7 +894,11 @@ class UpDown15m(NativePolymarketSpot):
                 print(f"{self._get_log_prefix()} ℹ️ 市场 {market_slug} 没有卖单，无需设置止损")
                 return
             
-            print(f"{self._get_log_prefix()} 🛡️ 检测到 {len(sell_orders)} 个卖单，为市场 {market_slug} 设置止损")
+            # 提取订单号用于日志
+            order_ids = [order.get('orderId') for order in sell_orders if order.get('orderId')]
+            order_ids_str = ', '.join(order_ids) if order_ids else '无订单号'
+            
+            print(f"{self._get_log_prefix()} 🛡️ [止损设置] 市场 {market_slug} 检测到 {len(sell_orders)} 个卖单，订单号: {order_ids_str}")
             
             # 记录卖单信息
             self._record_sell_orders(market_slug, sell_orders)
@@ -1016,7 +1020,11 @@ class UpDown15m(NativePolymarketSpot):
             original_sell_orders: 原始卖单列表
         """
         try:
-            print(f"{self._get_log_prefix()} 🛡️ 执行止损检查 - 市场: {market_slug}")
+            # 提取原始订单号用于日志
+            original_order_ids = [order.get('orderId') for order in original_sell_orders if order.get('orderId')]
+            original_order_ids_str = ', '.join(original_order_ids) if original_order_ids else '无订单号'
+            
+            print(f"{self._get_log_prefix()} 🛡️ [止损执行] 市场 {market_slug} 开始止损检查，原始订单号: {original_order_ids_str}")
             
             # 清理该市场的止损定时器
             with self._stop_loss_lock:
@@ -1028,13 +1036,13 @@ class UpDown15m(NativePolymarketSpot):
             
             # 找出仍然存在的卖单
             remaining_orders = []
-            original_order_ids = {str(order.get('orderId')) for order in original_sell_orders}
-            current_order_ids = {str(order.get('orderId')) for order in current_sell_orders}
+            original_order_ids_set = {str(order.get('orderId')) for order in original_sell_orders}
+            current_order_ids_set = {str(order.get('orderId')) for order in current_sell_orders}
             
-            remaining_order_ids = original_order_ids.intersection(current_order_ids)
+            remaining_order_ids = original_order_ids_set.intersection(current_order_ids_set)
             
             if not remaining_order_ids:
-                print(f"{self._get_log_prefix()} ✅ 所有原始卖单已成交，无需止损")
+                print(f"{self._get_log_prefix()} ✅ [止损执行] 市场 {market_slug} 所有原始卖单已成交，无需止损，订单号: {original_order_ids_str}")
                 return
             
             # 构建仍然存在的卖单详细信息
@@ -1042,7 +1050,10 @@ class UpDown15m(NativePolymarketSpot):
                 if str(order.get('orderId')) in remaining_order_ids:
                     remaining_orders.append(order)
             
-            print(f"{self._get_log_prefix()} ⚠️ 发现 {len(remaining_orders)} 个卖单仍然存在，执行市价抛售")
+            # 提取剩余订单号用于日志
+            remaining_order_ids_str = ', '.join(remaining_order_ids) if remaining_order_ids else '无订单号'
+            
+            print(f"{self._get_log_prefix()} ⚠️ [止损执行] 市场 {market_slug} 发现 {len(remaining_orders)} 个卖单仍存在，订单号: {remaining_order_ids_str}，开始市价抛售")
             
             # 执行市价抛售
             self._execute_market_sell(remaining_orders, market_slug)
@@ -1060,7 +1071,11 @@ class UpDown15m(NativePolymarketSpot):
             market_slug: 市场的 slug
         """
         try:
-            print(f"{self._get_log_prefix()} 🚀 开始执行市价抛售...")
+            # 提取所有订单号用于日志
+            order_ids = [order.get('orderId') for order in sell_orders if order.get('orderId')]
+            order_ids_str = ', '.join(order_ids) if order_ids else '无订单号'
+            
+            print(f"{self._get_log_prefix()} 🚀 [市价抛售] 市场 {market_slug} 开始执行市价抛售，订单号: {order_ids_str}")
             
             for order in sell_orders:
                 order_id = order.get('orderId')
@@ -1068,23 +1083,23 @@ class UpDown15m(NativePolymarketSpot):
                 quantity = order.get('origQty')
                 
                 try:
-                    print(f"{self._get_log_prefix()} 🔄 取消卖单 {order_id} 准备市价抛售...")
+                    print(f"{self._get_log_prefix()} 🔄 [市价抛售] 订单 {order_id} 取消原卖单准备市价抛售...")
                     
                     # 先取消原卖单
                     cancel_result = self.cancel_orders([order_id])
                     canceled = cancel_result.get('canceled', [])
                     
                     if order_id in canceled:
-                        print(f"{self._get_log_prefix()} ✅ 卖单 {order_id} 已取消")
+                        print(f"{self._get_log_prefix()} ✅ [市价抛售] 订单 {order_id} 原卖单已取消")
                         
                         # 执行市价卖单
-                        print(f"{self._get_log_prefix()} 🚀 执行市价抛售，数量: {quantity}")
+                        print(f"{self._get_log_prefix()} 🚀 [市价抛售] 订单 {order_id} 执行市价抛售，数量: {quantity}")
                         
                         market_sell_result = self.order_market_sell(quantity=quantity)
                         
                         if market_sell_result:
                             market_order_id = market_sell_result.get('orderId') or market_sell_result.get('id')
-                            print(f"{self._get_log_prefix()} ✅ 市价抛售成功: {market_order_id}")
+                            print(f"{self._get_log_prefix()} ✅ [市价抛售] 订单 {order_id} 市价抛售成功，新订单号: {market_order_id}")
                             
                             # 发送通知
                             self._send_stop_loss_notification(market_slug, order_id, price, quantity, market_order_id)
@@ -1092,12 +1107,12 @@ class UpDown15m(NativePolymarketSpot):
                             # 记录日志
                             self._log_stop_loss_execution(market_slug, order_id, price, quantity, market_order_id)
                         else:
-                            print(f"{self._get_log_prefix()} ❌ 市价抛售失败")
+                            print(f"{self._get_log_prefix()} ❌ [市价抛售] 订单 {order_id} 市价抛售失败")
                     else:
-                        print(f"{self._get_log_prefix()} ❌ 取消卖单 {order_id} 失败")
+                        print(f"{self._get_log_prefix()} ❌ [市价抛售] 订单 {order_id} 取消原卖单失败")
                         
                 except Exception as order_error:
-                    print(f"{self._get_log_prefix()} ❌ 处理卖单 {order_id} 失败: {order_error}")
+                    print(f"{self._get_log_prefix()} ❌ [市价抛售] 订单 {order_id} 处理失败: {order_error}")
             
         except Exception as e:
             print(f"{self._get_log_prefix()} ❌ 市价抛售执行失败: {e}")
@@ -1180,7 +1195,6 @@ class UpDown15m(NativePolymarketSpot):
 
 # 为了向后兼容，保留 BtcUpDown15m 别名
 BtcUpDown15m = UpDown15m
-
 
 
     
