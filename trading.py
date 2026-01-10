@@ -99,7 +99,8 @@ def place_sell_order_with_retry(exchange, bot_data, config, buy_order_id, buy_pr
             'quantity': quantity,
             'buy_order_id': buy_order_id,
             'buy_price': buy_price,
-            'reprice_count': 0
+            'reprice_count': 0,
+            'original_order_id': sell_order_id  # 记录原始卖单号
         })
         
         # 插入卖单记录到数据库
@@ -610,6 +611,13 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单改价成功: {sell_order_id}, 目标价格={target_sell_price:.6f}/当前价格={bot_data['current_price']:.6f}, 改价次数={reprice_count + 1}")
             else:
                 # 订单 ID 变化，添加新条目并移除旧条目
+                # 获取原始卖单号
+                original_order_id = None
+                for ps in bot_data.get('pending_sells', []):
+                    if ps['order_id'] == sell_order_id:
+                        original_order_id = ps.get('original_order_id', sell_order_id)
+                        break
+                
                 bot_data.setdefault('pending_sells', []).append({
                     'order_id': new_order_id,
                     'price': target_sell_price,
@@ -617,13 +625,14 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
                     'symbol': config['symbol'],
                     'user_id': bot_data['user_id'],
                     'buy_price': buy_price,
-                    'reprice_count': reprice_count + 1  # 增加改价次数
+                    'reprice_count': reprice_count + 1,  # 增加改价次数
+                    'original_order_id': original_order_id  # 保持原始卖单号不变
                 })
                 bot_data['pending_sells'] = [
                     ps for ps in bot_data.get('pending_sells', []) 
                     if ps['order_id'] != sell_order_id
                 ]
-                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单改价成功: {sell_order_id} → {new_order_id}, 目标价格={target_sell_price:.6f}/当前价格={bot_data['current_price']:.6f}, 改价次数={reprice_count + 1}，本地缓存卖单：{bot_data.get('pending_sells', [])}")
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ✅ 卖单改价成功: {sell_order_id} → {new_order_id}, 目标价格={target_sell_price:.6f}/当前价格={bot_data['current_price']:.6f}, 改价次数={reprice_count + 1}，原始卖单号={original_order_id}")
                 
             # 改价成功，清除错误和警告信息
             bot_data['last_error'] = None
@@ -850,11 +859,13 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                         # 卖单成交
                         if event_type == 'order_filled' and event.get('side') == 'SELL':
                             order_id = event.get('order_id')
-                            # 先获取成本价（从 pending_sells 中查找）
+                            # 先获取成本价和原始卖单号（从 pending_sells 中查找）
                             buy_price = None
+                            original_order_id = None
                             for ps in bot_data.get('pending_sells', []):
                                 if ps['order_id'] == order_id:
                                     buy_price = ps.get('buy_price')
+                                    original_order_id = ps.get('original_order_id', order_id)
                                     break
                             
                             # 从 pending_sells 移除
@@ -887,14 +898,14 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                                 sell_avg_diff_str = str(round(sell_avg_diff, 4)) if sell_avg_diff is not None else None
                                 
                                 update_order_status(
-                                    order_id, 'FILLED', 
+                                    original_order_id, 'FILLED', 
                                     fee=fee, 
                                     price=filled_price,
                                     sell_min_diff=sell_min_diff_str,
                                     sell_max_diff=sell_max_diff_str,
                                     sell_avg_diff=sell_avg_diff_str
                                 )
-                                print(f"[{datetime.now().isoformat()}] {log_prefix} 📝 卖单状态已更新: FILLED, 成交价格={filled_price}, 卖单差值: 最小={sell_min_diff_str}%, 最大={sell_max_diff_str}%, 平均={sell_avg_diff_str}%")
+                                print(f"[{datetime.now().isoformat()}] {log_prefix} 📝 卖单状态已更新: FILLED, 当前订单ID={order_id}, 原始订单ID={original_order_id}, 成交价格={filled_price}, 卖单差值: 最小={sell_min_diff_str}%, 最大={sell_max_diff_str}%, 平均={sell_avg_diff_str}%")
                                 
                                 # 重置卖单差值统计数据,为下一次交易做准备
                                 bot_data['sell_min_price_diff_percent'] = None
