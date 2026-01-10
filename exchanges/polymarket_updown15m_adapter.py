@@ -96,6 +96,7 @@ class UpDown15m(NativePolymarketSpot):
             'buy_price': buy_price,
             'quantity': quantity,
             'market_slug': self.market_slug,
+            'asset_id': self.symbol,  # 添加当前市场的token_id
             'timestamp': datetime.now().isoformat()
         }
         print(f"{self._get_log_prefix()} 💾 已缓存卖单 {order_id} 止损信息，买入价格: {buy_price}, 数量: {quantity}")
@@ -453,28 +454,26 @@ class UpDown15m(NativePolymarketSpot):
                 self._refresh_timer.daemon = True
                 self._refresh_timer.start()
     
-    def _cancel_all_buy_orders(self, tag: str = "", asset_id: str = None, cached_log_prefix: str = None) -> int:
+    def _cancel_all_buy_orders(self, tag: str = "", asset_id: str = None, old_market_slug: str = None) -> int:
         """批量取消所有未完成的买单
         
         Args:
             tag: 日志标签，用于区分调用来源
             asset_id: 指定的 asset_id，为 None 时使用当前 self.symbol
-            cached_log_prefix: 缓存的日志前缀，为 None 时使用 self._get_log_prefix()
-        
+            old_market_slug: 旧市场的 slug，用于生成日志前缀
         Returns:
             int: 成功取消的订单数量
         """
         try:
-            log_prefix = cached_log_prefix if cached_log_prefix is not None else self._get_log_prefix()
             log_tag = f"({tag})" if tag else ""
             target_asset_id = asset_id if asset_id is not None else self.symbol
-            print(f"{log_prefix} 🚫 取消所有买单{log_tag} (asset_id={target_asset_id})...")
+            print(f"{self._generate_log_prefix_by_slug(old_market_slug)} 🚫 取消所有买单{log_tag} (asset_id={target_asset_id})...")
             
             open_orders = self.get_open_orders(asset_id=target_asset_id)
             buy_orders = [o for o in open_orders if o.get('side') == 'BUY']
             
             if not buy_orders:
-                print(f"{log_prefix} ℹ️ 没有待取消的买单{log_tag}")
+                print(f"{self._generate_log_prefix_by_slug(old_market_slug)} ℹ️ 没有待取消的买单{log_tag}")
                 return 0
             
             # 提取所有买单 ID
@@ -487,48 +486,46 @@ class UpDown15m(NativePolymarketSpot):
             result = self.cancel_orders(buy_order_ids)
             canceled = result.get('canceled', [])
             not_canceled = result.get('not_canceled', {})
-            print(f"{log_prefix} ✅ 批量取消买单完成{log_tag}: 成功 {len(canceled)} 个, 失败 {len(not_canceled)} 个")
+            print(f"{self._generate_log_prefix_by_slug(old_market_slug)} ✅ 批量取消买单完成{log_tag}: 成功 {len(canceled)} 个, 失败 {len(not_canceled)} 个")
             return len(canceled)
             
         except Exception as e:
-            log_prefix = cached_log_prefix if cached_log_prefix is not None else self._get_log_prefix()
-            print(f"{log_prefix} ⚠️ 查询或取消订单失败{tag}: {e}")
+            print(f"{self._generate_log_prefix_by_slug(old_market_slug)} ⚠️ 查询或取消订单失败{tag}: {e}")
             return 0
     
     def _refresh_market_and_cancel_orders(self) -> None:
         """刷新市场并取消旧市场的买单"""
         try:
-            # 缓存日志前缀，确保在整个刷新过程中使用一致的日志标识
-            cached_log_prefix = self._get_log_prefix()
-            print(f"{cached_log_prefix} 🔄 开始刷新市场流程...")
+
             
             # 保存旧市场的 asset_id，用于定时器取消订单
             old_asset_id = self.symbol
             old_market_slug = getattr(self, 'market_slug', None)
-            print(f"{cached_log_prefix} 📝 保存旧市场 asset_id: {old_asset_id}")
-            print(f"{cached_log_prefix} 📝 保存旧市场 slug: {old_market_slug}")
+            print(f"{self._generate_log_prefix_by_slug(old_market_slug)} 🔄 开始刷新市场流程...")
+            print(f"{self._generate_log_prefix_by_slug(old_market_slug)} 📝 保存旧市场 asset_id: {old_asset_id}")
+            print(f"{self._generate_log_prefix_by_slug(old_market_slug)} 📝 保存旧市场 slug: {old_market_slug}")
             
             # 检测并记录卖单，设置止损逻辑
-            self._setup_stop_loss_for_market(old_asset_id, old_market_slug, cached_log_prefix)
+            self._setup_stop_loss_for_market(old_asset_id, old_market_slug)
             
             # 设置市场切换中标志，禁止下单和改价
             self._is_switching_market = True
-            print(f"{cached_log_prefix} 🚫 市场切换中，禁止下单和改价")
+            print(f"{self._generate_log_prefix_by_slug(old_market_slug)} 🚫 市场切换中，禁止下单和改价")
             
             # 等待1秒，确保正在进行的操作完成
             time.sleep(1)
             
             # 1. 批量取消所有未完成的买单（第一次，使用旧 asset_id）
-            self._cancel_all_buy_orders("第1次", asset_id=old_asset_id, cached_log_prefix=cached_log_prefix)
+            self._cancel_all_buy_orders("第1次", asset_id=old_asset_id)
             
             # 设置定时器，7秒后再次执行批量取消（使用旧 asset_id）
-            cancel_timer = threading.Timer(7, self._cancel_all_buy_orders, kwargs={"tag": "第2次-定时器", "asset_id": old_asset_id, "cached_log_prefix": cached_log_prefix})
+            cancel_timer = threading.Timer(7, self._cancel_all_buy_orders, kwargs={"tag": "第2次-定时器", "asset_id": old_asset_id})
             cancel_timer.daemon = True
             cancel_timer.start()
-            print(f"{cached_log_prefix} ⏲️ 已设置7秒后再次取消买单的定时器 (asset_id={old_asset_id})")
+            print(f"{self._generate_log_prefix_by_slug(old_market_slug)} ⏲️ 已设置7秒后再次取消买单的定时器 (asset_id={old_asset_id})")
             
             # 2. 刷新到新市场
-            print(f"{cached_log_prefix} 🔄 切换到新市场...")
+            print(f"{self._generate_log_prefix_by_slug(old_market_slug)} 🔄 切换到新市场...")
             success = self.refresh_market()
             
             if success:
@@ -536,13 +533,13 @@ class UpDown15m(NativePolymarketSpot):
                 time.sleep(2)
                 
                 # 3. 为新市场设置定时器
-                print(f"{cached_log_prefix} ⏲️ 为新市场设置定时器...")
+                print(f"{self._generate_log_prefix_by_slug(old_market_slug)} ⏲️ 为新市场设置定时器...")
                 self._check_and_schedule_refresh()
             else:
-                print(f"{cached_log_prefix} ❌ 市场刷新失败")
+                print(f"{self._generate_log_prefix_by_slug(old_market_slug)} ❌ 市场刷新失败")
                 
         except Exception as e:
-            print(f"{cached_log_prefix} ❌ 刷新市场流程失败: {e}")
+            print(f"{self._generate_log_prefix_by_slug(old_market_slug)} ❌ 刷新市场流程失败: {e}")
             import traceback
             traceback.print_exc()
     
@@ -1057,55 +1054,39 @@ class UpDown15m(NativePolymarketSpot):
         
         # 调用父类方法停止 WebSocket
         super().stop_ws()
+
+
+    def _generate_log_prefix_by_slug(self, market_slug: str) -> str:
+        """根据市场slug生成日志前缀
+        
+        Args:
+            market_slug: 市场的 slug
+            
+        Returns:
+            str: 日志前缀
+        """
+        api_key_short = getattr(self, 'api_key', None)
+        api_key_short = api_key_short[:6] if api_key_short else "NOKEY"
+        return f"[{datetime.now().isoformat()}] [{api_key_short}-{market_slug}-{self.outcome}]"
     
-    def _setup_stop_loss_for_market(self, asset_id: str, market_slug: str, cached_log_prefix: str = None) -> None:
+    def _setup_stop_loss_for_market(self, asset_id: str, market_slug: str) -> None:
         """为指定市场设置止损逻辑
         
         Args:
             asset_id: 市场的 asset_id (token_id)
             market_slug: 市场的 slug
-            cached_log_prefix: 缓存的日志前缀，为 None 时使用 self._get_log_prefix()
         """
-        try:
-            log_prefix = cached_log_prefix if cached_log_prefix is not None else self._get_log_prefix()
-            
+        try: 
             if not market_slug:
-                print(f"{log_prefix} ⚠️ 市场slug为空，跳过止损设置")
+                print(f"{self._generate_log_prefix_by_slug(market_slug)} ⚠️ 市场slug为空，跳过止损设置")
                 return
             
-            # 直接从缓存中获取当前市场的卖单
-            sell_orders = []
-            for order_id, cache_data in self._stop_loss_cache.items():
-                # 只返回当前市场的卖单
-                if cache_data.get('market_slug') == self.market_slug:
-                    sell_order = {
-                        'orderId': order_id,
-                        'buy_price': cache_data.get('buy_price'),
-                        'quantity': cache_data.get('quantity'),
-                        'market_slug': cache_data.get('market_slug'),
-                        'timestamp': cache_data.get('timestamp')
-                    }
-                    sell_orders.append(sell_order)
-            
-            if not sell_orders:
-                print(f"{log_prefix} ℹ️ 市场 {market_slug} 没有卖单，无需设置止损")
-                return
-            
-            # 提取订单号用于日志
-            order_ids = [order.get('orderId') for order in sell_orders if order.get('orderId')]
-            order_ids_str = ', '.join(order_ids) if order_ids else '无订单号'
-            
-            print(f"{log_prefix} 🛡️ [止损设置] 市场 {market_slug} 检测到 {len(sell_orders)} 个卖单，订单号: {order_ids_str}")
-            
-            # 记录卖单信息
-            self._record_sell_orders(market_slug, sell_orders)
-            
-            # 计算止损检查时间：(市场结束时间 - 当前时间) / 2
+            # 1. 计算定时执行时间
             current_time = datetime.now(timezone.utc)
             market_end_time = self.market_end_time
             
             if not market_end_time:
-                print(f"{log_prefix} ⚠️ 无法获取市场结束时间，跳过止损设置")
+                print(f"{self._generate_log_prefix_by_slug(market_slug)} ⚠️ 无法获取市场结束时间，跳过止损设置")
                 return
             
             # 确保 market_end_time 是 datetime 对象
@@ -1118,13 +1099,73 @@ class UpDown15m(NativePolymarketSpot):
             total_seconds_left = (market_end_time - current_time).total_seconds()
             
             if total_seconds_left <= 0:
-                print(f"{log_prefix} ⚠️ 市场已结束，无需设置止损")
+                print(f"{self._generate_log_prefix_by_slug(market_slug)} ⚠️ 市场已结束，无需设置止损")
                 return
             
             # 止损检查时间为剩余时间的一半
             stop_loss_delay = max(30, total_seconds_left / 2)  # 最少30秒
             
-            print(f"{log_prefix} ⏰ 市场剩余时间: {total_seconds_left:.0f}秒，止损检查时间: {stop_loss_delay:.0f}秒后")
+            print(f"{self._generate_log_prefix_by_slug(market_slug)} ⏰ 市场剩余时间: {total_seconds_left:.0f}秒，止损检查时间: {stop_loss_delay:.0f}秒后")
+            
+            # 2. 设置执行函数
+            def execute_stop_loss():
+                """执行止损的内部函数"""
+                try:
+                    print(f"{self._generate_log_prefix_by_slug(market_slug)} 🛡️ [止损执行] 开始执行市场 {market_slug} 的止损检查")
+                    
+                    # 3. 遍历_stop_loss_cache
+                    existing_orders = []
+                    for order_id, cache_data in self._stop_loss_cache.items():
+                        # 只处理指定市场的订单
+                        if cache_data.get('market_slug') == market_slug:
+                            try:
+                                # 4. 尝试取消订单，如果取消成功则市价抛售，不成功清除缓存跳过
+                                cancel_result = self.cancel_orders([order_id])
+                                canceled = cancel_result.get('canceled', [])
+                                
+                                if order_id in canceled:
+                                    print(f"{self._generate_log_prefix_by_slug(market_slug)} ✅ [止损执行] 订单 {order_id} 存在且已取消，准备市价抛售")
+                                    
+                                    # 构建订单信息用于市价抛售
+                                    order_info = {
+                                        'orderId': order_id,
+                                        'buy_price': cache_data.get('buy_price'),
+                                        'quantity': cache_data.get('quantity'),
+                                        'market_slug': cache_data.get('market_slug'),
+                                        'timestamp': cache_data.get('timestamp'),
+                                        'asset_id': asset_id
+                                    }
+                                    existing_orders.append(order_info)
+                                    
+                                    # 清除对应的止损缓存
+                                    self._clear_stop_loss_cache(order_id)
+                                else:
+                                    print(f"{self._generate_log_prefix_by_slug(market_slug)} ℹ️ [止损执行] 订单 {order_id} 不存在或已成交")
+                                    # 清除不存在的订单缓存
+                                    self._clear_stop_loss_cache(order_id)
+                                    
+                            except Exception as cancel_error:
+                                print(f"{self._generate_log_prefix_by_slug(market_slug)} ⚠️ [止损执行] 取消订单 {order_id} 时出错: {cancel_error}")
+                                # 取消出错时也清除缓存，避免重复处理
+                                self._clear_stop_loss_cache(order_id)
+                    
+                    if not existing_orders:
+                        print(f"{self._generate_log_prefix_by_slug(market_slug)} ✅ [止损执行] 市场 {market_slug} 所有卖单已成交或不存在，无需止损")
+                        return
+                    
+                    # 提取存在的订单号用于日志
+                    existing_order_ids = [order.get('orderId') for order in existing_orders]
+                    existing_order_ids_str = ', '.join(existing_order_ids) if existing_order_ids else '无订单号'
+                    
+                    print(f"{self._generate_log_prefix_by_slug(market_slug)} ⚠️ [止损执行] 市场 {market_slug} 发现 {len(existing_orders)} 个卖单存在，订单号: {existing_order_ids_str}，开始市价抛售")
+                    
+                    # 执行市价抛售
+                    self._execute_market_sell(existing_orders, market_slug)
+                    
+                except Exception as e:
+                    print(f"{self._generate_log_prefix_by_slug(market_slug)} ❌ 止损执行失败: {e}")
+                    import traceback
+                    traceback.print_exc()
             
             # 设置止损定时器
             with self._stop_loss_lock:
@@ -1135,144 +1176,53 @@ class UpDown15m(NativePolymarketSpot):
                         old_timer.cancel()
                 
                 # 创建新的止损定时器
-                timer = threading.Timer(
-                    stop_loss_delay,
-                    self._check_and_execute_stop_loss,
-                    args=[asset_id, market_slug, sell_orders, cached_log_prefix]
-                )
+                timer = threading.Timer(stop_loss_delay, execute_stop_loss)
                 timer.daemon = True
                 timer.start()
                 
                 self._stop_loss_timers[market_slug] = timer
                 
-            print(f"{log_prefix} ✅ 已为市场 {market_slug} 设置止损定时器，{stop_loss_delay:.0f}秒后执行")
+            print(f"{self._generate_log_prefix_by_slug(market_slug)} ✅ 已为市场 {market_slug} 设置止损定时器，{stop_loss_delay:.0f}秒后执行")
             
         except Exception as e:
-            print(f"{log_prefix} ❌ 设置止损失败: {e}")
+            print(f"{self._generate_log_prefix_by_slug(market_slug)} ❌ 设置止损失败: {e}")
             import traceback
             traceback.print_exc()
     
-    def _record_sell_orders(self, market_slug: str, sell_orders: list) -> None:
-        """记录卖单信息到日志
-        
-        Args:
-            market_slug: 市场的 slug
-            sell_orders: 卖单列表
-        """
-        try:
-            print(f"{self._get_log_prefix()} 📝 记录市场 {market_slug} 的卖单信息:")
-            
-            for order in sell_orders:
-                order_id = order.get('orderId')
-                price = order.get('price')
-                quantity = order.get('origQty')
-                
-                log_msg = f"[止损记录] 市场: {market_slug}, 卖单: {order_id}, 价格: {price}, 数量: {quantity}, 时间: {datetime.now().isoformat()}"
-                print(f"{self._get_log_prefix()} 📝 {log_msg}")
-                
-                # 这里可以扩展到数据库记录
-                # 例如：insert_stop_loss_record(market_slug, order_id, price, quantity)
-                
-        except Exception as e:
-            print(f"{self._get_log_prefix()} ❌ 记录卖单信息失败: {e}")
-    
-    def _check_and_execute_stop_loss(self, asset_id: str, market_slug: str, original_sell_orders: list, cached_log_prefix: str = None) -> None:
-        """检查并执行止损
-        
-        Args:
-            asset_id: 市场的 asset_id
-            market_slug: 市场的 slug
-            original_sell_orders: 原始卖单列表
-            cached_log_prefix: 缓存的日志前缀，为 None 时使用 self._get_log_prefix()
-        """
-        try:
-            log_prefix = cached_log_prefix if cached_log_prefix is not None else self._get_log_prefix()
-            
-            # 直接从缓存中获取当前市场的卖单，尝试取消来验证是否存在
-            existing_orders = []
-            for order_id, cache_data in self._stop_loss_cache.items():
-                # 只处理当前市场的订单
-                if cache_data.get('market_slug') == self.market_slug:
-                    try:
-                        # 尝试取消订单来验证其是否存在
-                        cancel_result = self.cancel_orders([order_id])
-                        canceled = cancel_result.get('canceled', [])
-                        
-                        if order_id in canceled:
-                            print(f"{log_prefix} ✅ [止损执行] 订单 {order_id} 存在且已取消，准备市价抛售")
-                            
 
-                            # 构建订单信息用于市价抛售
-                            order_info = {
-                                'orderId': order_id,
-                                'buy_price': cache_data.get('buy_price'),
-                                'quantity': cache_data.get('quantity'),
-                                'market_slug': cache_data.get('market_slug'),
-                                'timestamp': cache_data.get('timestamp')
-                            }
-                            existing_orders.append(order_info)
-
-                            # 清除对应的止损缓存
-                            self._clear_stop_loss_cache(order_id)
-                        else:
-                            print(f"{log_prefix} ℹ️ [止损执行] 订单 {order_id} 不存在或已成交")
-                            # 清除不存在的订单缓存
-                            self._clear_stop_loss_cache(order_id)
-                            
-                    except Exception as cancel_error:
-                        print(f"{log_prefix} ⚠️ [止损执行] 取消订单 {order_id} 时出错: {cancel_error}")
-                        # 取消出错时也清除缓存，避免重复处理
-                        self._clear_stop_loss_cache(order_id)
-            
-            if not existing_orders:
-                print(f"{log_prefix} ✅ [止损执行] 市场 {market_slug} 所有卖单已成交或不存在，无需止损")
-                return
-            
-            # 提取存在的订单号用于日志
-            existing_order_ids = [order.get('orderId') for order in existing_orders]
-            existing_order_ids_str = ', '.join(existing_order_ids) if existing_order_ids else '无订单号'
-            
-            print(f"{log_prefix} ⚠️ [止损执行] 市场 {market_slug} 发现 {len(existing_orders)} 个卖单存在，订单号: {existing_order_ids_str}，开始市价抛售")
-            
-            # 执行市价抛售
-            self._execute_market_sell(existing_orders, market_slug, cached_log_prefix)
-            
-        except Exception as e:
-            print(f"{log_prefix} ❌ 止损检查执行失败: {e}")
-            import traceback
-            traceback.print_exc()
     
-    def _execute_market_sell(self, sell_orders: list, market_slug: str, cached_log_prefix: str = None) -> None:
+    
+    
+    def _execute_market_sell(self, sell_orders: list, market_slug: str) -> None:
         """执行市价抛售
         
         Args:
             sell_orders: 需要抛售的卖单列表
             market_slug: 市场的 slug
-            cached_log_prefix: 缓存的日志前缀，为 None 时使用 self._get_log_prefix()
         """
         try:
-            log_prefix = cached_log_prefix if cached_log_prefix is not None else self._get_log_prefix()
             
             # 提取所有订单号用于日志
             order_ids = [order.get('orderId') for order in sell_orders if order.get('orderId')]
             order_ids_str = ', '.join(order_ids) if order_ids else '无订单号'
             
-            print(f"{log_prefix} 🚀 [市价抛售] 市场 {market_slug} 开始执行市价抛售，订单号: {order_ids_str}")
+            print(f"{self._generate_log_prefix_by_slug(market_slug)} 🚀 [市价抛售] 市场 {market_slug} 开始执行市价抛售，订单号: {order_ids_str}")
             
             for order in sell_orders:
                 order_id = order.get('orderId')
                 buy_price = order.get('buy_price')
                 quantity = order.get('quantity', 1.0)  # 从缓存中获取数量，默认1.0
+                asset_id = order.get('asset_id') 
                 
                 try:
-                    print(f"{log_prefix} 🚀 [市价抛售] 订单 {order_id} 执行市价抛售，数量: {quantity}")
+                    print(f"{self._generate_log_prefix_by_slug(market_slug)} 🚀 [市价抛售] 订单 {order_id} 执行市价抛售，数量: {quantity}")
                     
                     # 订单已在止损检查中被取消，直接执行市价卖单
-                    market_sell_result = self.order_market_sell(quantity=quantity)
+                    market_sell_result = self.order_market_sell(quantity=quantity,asset_id=asset_id)
                     
                     if market_sell_result:
                         market_order_id = market_sell_result.get('orderId') or market_sell_result.get('id')
-                        print(f"{log_prefix} ✅ [市价抛售] 订单 {order_id} 市价抛售成功，新订单号: {market_order_id}")
+                        print(f"{self._generate_log_prefix_by_slug(market_slug)} ✅ [市价抛售] 订单 {order_id} 市价抛售成功，新订单号: {market_order_id}")
                         
                         # 获取执行价格（如果市价单返回了价格）
                         executed_price = market_sell_result.get('price') or buy_price
@@ -1293,46 +1243,17 @@ class UpDown15m(NativePolymarketSpot):
                         # 记录日志
                         self._log_stop_loss_execution(market_slug, order_id, str(buy_price), str(quantity), market_order_id)
                     else:
-                        print(f"{log_prefix} ❌ [市价抛售] 订单 {order_id} 市价抛售失败")
+                        print(f"{self._generate_log_prefix_by_slug(market_slug)} ❌ [市价抛售] 订单 {order_id} 市价抛售失败")
                         
                 except Exception as order_error:
-                    print(f"{log_prefix} ❌ [市价抛售] 订单 {order_id} 处理失败: {order_error}")
+                    print(f"{self._generate_log_prefix_by_slug(market_slug)} ❌ [市价抛售] 订单 {order_id} 处理失败: {order_error}")
             
-            # 执行完成后，清除所有非当前slug的缓存
-            self._clear_other_markets_cache(market_slug)
             
         except Exception as e:
-            print(f"{log_prefix} ❌ 市价抛售执行失败: {e}")
+            print(f"{self._generate_log_prefix_by_slug(market_slug)} ❌ 市价抛售执行失败: {e}")
             import traceback
             traceback.print_exc()
     
-    def _clear_other_markets_cache(self, current_market_slug: str) -> None:
-        """清除所有非当前市场的止损缓存
-        
-        Args:
-            current_market_slug: 当前市场的slug
-        """
-        try:
-            if not self._stop_loss_cache:
-                return
-            
-            # 找出需要清除的缓存项（非当前市场的）
-            orders_to_remove = []
-            for order_id, cache_data in self._stop_loss_cache.items():
-                cached_market_slug = cache_data.get('market_slug')
-                if cached_market_slug != current_market_slug:
-                    orders_to_remove.append(order_id)
-            
-            # 清除这些缓存项
-            for order_id in orders_to_remove:
-                del self._stop_loss_cache[order_id]
-                print(f"{self._get_log_prefix()} 🗑️ 已清除其他市场订单 {order_id} 的止损缓存")
-            
-            if orders_to_remove:
-                print(f"{self._get_log_prefix()} ✅ 已清除 {len(orders_to_remove)} 个其他市场的止损缓存")
-            
-        except Exception as e:
-            print(f"{self._get_log_prefix()} ❌ 清除其他市场缓存失败: {e}")
     
     def _send_stop_loss_notification(self, market_slug: str, original_order_id: str, 
                                    original_price: str, quantity: str, market_order_id: str) -> None:
@@ -1351,7 +1272,7 @@ class UpDown15m(NativePolymarketSpot):
             # 获取用户名（从父类或其他地方获取）
             username = getattr(self, 'username', None)
             if not username:
-                print(f"{self._get_log_prefix()} ⚠️ 无法获取用户名，跳过通知发送")
+                print(f"{self._generate_log_prefix_by_slug(market_slug)} ⚠️ 无法获取用户名，跳过通知发送")
                 return
             
             notifier = DingTalkNotification(username=username)
@@ -1366,12 +1287,12 @@ class UpDown15m(NativePolymarketSpot):
             success = notifier.send(msg)
             
             if success:
-                print(f"{self._get_log_prefix()} ✅ 止损通知发送成功")
+                print(f"{self._generate_log_prefix_by_slug(market_slug)} ✅ 止损通知发送成功")
             else:
-                print(f"{self._get_log_prefix()} ❌ 止损通知发送失败")
+                print(f"{self._generate_log_prefix_by_slug(market_slug)} ❌ 止损通知发送失败")
                 
         except Exception as e:
-            print(f"{self._get_log_prefix()} ❌ 发送止损通知失败: {e}")
+            print(f"{self._generate_log_prefix_by_slug(market_slug)} ❌ 发送止损通知失败: {e}")
     
     def _log_stop_loss_execution(self, market_slug: str, original_order_id: str, 
                                 original_price: str, quantity: str, market_order_id: str) -> None:
@@ -1390,13 +1311,13 @@ class UpDown15m(NativePolymarketSpot):
             log_msg += f", 市价订单: {market_order_id}"
             log_msg += f", 时间: {datetime.now().isoformat()}"
             
-            print(f"{self._get_log_prefix()} 📝 {log_msg}")
+            print(f"{self._generate_log_prefix_by_slug(market_slug)} 📝 {log_msg}")
             
             # 这里可以扩展到数据库记录
             # 例如：insert_stop_loss_execution_log(market_slug, original_order_id, original_price, quantity, market_order_id)
             
         except Exception as e:
-            print(f"{self._get_log_prefix()} ❌ 记录止损日志失败: {e}")
+            print(f"{self._generate_log_prefix_by_slug(market_slug)} ❌ 记录止损日志失败: {e}")
     
     def __del__(self):
         """析构函数,清理资源"""
