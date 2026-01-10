@@ -485,7 +485,7 @@ def get_user_config_list_with_details(username, include_default=False):
             # 包含 default 配置
             c.execute("""SELECT c.id, c.config_name, c.symbol, c.exchange, c.offset_percent, 
                                c.sell_offset_percent, c.quantity, c.interval, c.order_grid,
-                               c.testnet, c.simulate_trading, c.start_count, c.credential_id,
+                               c.testnet, c.simulate_trading, c.start_count, 
                                c.min_price_threshold, c.market_close_threshold, c.sell_decay_count,
                                c.created_at, c.updated_at, cr.alias as credential_alias
                          FROM user_configs c
@@ -496,7 +496,7 @@ def get_user_config_list_with_details(username, include_default=False):
             # 不包含 default 配置
             c.execute("""SELECT c.id, c.config_name, c.symbol, c.exchange, c.offset_percent, 
                                c.sell_offset_percent, c.quantity, c.interval, c.order_grid,
-                               c.testnet, c.simulate_trading, c.start_count, c.credential_id,
+                               c.testnet, c.simulate_trading, c.start_count, 
                                c.min_price_threshold, c.market_close_threshold, c.sell_decay_count,
                                c.created_at, c.updated_at, cr.alias as credential_alias
                          FROM user_configs c

@@ -485,6 +485,44 @@
         padding: 20px;
         color: #666;
       }
+      /* 批量管理表格样式 */
+      .batch-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        background: white;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      }
+      .batch-table th {
+        background: #f8f9fa;
+        border-bottom: 2px solid #ddd;
+        padding: 12px 10px;
+        text-align: left;
+        font-weight: 600;
+        color: #333;
+      }
+      .batch-table td {
+        padding: 12px 10px;
+        border-bottom: 1px solid #eee;
+        vertical-align: middle;
+      }
+      .batch-table tr:hover {
+        background-color: #f8f9fa;
+      }
+      .batch-table tr:last-child td {
+        border-bottom: none;
+      }
+      .batch-table .config-name {
+        font-weight: 600;
+        color: #333;
+      }
+      .batch-table .params {
+        font-size: 12px;
+        color: #666;
+        line-height: 1.4;
+      }
     </style>
   </head>
   <body>
@@ -2431,33 +2469,101 @@
               return;
             }
             
-            container.innerHTML = data.configs.map(config => {
+            // 创建表格头部
+            let html = `
+              <div style="margin-bottom: 10px; font-weight: 600; color: #333;">
+                共找到 ${data.configs.length} 个配置
+              </div>
+              <table class="batch-table">
+                <thead>
+                  <tr>
+                    <th style="width: 40px;">序号</th>
+                    <th style="width: 50px;">选择</th>
+                    <th>配置名称</th>
+                    <th>交易对</th>
+                    <th>交易所</th>
+                    <th style="width: 80px;">状态</th>
+                    <th>参数</th>
+                  </tr>
+                </thead>
+                <tbody>
+            `;
+            
+            // 添加表格行
+            data.configs.forEach((config, index) => {
               const exchangeDisplayName = exchangeDisplayNames[config.exchange] || config.exchange.toUpperCase();
-              // 使用后端返回的状态信息
               const botStatus = config.bot_status || '🔴 未启动';
               
-              return `
-                <div class="config-item" style="display: flex; align-items: center; padding: 8px; border-bottom: 1px solid #eee;">
-                  <input type="checkbox" id="batch-${config.id}" value="${config.id}" onchange="updateSelectAllCheckbox()" style="margin-right: 8px;">
-                  <div style="flex: 1; font-size: 13px;">
-                    <span style="font-weight: 600;">${config.config_name}</span>
-                    <span style="margin: 0 5px;">-</span>
-                    <span>${config.symbol}</span>
-                    <span style="margin: 0 5px;">@</span>
-                    <span>${exchangeDisplayName}</span>
-                    <span style="margin-left: 10px; color: #666;">${botStatus}</span>
-                    <span style="margin: 0 10px; color: #999;">|</span>
-                    <span>偏移:${config.offset_percent}%</span>
-                    <span style="margin: 0 5px;">卖加:${config.sell_offset_percent || 0.5}%</span>
-                    <span style="margin: 0 5px;">数量:${config.quantity}</span>
-                    <span style="margin: 0 5px;">间隔:${config.interval}s</span>
-                    <span style="margin: 0 5px;">网格:${config.order_grid || 1}</span>
-                    <span style="margin: 0 5px;">密钥:${config.credential_alias || '未设置'}</span>
-                    <span style="margin: 0 5px;">模式:${config.simulate_trading ? '模拟' : '实盘'}</span>
-                  </div>
-                </div>
+              // 根据交易所类型显示不同的参数
+              let paramsHtml = '';
+              const exchangeValue = config.exchange.toLowerCase();
+              const exchangeDisplayValue = exchangeDisplayName.toLowerCase();
+              
+              // 扩展判断条件，包含更多可能的 Polymarket 标识
+              const isPolymarket = exchangeValue.includes('polymarket') || 
+                                   exchangeValue.includes('updown') || 
+                                   exchangeValue.includes('up_down') ||
+                                   exchangeValue.includes('15m') ||
+                                   exchangeDisplayValue.includes('polymarket') || 
+                                   exchangeDisplayValue.includes('涨跌') ||
+                                   exchangeDisplayValue.includes('15分钟');
+              
+              if (isPolymarket) {
+                // Polymarket 特定参数
+                paramsHtml = `
+                  偏移:${config.offset_percent}% | 
+                  卖加:${config.sell_offset_percent || 0.5}% | 
+                  数量:${config.quantity} | 
+                  间隔:${config.interval}s | 
+                  网格:${config.order_grid || 1} | 
+                  密钥:${config.credential_alias || '未设置'} | 
+                  模式:${config.simulate_trading ? '模拟' : '实盘'}
+                `;
+                
+                // 添加 Polymarket 特定参数
+                if (config.min_price_threshold !== null && config.min_price_threshold !== undefined) {
+                  paramsHtml += ` | 最低价:${config.min_price_threshold}`;
+                }
+                if (config.market_close_threshold !== null && config.market_close_threshold !== undefined) {
+                  paramsHtml += ` | 关闭阈值:${config.market_close_threshold}s`;
+                }
+                if (config.sell_decay_count !== null && config.sell_decay_count !== undefined && config.sell_decay_count > 0) {
+                  paramsHtml += ` | 衰减:${config.sell_decay_count}`;
+                }
+              } else {
+                // 其他交易所参数
+                paramsHtml = `
+                  偏移:${config.offset_percent}% | 
+                  卖加:${config.sell_offset_percent || 0.5}% | 
+                  数量:${config.quantity} | 
+                  间隔:${config.interval}s | 
+                  网格:${config.order_grid || 1} | 
+                  密钥:${config.credential_alias || '未设置'} | 
+                  模式:${config.simulate_trading ? '模拟' : '实盘'}
+                `;
+              }
+              
+              html += `
+                <tr>
+                  <td>${index + 1}</td>
+                  <td>
+                    <input type="checkbox" id="batch-${config.id}" value="${config.id}" onchange="updateSelectAllCheckbox()">
+                  </td>
+                  <td class="config-name">${config.config_name}</td>
+                  <td>${config.symbol}</td>
+                  <td>${exchangeDisplayName}</td>
+                  <td>${botStatus}</td>
+                  <td class="params">${paramsHtml}</td>
+                </tr>
               `;
-            }).join('');
+            });
+            
+            html += `
+                </tbody>
+              </table>
+            `;
+            
+            container.innerHTML = html;
           });
       }
       
