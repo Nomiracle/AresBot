@@ -1070,11 +1070,24 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                 pending_buys = bot_data.get('pending_buys', [])
                 pending_sells = bot_data.get('pending_sells', [])
                 
-                # 买单的最大 grid_index = order_grid - 卖单数量
-                max_buy_grid_index = order_grid - len(pending_sells)
-                orders_to_cancel = [pb for pb in pending_buys if pb.get('grid_index', 1) > max_buy_grid_index]
+                # 计算需要保留的买单数量
+                max_buy_orders = order_grid - len(pending_sells)
+                orders_to_cancel = []
+                if len(pending_buys) > max_buy_orders:
+                    # 按grid_index降序排序，保留序号大的订单
+                    pending_buys_sorted = sorted(pending_buys, key=lambda x: x.get('grid_index', 1), reverse=True)
+                    # 保留前max_buy_orders个订单，取消其余的
+                    orders_to_keep = pending_buys_sorted[:max_buy_orders]
+                    orders_to_cancel = pending_buys_sorted[max_buy_orders:]
+                    # 按grid_index升序排序，优先取消序号小的订单
+                    orders_to_cancel.sort(key=lambda x: x.get('grid_index', 1))
+                    
+                    # 打印保留和取消的grid_index
+                    keep_indices = [pb.get('grid_index', 1) for pb in orders_to_keep]
+                    cancel_indices = [pb.get('grid_index', 1) for pb in orders_to_cancel]
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 📊 网格调整: 保留{len(orders_to_keep)}个订单(grid_index={keep_indices}), 取消{len(orders_to_cancel)}个订单(grid_index={cancel_indices})")
                 if orders_to_cancel:
-                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 发现 {len(orders_to_cancel)} 笔超出网格范围的订单，准备取消 (max_grid_index={max_buy_grid_index})")
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🔍 发现 {len(orders_to_cancel)} 笔超出网格范围的订单，准备取消 (max_buy_orders={max_buy_orders})")
                     for pb in orders_to_cancel:
                         try:
                             exchange.cancel_order(pb['order_id'])
