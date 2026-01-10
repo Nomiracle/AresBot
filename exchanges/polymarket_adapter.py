@@ -238,12 +238,8 @@ class NativePolymarketSpot(BaseExchange):
         with self._cancelled_order_ids_lock:
             return order_id in self._cancelled_order_ids
     
-    def get_open_orders(self, asset_id: str = None, include_virtual_sell: bool = True) -> list:
+    def get_open_orders(self) -> List[Dict]:
         """获取未完成订单
-        
-        Args:
-            asset_id: 指定的 asset_id，为 None 时使用当前 self.symbol
-            include_virtual_sell: 是否包含虚拟卖单（基于 token 余额）
         
         Returns:
             list: 未完成订单列表
@@ -251,7 +247,7 @@ class NativePolymarketSpot(BaseExchange):
         # 清理过期的已取消订单缓存
         self._cleanup_cancelled_cache()
         
-        target_asset_id = asset_id if asset_id is not None else self.symbol
+        target_asset_id = self.symbol
         try:
             print(f"{self._get_log_prefix()} 🔍 查询未完成订单 (asset_id={target_asset_id})...")
             # 使用 asset_id 过滤，只查询指定 symbol 的订单
@@ -259,7 +255,6 @@ class NativePolymarketSpot(BaseExchange):
             
             open_orders = []
             filtered_orders = []
-            sell_order_qty = 0  # 统计已有卖单的数量
             
             for order in orders:
                 status = order.get('status', '').upper()
@@ -271,19 +266,16 @@ class NativePolymarketSpot(BaseExchange):
                         continue
                     normalized = self._normalize_order(order)
                     open_orders.append(normalized)
-                    # 统计卖单数量
-                    if normalized.get('side') == 'SELL':
-                        sell_order_qty += normalized.get('origQty', 0) - normalized.get('executedQty', 0)
             
             if filtered_orders:
                 print(f"{self._get_log_prefix()} ⚠️ 过滤了 {len(filtered_orders)} 个已取消但 API 仍返回的订单: {filtered_orders}")
             
-            # 检查 token 余额，生成虚拟卖单
-            if include_virtual_sell:
-                virtual_sell = self._get_virtual_sell_order(target_asset_id, sell_order_qty)
+            if not open_orders:
+                # 只有在没有挂单的情况下才生成虚拟卖单
+                virtual_sell = self._get_virtual_sell_order(target_asset_id)
                 if virtual_sell:
                     open_orders.append(virtual_sell)
-                    print(f"{self._get_log_prefix()} 💰 添加虚拟卖单: 数量={virtual_sell['origQty']:.2f}")
+                    print(f"{self._get_log_prefix()} 💰 无挂单但有持仓，添加虚拟卖单: 数量={virtual_sell['origQty']:.2f}")
             
             print(f"{self._get_log_prefix()} ✅ 找到 {len(open_orders)} 个未完成订单")
             return open_orders
@@ -294,14 +286,13 @@ class NativePolymarketSpot(BaseExchange):
             traceback.print_exc()
             return []
     
-    def _get_virtual_sell_order(self, asset_id: str, existing_sell_qty: float = 0) -> dict:
+    def _get_virtual_sell_order(self, asset_id: str) -> dict:
         """将 token 余额映射为虚拟卖单（参考 CcxtBinanceFutures._position_to_virtual_orders）
         
         - token 余额 → 虚拟卖单（类似合约多单持仓 → 虚拟卖单）
         
         Args:
             asset_id: token_id
-            existing_sell_qty: 已有卖单的数量（需要排除）
         
         Returns:
             dict: 虚拟卖单，如果余额不足则返回 None
@@ -317,11 +308,8 @@ class NativePolymarketSpot(BaseExchange):
             token_balance_raw = float(balance_result.get('balance', 0))
             token_balance = token_balance_raw / 1_000_000
             
-            # 可用余额 = 总余额 - 已挂卖单数量
-            available_qty = token_balance - existing_sell_qty
-            
             # 余额大于 1 才生成虚拟卖单
-            if available_qty >= 1:
+            if token_balance >= 1:
                 # 使用最新买单成交价格作为 entry_price
                 entry_price = self._last_buy_price
                 
@@ -332,15 +320,14 @@ class NativePolymarketSpot(BaseExchange):
                     'symbol': asset_id,
                     'side': 'SELL',
                     'price': str(entry_price) if entry_price > 0 else '0',
-                    'origQty': available_qty,
+                    'origQty': token_balance,
                     'executedQty': 0,
                     'status': 'NEW',
                     'info': {
                         'virtual': True,
                         'from_position': True,
                         'entry_price': entry_price,
-                        'token_balance': token_balance,
-                        'existing_sell_qty': existing_sell_qty
+                        'token_balance': token_balance
                     }
                 }
             
@@ -508,7 +495,7 @@ class NativePolymarketSpot(BaseExchange):
                 token_balance_raw = float(balance_result.get('balance', 0))
                 token_balance = token_balance_raw / 1_000_000
                 
-                print(f"{self._get_log_prefix()} 📊 Token 余额: {token_balance:.2f}/{required_quantity}")
+                print(f"{self._get_log_prefix()} 📊 Token 余额（self.symbol）: {token_balance:.2f}/{required_quantity}")
                 
                 # 余额足够则返回
                 if token_balance >= required_quantity * 0.99:  # 允许 1% 误差
