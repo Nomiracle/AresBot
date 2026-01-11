@@ -208,10 +208,13 @@ def register_routes(app):
             # Polymarket/UpDown15m 阈值参数
             min_price_threshold = config.get('min_price_threshold')
             market_close_threshold = config.get('market_close_threshold')
+            stop_loss_delay = config.get('stop_loss_delay')
             if min_price_threshold is not None:
                 min_price_threshold = float(min_price_threshold)
             if market_close_threshold is not None:
                 market_close_threshold = int(market_close_threshold)
+            if stop_loss_delay is not None:
+                stop_loss_delay = int(stop_loss_delay)
             
             exchange = ExchangeFactory.create(
                 exchange_name,
@@ -221,6 +224,7 @@ def register_routes(app):
                 testnet=testnet,
                 min_price_threshold=min_price_threshold,
                 market_close_threshold=market_close_threshold,
+                stop_loss_delay=stop_loss_delay,
                 username=username
             )
             

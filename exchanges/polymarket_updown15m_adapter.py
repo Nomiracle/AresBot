@@ -1,4 +1,4 @@
-"""
+﻿"""
 Up/Down 15分钟市场交易所适配器
 自动计算并使用最新的 15 分钟时间戳市场
 支持多种市场（如 btc, eth 等）
@@ -28,7 +28,7 @@ class UpDown15m(NativePolymarketSpot):
     
     def __init__(self, api_key: str, api_secret: str, symbol: str = "btc-Up", testnet: bool = True,
                  min_price_threshold: float = None, market_close_threshold: int = None,
-                 username: str = None):
+                 stop_loss_delay: int = None, username: str = None):
         """初始化 Up/Down 15分钟市场适配器
         
         Args:
@@ -42,12 +42,17 @@ class UpDown15m(NativePolymarketSpot):
             market_close_threshold: 市场关闭前阈值时间秒数（默认 180）
             username: 用户名（用于通知等功能）
         """
+        """
+        """
         # 解析 symbol，格式为 "market-outcome"，如 "btc-Up"
         self.market_prefix, self.outcome = self._parse_symbol(symbol)
         self.original_symbol = symbol  # 保存原始 symbol 用于事件回调
         
         # 市场关闭阈值
         self.market_close_threshold = market_close_threshold if market_close_threshold is not None else self.DEFAULT_MARKET_CLOSE_THRESHOLD_SECONDS
+        
+        # 止损延迟时间（如果有配置值则使用，否则使用原来逻辑）
+        self.stop_loss_delay = stop_loss_delay
         
         self.market_end_time = None  # 市场结束时间戳
         self.condition_id = None  # 市场的条件 ID (用于 WebSocket 订阅)
@@ -1102,8 +1107,13 @@ class UpDown15m(NativePolymarketSpot):
                 print(f"{self._generate_log_prefix_by_slug(market_slug)} ⚠️ 市场已结束，无需设置止损")
                 return
             
-            # 止损检查时间为剩余时间的一半
-            stop_loss_delay = max(30, total_seconds_left / 2)  # 最少30秒
+            # 止损检查时间为剩余时间的一半，如果有配置值则使用配置值，否则使用原来逻辑
+            if self.stop_loss_delay is not None:
+                # 使用配置的止损延迟时间
+                stop_loss_delay = self.stop_loss_delay
+            else:
+                # 原来的逻辑：剩余时间的一半，最少30秒
+                stop_loss_delay = max(30, total_seconds_left / 2)
             
             print(f"{self._generate_log_prefix_by_slug(market_slug)} ⏰ 市场剩余时间: {total_seconds_left:.0f}秒，止损检查时间: {stop_loss_delay:.0f}秒后")
             

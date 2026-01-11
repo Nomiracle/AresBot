@@ -169,6 +169,12 @@ def init_db(recreate=False):
         print(f"[{datetime.now().isoformat()}] ✅ user_configs 表已添加 start_count 列")
     except sqlite3.OperationalError:
         pass  # 列已存在
+    
+    try:
+        c.execute("ALTER TABLE user_configs ADD COLUMN stop_loss_delay INTEGER")
+        print(f"[{datetime.now().isoformat()}] ✅ user_configs 表已添加 stop_loss_delay 列")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
 
     c.execute('''CREATE TABLE IF NOT EXISTS orders
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -388,25 +394,25 @@ def save_user_config(username, config, config_name='default'):
             c.execute("""UPDATE user_configs
                          SET exchange=?, credential_id=?, symbol=?, offset_percent=?, sell_offset_percent=?,
                              quantity=?, interval=?, testnet=?, simulate_trading=?,
-                             min_price_threshold=?, market_close_threshold=?, order_grid=?, sell_decay_count=?, updated_at=?
+                             min_price_threshold=?, market_close_threshold=?, order_grid=?, sell_decay_count=?, stop_loss_delay=?, updated_at=?
                          WHERE user_id=? AND config_name=?""",
                       (exchange, credential_id, config['symbol'],
                        config['offset_percent'], config.get('sell_offset_percent', 0.5),
                        config['quantity'], config['interval'],
                        config.get('testnet', 1), config.get('simulate_trading', 1),
                        config.get('min_price_threshold', 0.15), config.get('market_close_threshold', 180),
-                       config.get('order_grid', 1), config.get('sell_decay_count', 0),
+                       config.get('order_grid', 1), config.get('sell_decay_count', 0), config.get('stop_loss_delay'),
                        datetime.now().isoformat(), user_id, config_name))
         else:
             c.execute("""INSERT INTO user_configs
-                         (user_id, config_name, exchange, credential_id, symbol, offset_percent, sell_offset_percent, quantity, interval, testnet, simulate_trading, min_price_threshold, market_close_threshold, order_grid, sell_decay_count, created_at, updated_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                         (user_id, config_name, exchange, credential_id, symbol, offset_percent, sell_offset_percent, quantity, interval, testnet, simulate_trading, min_price_threshold, market_close_threshold, order_grid, sell_decay_count, stop_loss_delay, created_at, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                       (user_id, config_name, exchange, credential_id, config['symbol'],
                        config['offset_percent'], config.get('sell_offset_percent', 0.5),
                        config['quantity'], config['interval'],
                        config.get('testnet', 1), config.get('simulate_trading', 1),
                        config.get('min_price_threshold', 0.15), config.get('market_close_threshold', 180),
-                       config.get('order_grid', 1), config.get('sell_decay_count', 0),
+                       config.get('order_grid', 1), config.get('sell_decay_count', 0), config.get('stop_loss_delay'),
                        datetime.now().isoformat(), datetime.now().isoformat()))
 
     print(f"[{datetime.now().isoformat()}] ✅ 配置已保存到 DB (user={username}, config={config_name}, credential_id={credential_id})")
@@ -421,7 +427,7 @@ def load_user_config(username, config_name='default'):
     with db_pool.get_cursor() as (conn, c):
         c.execute("""SELECT config_name, exchange, credential_id, symbol, 
                             offset_percent, sell_offset_percent, quantity, interval, 
-                            testnet, simulate_trading, min_price_threshold, market_close_threshold, order_grid, sell_decay_count
+                            testnet, simulate_trading, min_price_threshold, market_close_threshold, order_grid, sell_decay_count, stop_loss_delay
                      FROM user_configs WHERE user_id=? AND config_name=?""", (user_id, config_name))
         result = c.fetchone()
 
@@ -455,7 +461,8 @@ def load_user_config(username, config_name='default'):
         'min_price_threshold': result[10] if result[10] is not None else 0.15,
         'market_close_threshold': result[11] if result[11] is not None else 180,
         'order_grid': result[12] if result[12] is not None else 1,
-        'sell_decay_count': result[13] if result[13] is not None else 0
+        'sell_decay_count': result[13] if result[13] is not None else 0,
+        'stop_loss_delay': result[14]  # 新增字段
     }
 
 
@@ -487,7 +494,7 @@ def get_user_config_list_with_details(username, include_default=False):
                                c.sell_offset_percent, c.quantity, c.interval, c.order_grid,
                                c.testnet, c.simulate_trading, c.start_count, 
                                c.min_price_threshold, c.market_close_threshold, c.sell_decay_count,
-                               c.created_at, c.updated_at, cr.alias as credential_alias
+                               c.created_at, c.updated_at, cr.alias as credential_alias,c.stop_loss_delay
                          FROM user_configs c
                          LEFT JOIN api_credentials cr ON c.credential_id = cr.id
                          WHERE c.user_id=?
@@ -498,7 +505,7 @@ def get_user_config_list_with_details(username, include_default=False):
                                c.sell_offset_percent, c.quantity, c.interval, c.order_grid,
                                c.testnet, c.simulate_trading, c.start_count, 
                                c.min_price_threshold, c.market_close_threshold, c.sell_decay_count,
-                               c.created_at, c.updated_at, cr.alias as credential_alias
+                               c.created_at, c.updated_at, cr.alias as credential_alias,c.stop_loss_delay
                          FROM user_configs c
                          LEFT JOIN api_credentials cr ON c.credential_id = cr.id
                          WHERE c.user_id=? AND c.config_name!='default'
@@ -524,7 +531,8 @@ def get_user_config_list_with_details(username, include_default=False):
             'sell_decay_count': cfg[14],
             'created_at': cfg[15],
             'updated_at': cfg[16],
-            'credential_alias': cfg[17]
+            'credential_alias': cfg[17],
+            'stop_loss_delay': cfg[18]
         }
         for cfg in configs
     ]

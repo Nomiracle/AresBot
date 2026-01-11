@@ -749,6 +749,11 @@
             <input type="number" id="marketCloseThreshold" value="180" step="1" min="30" max="600" />
             <small style="color: #666;">距离市场关闭多少秒时取消订单（默认 180）</small>
           </div>
+          <div class="input-group" id="stopLossDelayGroup" style="display: none;">
+            <label>止损延迟时间 (秒) 🛡️</label>
+            <input type="number" id="stopLossDelay" value="" step="1" min="10" max="3600" />
+            <small style="color: #666;">止损检查延迟时间，留空则使用自动计算（剩余时间的一半，最少30秒）</small>
+          </div>
         </div>
 
         <div style="margin-bottom: 15px;">
@@ -1205,6 +1210,7 @@
         const symbolGroup = document.getElementById("symbolGroup");
         const minPriceThresholdGroup = document.getElementById("minPriceThresholdGroup");
         const marketCloseThresholdGroup = document.getElementById("marketCloseThresholdGroup");
+        const stopLossDelayGroup = document.getElementById("stopLossDelayGroup");
         
         // 默认使用 Binance API 提示
         apiKeyInput.placeholder = "输入 Binance API Key";
@@ -1217,6 +1223,7 @@
           polymarketSearchContainer.style.display = 'block';
           minPriceThresholdGroup.style.display = 'block';
           marketCloseThresholdGroup.style.display = 'none';
+          stopLossDelayGroup.style.display = 'none';
         }
         // UpDown 交易所显示两个阈值配置
         else if (exchangeId === 'native_updown_15m' || exchangeId === 'native_updown_4h') {
@@ -1225,6 +1232,7 @@
           polymarketSearchContainer.style.display = 'none';
           minPriceThresholdGroup.style.display = 'block';
           marketCloseThresholdGroup.style.display = 'block';
+          stopLossDelayGroup.style.display = 'block';
           // 重新加载交易对列表
           loadTradingPairs();
         }
@@ -1235,6 +1243,7 @@
           polymarketSearchContainer.style.display = 'none';
           minPriceThresholdGroup.style.display = 'none';
           marketCloseThresholdGroup.style.display = 'none';
+          stopLossDelayGroup.style.display = 'none';
           
           // 重新加载交易对列表（会根据当前交易所过滤）
           loadTradingPairs();
@@ -1674,6 +1683,9 @@
         }
         if (exchangeId === 'native_updown_15m' || exchangeId === 'native_updown_4h') {
           config.market_close_threshold = parseInt(document.getElementById("marketCloseThreshold").value);
+          // 添加止损延迟时间
+          const stopLossDelayValue = document.getElementById("stopLossDelay").value;
+          config.stop_loss_delay = stopLossDelayValue ? parseInt(stopLossDelayValue) : null;
         }
 
         fetch("/api/config/save", {
@@ -1749,6 +1761,11 @@
               }
               if (data.config.market_close_threshold !== undefined) {
                 document.getElementById("marketCloseThreshold").value = data.config.market_close_threshold;
+              }
+              if (data.config.stop_loss_delay !== undefined && data.config.stop_loss_delay !== null) {
+                document.getElementById("stopLossDelay").value = data.config.stop_loss_delay;
+              } else {
+                document.getElementById("stopLossDelay").value = "";
               }
               
               console.log(`[加载配置] 配置加载完成`);
@@ -2243,10 +2260,11 @@
                 
                 // 紧凑的阈值显示
                 let thresholdDisplay = '';
-                if (bot.config.min_price_threshold != null || bot.config.market_close_threshold != null) {
+                if (bot.config.min_price_threshold != null || bot.config.market_close_threshold != null || bot.config.stop_loss_delay != null) {
                   let parts = [];
                   if (bot.config.min_price_threshold != null) parts.push(`价≥${bot.config.min_price_threshold}`);
                   if (bot.config.market_close_threshold != null) parts.push(`关${bot.config.market_close_threshold}s`);
+                  if (bot.config.stop_loss_delay != null) parts.push(`止损${bot.config.stop_loss_delay}s`);
                   thresholdDisplay = ` | ${parts.join(' ')}`;
                 }
                 
@@ -2287,21 +2305,50 @@
         
         const div = document.getElementById(`bot-${exchange}-${symbol}`);
         const cfg = bot.config || {};
+        
+        // 判断是否为Polymarket相关交易所
+        const exchangeValue = (exchange || '').toLowerCase();
+        const isPolymarket = exchangeValue.includes('polymarket') || 
+                             exchangeValue.includes('updown') || 
+                             exchangeValue.includes('up_down') ||
+                             exchangeValue.includes('15m');
+        
+        // 构建编辑表单HTML
+        let formFields = `
+          <div style="flex:1; display:grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap:10px;">
+            <label>偏移% <input type="number" id="edit-offset-${exchange}-${symbol}" value="${cfg.offset_percent}" step="0.01"></label>
+            <label>卖加价% <input type="number" id="edit-selloffset-${exchange}-${symbol}" value="${cfg.sell_offset_percent || 0.5}" step="0.01"></label>
+            <label>衰减次数 <input type="number" id="edit-decay-${exchange}-${symbol}" value="${cfg.sell_decay_count || 0}" min="0" max="10"></label>
+            <label>数量 <input type="number" id="edit-qty-${exchange}-${symbol}" value="${cfg.quantity}" step="0.0001"></label>
+            <label>间隔(秒) <input type="number" id="edit-interval-${exchange}-${symbol}" value="${cfg.interval}" min="1"></label>
+            <label>模式
+              <select id="edit-sim-${exchange}-${symbol}">
+                <option value="1" ${parseInt(cfg.simulate_trading)===1?'selected':''}>模拟</option>
+                <option value="0" ${parseInt(cfg.simulate_trading)!==1?'selected':''}>实盘</option>
+              </select>
+            </label>
+        `;
+        
+        // 如果是Polymarket相关交易所，添加特定字段
+        if (isPolymarket) {
+          formFields += `
+            <label>最低价阈值 <input type="number" id="edit-minprice-${exchange}-${symbol}" value="${cfg.min_price_threshold || ''}" step="0.01" min="0" max="1"></label>
+          `;
+          if (exchangeValue.includes('updown') || exchangeValue.includes('15m')) {
+            formFields += `
+              <label>关闭阈值(秒) <input type="number" id="edit-close-${exchange}-${symbol}" value="${cfg.market_close_threshold || ''}" step="1" min="30" max="600"></label>
+              <label>止损延迟(秒) <input type="number" id="edit-stoploss-${exchange}-${symbol}" value="${cfg.stop_loss_delay || ''}" step="1" min="10" max="3600" placeholder="留空使用自动计算"></label>
+            `;
+          }
+        }
+        
+        formFields += `
+          </div>
+        `;
+        
         div.innerHTML = `
           <div class="edit-mode">
-            <div style="flex:1; display:grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap:10px;">
-              <label>偏移% <input type="number" id="edit-offset-${exchange}-${symbol}" value="${cfg.offset_percent}" step="0.01"></label>
-              <label>卖加价% <input type="number" id="edit-selloffset-${exchange}-${symbol}" value="${cfg.sell_offset_percent || 0.5}" step="0.01"></label>
-              <label>衰减次数 <input type="number" id="edit-decay-${exchange}-${symbol}" value="${cfg.sell_decay_count || 0}" min="0" max="10"></label>
-              <label>数量 <input type="number" id="edit-qty-${exchange}-${symbol}" value="${cfg.quantity}" step="0.0001"></label>
-              <label>间隔(秒) <input type="number" id="edit-interval-${exchange}-${symbol}" value="${cfg.interval}" min="1"></label>
-              <label>模式
-                <select id="edit-sim-${exchange}-${symbol}">
-                  <option value="1" ${parseInt(cfg.simulate_trading)===1?'selected':''}>模拟</option>
-                  <option value="0" ${parseInt(cfg.simulate_trading)!==1?'selected':''}>实盘</option>
-                </select>
-              </label>
-            </div>
+            ${formFields}
           </div>
           <div class="pair-actions">
             <button class="btn btn-success btn-sm" onclick="saveBot('${symbol}', '${exchange}')">💾 保存</button>
@@ -2321,6 +2368,36 @@
           interval: parseInt(document.getElementById(`edit-interval-${exchange}-${symbol}`).value),
           simulate_trading: parseInt(document.getElementById(`edit-sim-${exchange}-${symbol}`).value)
         };
+        
+        // 判断是否为Polymarket相关交易所，添加特定字段
+        const exchangeValue = (exchange || '').toLowerCase();
+        const isPolymarket = exchangeValue.includes('polymarket') || 
+                             exchangeValue.includes('updown') || 
+                             exchangeValue.includes('up_down') ||
+                             exchangeValue.includes('15m');
+        
+        if (isPolymarket) {
+          const minPriceElement = document.getElementById(`edit-minprice-${exchange}-${symbol}`);
+          if (minPriceElement) {
+            const minPriceValue = minPriceElement.value;
+            payload.min_price_threshold = minPriceValue ? parseFloat(minPriceValue) : null;
+          }
+          
+          if (exchangeValue.includes('updown') || exchangeValue.includes('15m')) {
+            const closeElement = document.getElementById(`edit-close-${exchange}-${symbol}`);
+            if (closeElement) {
+              const closeValue = closeElement.value;
+              payload.market_close_threshold = closeValue ? parseInt(closeValue) : null;
+            }
+            
+            const stopLossElement = document.getElementById(`edit-stoploss-${exchange}-${symbol}`);
+            if (stopLossElement) {
+              const stopLossValue = stopLossElement.value;
+              payload.stop_loss_delay = stopLossValue ? parseInt(stopLossValue) : null;
+            }
+          }
+        }
+        
         fetch("/api/bot/update", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2585,6 +2662,9 @@
                 }
                 if (config.market_close_threshold !== null && config.market_close_threshold !== undefined) {
                   paramsHtml += ` | 关闭阈值:${config.market_close_threshold}s`;
+                }
+                if (config.stop_loss_delay !== null && config.stop_loss_delay !== undefined) {
+                  paramsHtml += ` | 止损延迟:${config.stop_loss_delay}s`;
                 }
                 if (config.sell_decay_count !== null && config.sell_decay_count !== undefined && config.sell_decay_count > 0) {
                   paramsHtml += ` | 衰减:${config.sell_decay_count}`;
