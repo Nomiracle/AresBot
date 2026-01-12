@@ -432,10 +432,11 @@ def reprice_buy_orders(open_buy_orders, aligned_quantity, bot_data,
         if order_price == target_price:
             continue
         
-        # 计算价格差异百分比
-        price_diff_percent = abs(target_price - order_price) / order_price * 100
-        if price_diff_percent < 0.01:
-            print(f"{log_prefix} ⏭️ 买单[{grid_index}]价格差异 {price_diff_percent:.4f}% < 0.01%，跳过改价")
+        # 智能价格差异检查
+        if should_skip_reprice(order_price, target_price, config, tick_size):
+            price_diff_percent = abs(target_price - order_price) / order_price * 100
+            absolute_diff = abs(target_price - order_price)
+            print(f"{log_prefix} ⏭️ 买单[{grid_index}]价格差异 {price_diff_percent:.4f}%/{absolute_diff:.6f}，跳过改价")
             continue
         
         try:
@@ -508,6 +509,29 @@ def reprice_buy_orders(open_buy_orders, aligned_quantity, bot_data,
                 print(f"{log_prefix} ⚠️ 检查订单状态失败: {check_error}")
 
 
+def should_skip_reprice(current_price, target_price, config, tick_size):
+    """判断是否应该跳过改价
+    
+    Args:
+        current_price: 当前价格
+        target_price: 目标价格
+        config: 配置字典
+        tick_size: 价格步长
+        
+    Returns:
+        bool: True表示应该跳过改价， False 表示执行改价
+    """
+
+    if abs(target_price - current_price) <= tick_size:
+        return False
+    
+    # 否则使用原来的逻辑：检查价格差异百分比
+    price_diff_percent = abs(target_price - current_price) / current_price * 100
+    reprice_threshold = config.get('reprice_threshold_percent', 0.01)
+    
+    return price_diff_percent < reprice_threshold
+
+
 def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size, 
                         price_decimals, step_size, qty_decimals, log_prefix):
     """动态调整卖单价格"""
@@ -568,11 +592,11 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
         )
         bot_data['target_price'] = target_sell_price   
         
-        # 价格差异超过阈值才改价
-        price_diff_percent = abs(target_sell_price - current_sell_price) / current_sell_price * 100
-        # 首先检查是否小于 0.01%
-        if price_diff_percent < 0.01:
-            print(f"{log_prefix} ⏭️ 卖单 {sell_order_id} 价格差异 {price_diff_percent:.4f}% < 0.01%，跳过改价")
+        # 智能价格差异检查
+        if should_skip_reprice(current_sell_price, target_sell_price, config, tick_size):
+            price_diff_percent = abs(target_sell_price - current_sell_price) / current_sell_price * 100
+            absolute_diff = abs(target_sell_price - current_sell_price)
+            print(f"{log_prefix} ⏭️ 卖单 {sell_order_id} 价格差异 {price_diff_percent:.4f}%/{absolute_diff:.6f}，跳过改价")
             continue
         
         try:
