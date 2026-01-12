@@ -748,9 +748,18 @@ class CcxtBinanceFutures(BaseExchange):
             if symbol in self._fee_cache:
                 return self._fee_cache[symbol]
 
-        # 合约默认费率: maker 0.02%, taker 0.04%
-        maker_fee = 0.0002
-        taker_fee = 0.0004
+        # 尝试从API获取费率
+        try:
+            # 使用 fetchTradingFee 方法获取精确费率
+            fee_info = self.client.fetchTradingFee(symbol=self._market_symbol)
+            maker_fee = float(fee_info.get("maker", 0.0002))
+            taker_fee = float(fee_info.get("taker", 0.0004))
+            print(f"{self._get_log_prefix()} 🔍 从API fetchTradingFee 获取合约费率: maker={maker_fee}, taker={taker_fee}")
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ⚠️ fetchTradingFee 失败，使用默认值: {e}")
+            # 合约默认费率: maker 0.02%, taker 0.04%
+            maker_fee = 0.0002
+            taker_fee = 0.0004
 
         fee_data = {"maker_fee": maker_fee, "taker_fee": taker_fee}
 

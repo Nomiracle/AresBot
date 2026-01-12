@@ -738,17 +738,25 @@ class CcxtBinanceSpot(BaseExchange):
 
         # 尝试从API获取费率
         try:
-            # ccxt 获取交易费率
-            markets = self.client.load_markets()
-            market = markets.get(self._market_symbol, {})
-            maker_fee = float(market.get("maker", 0.001))
-            taker_fee = float(market.get("taker", 0.001))
-            print(f"{self._get_log_prefix()} 🔍 从市场信息获取费率: maker={maker_fee}, taker={taker_fee}")
+            # 使用 fetchTradingFee 方法获取精确费率
+            fee_info = self.client.fetchTradingFee(symbol=self._market_symbol)
+            maker_fee = float(fee_info.get("maker", 0.001))
+            taker_fee = float(fee_info.get("taker", 0.001))
+            print(f"{self._get_log_prefix()} 🔍 从API fetchTradingFee 获取费率: maker={maker_fee}, taker={taker_fee}")
         except Exception as e:
-            print(f"{self._get_log_prefix()} ⚠️ 获取费率失败，使用默认值: {e}")
-            # 现货默认费率: maker 0.1%, taker 0.1%
-            maker_fee = 0.001
-            taker_fee = 0.001
+            print(f"{self._get_log_prefix()} ⚠️ fetchTradingFee 失败，尝试备用方法: {e}")
+            try:
+                # 备用方法：从市场信息获取费率
+                markets = self.client.load_markets()
+                market = markets.get(self._market_symbol, {})
+                maker_fee = float(market.get("maker", 0.001))
+                taker_fee = float(market.get("taker", 0.001))
+                print(f"{self._get_log_prefix()} 🔍 从市场信息获取费率: maker={maker_fee}, taker={taker_fee}")
+            except Exception as e2:
+                print(f"{self._get_log_prefix()} ⚠️ 备用方法也失败，使用默认值: {e2}")
+                # 现货默认费率: maker 0.1%, taker 0.1%
+                maker_fee = 0.001
+                taker_fee = 0.001
 
         fee_data = {"maker_fee": maker_fee, "taker_fee": taker_fee}
 
