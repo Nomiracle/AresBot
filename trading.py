@@ -539,7 +539,7 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
     if not current_price:
         return
     
-    for sell_order in open_sell_orders:
+    for grad_index, sell_order in enumerate(open_sell_orders, 1):  # 从 1 开始
         sell_order_id = str(sell_order['orderId'])
         current_sell_price = float(sell_order['price'])
         
@@ -582,6 +582,9 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
         else:
             # 不使用衰减逻辑或已达到衰减次数上限: 使用实际卖出偏移
             dynamic_sell_offset = base_sell_offset
+        
+        # 应用 grad_index 梯度调整
+        dynamic_sell_offset = dynamic_sell_offset * grad_index
         
         target_sell_price = exchange.calculate_sell_price(
             buy_price,
