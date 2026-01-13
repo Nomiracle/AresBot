@@ -245,11 +245,9 @@ class CcxtBinanceFuturesShort(CcxtBinanceFutures):
             # 做空策略：需要反转 side
             original_side = side
             if original_side == "BUY":
-                # trading.py 的 BUY → 实际下 SELL 订单（做空开仓）
-                new_order = self.order_limit_sell(quantity=quantity, price=price, **kwargs)
-            else:
-                # trading.py 的 SELL → 实际下 BUY 订单（做空平仓）
                 new_order = self.order_limit_buy(quantity=quantity, price=price, **kwargs)
+            else:
+                new_order = self.order_limit_sell(quantity=quantity, price=price, **kwargs)
             
             new_order_id = str(new_order.get('orderId') or new_order.get('id'))
             print(f"{self._get_log_prefix()} ✅ 新订单创建成功: {new_order_id}")
