@@ -898,6 +898,46 @@
       <div id="batch-tab" class="tab-content">
         <h3>批量启动管理</h3>
         <div style="margin-bottom: 20px;">
+          <!-- 过滤控件 -->
+          <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 10px;">
+              <div>
+                <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #555;">🔍 配置名称过滤</label>
+                <input type="text" id="filterConfigName" placeholder="输入配置名称..." 
+                       style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px;"
+                       oninput="filterBatchConfigs()">
+              </div>
+              <div>
+                <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #555;">📊 交易对过滤</label>
+                <input type="text" id="filterSymbol" placeholder="输入交易对..." 
+                       style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px;"
+                       oninput="filterBatchConfigs()">
+              </div>
+              <div>
+                <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #555;">🏦 交易所过滤</label>
+                <select id="filterExchange" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px;"
+                        onchange="filterBatchConfigs()">
+                  <option value="">全部交易所</option>
+                </select>
+              </div>
+              <div>
+                <label style="display: block; margin-bottom: 5px; font-weight: 600; color: #555;">🔄 状态过滤</label>
+                <select id="filterStatus" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px;"
+                        onchange="filterBatchConfigs()">
+                  <option value="">全部状态</option>
+                  <option value="running">运行中</option>
+                  <option value="stopped">已停止</option>
+                </select>
+              </div>
+            </div>
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <button class="btn btn-secondary" onclick="clearFilters()" style="padding: 8px 16px; font-size: 14px;">
+                🔄 清除过滤
+              </button>
+              <span id="filterCount" style="color: #666; font-size: 14px; font-weight: 600;"></span>
+            </div>
+          </div>
+          
           <div style="display: flex; gap: 10px; margin-bottom: 15px; align-items: center;">
             <button class="btn btn-success" onclick="batchStartBots()">
               ▶️ 批量启动
@@ -2595,114 +2635,189 @@
       }
       
       // 批量管理功能
+      let allBatchConfigs = []; // 存储所有配置数据
+      
       function loadBatchConfigs() {
         fetch("/api/configs/all")
           .then((r) => r.json())
           .then((data) => {
-            const container = document.getElementById("batchConfigsList");
-            if (!data.success || data.configs.length === 0) {
-              container.innerHTML = "<p>暂无交易配置</p>";
+            if (!data.success) {
+              document.getElementById("batchConfigsList").innerHTML = "<p>加载配置失败</p>";
               return;
             }
             
-            // 创建表格头部
-            let html = `
-              <div style="margin-bottom: 10px; font-weight: 600; color: #333;">
-                共找到 ${data.configs.length} 个配置
-              </div>
-              <table class="batch-table">
-                <thead>
-                  <tr>
-                    <th style="width: 40px;">序号</th>
-                    <th style="width: 50px;">选择</th>
-                    <th>配置名称</th>
-                    <th>交易对</th>
-                    <th>交易所</th>
-                    <th style="width: 80px;">状态</th>
-                    <th>参数</th>
-                  </tr>
-                </thead>
-                <tbody>
-            `;
+            // 存储所有配置数据
+            allBatchConfigs = data.configs || [];
             
-            // 添加表格行
-            data.configs.forEach((config, index) => {
-              const exchangeDisplayName = exchangeDisplayNames[config.exchange] || config.exchange.toUpperCase();
-              const botStatus = config.bot_status || '🔴 未启动';
-              const exchangeColor = getExchangeColor(config.exchange);
-              
-              // 根据交易所类型显示不同的参数
-              let paramsHtml = '';
-              const exchangeValue = config.exchange.toLowerCase();
-              const exchangeDisplayValue = exchangeDisplayName.toLowerCase();
-              
-              // 扩展判断条件，包含更多可能的 Polymarket 标识
-              const isPolymarket = exchangeValue.includes('polymarket') || 
-                                   exchangeValue.includes('updown') || 
-                                   exchangeValue.includes('up_down') ||
-                                   exchangeValue.includes('15m') ||
-                                   exchangeDisplayValue.includes('polymarket') || 
-                                   exchangeDisplayValue.includes('涨跌') ||
-                                   exchangeDisplayValue.includes('15分钟');
-              
-              if (isPolymarket) {
-                // Polymarket 特定参数
-                paramsHtml = `
-                  偏移:${config.offset_percent}% | 
-                  卖加:${config.sell_offset_percent || 0.5}% | 
-                  数量:${config.quantity} | 
-                  间隔:${config.interval}s | 
-                  网格:${config.order_grid || 1} | 
-                  模式:${config.simulate_trading ? '模拟' : '实盘'}
-                `;
-                
-                // 添加 Polymarket 特定参数
-                if (config.min_price_threshold !== null && config.min_price_threshold !== undefined) {
-                  paramsHtml += ` | 最低价:${config.min_price_threshold}`;
-                }
-                if (config.market_close_threshold !== null && config.market_close_threshold !== undefined) {
-                  paramsHtml += ` | 关闭阈值:${config.market_close_threshold}s`;
-                }
-                if (config.stop_loss_delay !== null && config.stop_loss_delay !== undefined) {
-                  paramsHtml += ` | 止损延迟:${config.stop_loss_delay}s`;
-                }
-                if (config.sell_decay_count !== null && config.sell_decay_count !== undefined && config.sell_decay_count > 0) {
-                  paramsHtml += ` | 衰减:${config.sell_decay_count}`;
-                }
-              } else {
-                // 其他交易所参数
-                paramsHtml = `
-                  偏移:${config.offset_percent}% | 
-                  卖加:${config.sell_offset_percent || 0.5}% | 
-                  数量:${config.quantity} | 
-                  间隔:${config.interval}s | 
-                  网格:${config.order_grid || 1} | 
-                  模式:${config.simulate_trading ? '模拟' : '实盘'}
-                `;
-              }
-              
-              html += `
-                <tr onclick="toggleRowCheckbox(${config.id})" style="cursor: pointer;">
-                  <td>${index + 1}</td>
-                  <td onclick="event.stopPropagation()">
-                    <input type="checkbox" id="batch-${config.id}" value="${config.id}" onchange="updateSelectAllCheckbox()">
-                  </td>
-                  <td class="config-name">${config.config_name}</td>
-                  <td>${config.symbol}</td>
-                  <td style="background-color: ${exchangeColor}20; color: ${exchangeColor}; font-weight: 600; border-left: 3px solid ${exchangeColor}; padding-left: 8px;">${exchangeDisplayName}</td>
-                  <td>${botStatus}</td>
-                  <td class="params">${paramsHtml}</td>
-                </tr>
-              `;
-            });
+            // 填充交易所过滤选项
+            populateExchangeFilter();
             
-            html += `
-                </tbody>
-              </table>
-            `;
-            
-            container.innerHTML = html;
+            // 应用过滤并显示
+            filterBatchConfigs();
           });
+      }
+      
+      // 填充交易所过滤选项
+      function populateExchangeFilter() {
+        const filterExchange = document.getElementById('filterExchange');
+        const exchanges = [...new Set(allBatchConfigs.map(config => config.exchange))];
+        
+        // 清空现有选项（保留第一个"全部交易所"）
+        filterExchange.innerHTML = '<option value="">全部交易所</option>';
+        
+        // 添加交易所选项
+        exchanges.forEach(exchange => {
+          const displayName = exchangeDisplayNames[exchange] || exchange.toUpperCase();
+          const option = document.createElement('option');
+          option.value = exchange;
+          option.textContent = displayName;
+          filterExchange.appendChild(option);
+        });
+      }
+      
+      // 过滤配置
+      function filterBatchConfigs() {
+        const configNameFilter = document.getElementById('filterConfigName').value.toLowerCase();
+        const symbolFilter = document.getElementById('filterSymbol').value.toLowerCase();
+        const exchangeFilter = document.getElementById('filterExchange').value;
+        const statusFilter = document.getElementById('filterStatus').value;
+        
+        // 过滤配置
+        const filteredConfigs = allBatchConfigs.filter(config => {
+          const matchConfigName = !configNameFilter || config.config_name.toLowerCase().includes(configNameFilter);
+          const matchSymbol = !symbolFilter || config.symbol.toLowerCase().includes(symbolFilter);
+          const matchExchange = !exchangeFilter || config.exchange === exchangeFilter;
+          const matchStatus = !statusFilter || 
+            (statusFilter === 'running' && config.bot_status && config.bot_status.includes('🟢')) ||
+            (statusFilter === 'stopped' && (!config.bot_status || config.bot_status.includes('🔴')));
+          
+          return matchConfigName && matchSymbol && matchExchange && matchStatus;
+        });
+        
+        // 显示过滤后的配置
+        displayBatchConfigs(filteredConfigs);
+        
+        // 更新过滤计数
+        const filterCount = document.getElementById('filterCount');
+        if (filteredConfigs.length < allBatchConfigs.length) {
+          filterCount.textContent = `显示 ${filteredConfigs.length} / ${allBatchConfigs.length} 个配置`;
+        } else {
+          filterCount.textContent = `共 ${allBatchConfigs.length} 个配置`;
+        }
+      }
+      
+      // 显示配置表格
+      function displayBatchConfigs(configs) {
+        const container = document.getElementById("batchConfigsList");
+        
+        if (configs.length === 0) {
+          container.innerHTML = "<p>没有找到匹配的配置</p>";
+          return;
+        }
+        
+        // 创建表格头部
+        let html = `
+          <table class="batch-table">
+            <thead>
+              <tr>
+                <th style="width: 40px;">序号</th>
+                <th style="width: 50px;">选择</th>
+                <th>配置名称</th>
+                <th>交易对</th>
+                <th>交易所</th>
+                <th style="width: 80px;">状态</th>
+                <th>参数</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+        
+        // 添加表格行
+        configs.forEach((config, index) => {
+          const exchangeDisplayName = exchangeDisplayNames[config.exchange] || config.exchange.toUpperCase();
+          const botStatus = config.bot_status || '🔴 未启动';
+          const exchangeColor = getExchangeColor(config.exchange);
+          
+          // 根据交易所类型显示不同的参数
+          let paramsHtml = '';
+          const exchangeValue = config.exchange.toLowerCase();
+          const exchangeDisplayValue = exchangeDisplayName.toLowerCase();
+          
+          // 扩展判断条件，包含更多可能的 Polymarket 标识
+          const isPolymarket = exchangeValue.includes('polymarket') || 
+                               exchangeValue.includes('updown') || 
+                               exchangeValue.includes('up_down') ||
+                               exchangeValue.includes('15m') ||
+                               exchangeDisplayValue.includes('polymarket') || 
+                               exchangeDisplayValue.includes('涨跌') ||
+                               exchangeDisplayValue.includes('15分钟');
+          
+          if (isPolymarket) {
+            // Polymarket 特定参数
+            paramsHtml = `
+              偏移:${config.offset_percent}% | 
+              卖加:${config.sell_offset_percent || 0.5}% | 
+              数量:${config.quantity} | 
+              间隔:${config.interval}s | 
+              网格:${config.order_grid || 1} | 
+              模式:${config.simulate_trading ? '模拟' : '实盘'}
+            `;
+            
+            // 添加 Polymarket 特定参数
+            if (config.min_price_threshold !== null && config.min_price_threshold !== undefined) {
+              paramsHtml += ` | 最低价:${config.min_price_threshold}`;
+            }
+            if (config.market_close_threshold !== null && config.market_close_threshold !== undefined) {
+              paramsHtml += ` | 关闭阈值:${config.market_close_threshold}s`;
+            }
+            if (config.stop_loss_delay !== null && config.stop_loss_delay !== undefined) {
+              paramsHtml += ` | 止损延迟:${config.stop_loss_delay}s`;
+            }
+            if (config.sell_decay_count !== null && config.sell_decay_count !== undefined && config.sell_decay_count > 0) {
+              paramsHtml += ` | 衰减:${config.sell_decay_count}`;
+            }
+          } else {
+            // 其他交易所参数
+            paramsHtml = `
+              偏移:${config.offset_percent}% | 
+              卖加:${config.sell_offset_percent || 0.5}% | 
+              数量:${config.quantity} | 
+              间隔:${config.interval}s | 
+              网格:${config.order_grid || 1} | 
+              模式:${config.simulate_trading ? '模拟' : '实盘'}
+            `;
+          }
+          
+          html += `
+            <tr onclick="toggleRowCheckbox(${config.id})" style="cursor: pointer;">
+              <td>${index + 1}</td>
+              <td onclick="event.stopPropagation()">
+                <input type="checkbox" id="batch-${config.id}" value="${config.id}" onchange="updateSelectAllCheckbox()">
+              </td>
+              <td class="config-name">${config.config_name}</td>
+              <td>${config.symbol}</td>
+              <td style="background-color: ${exchangeColor}20; color: ${exchangeColor}; font-weight: 600; border-left: 3px solid ${exchangeColor}; padding-left: 8px;">${exchangeDisplayName}</td>
+              <td>${botStatus}</td>
+              <td class="params">${paramsHtml}</td>
+            </tr>
+          `;
+        });
+        
+        html += `
+            </tbody>
+          </table>
+        `;
+        
+        container.innerHTML = html;
+      }
+      
+      // 清除过滤
+      function clearFilters() {
+        document.getElementById('filterConfigName').value = '';
+        document.getElementById('filterSymbol').value = '';
+        document.getElementById('filterExchange').value = '';
+        document.getElementById('filterStatus').value = '';
+        filterBatchConfigs();
       }
       
       function toggleSelectAll() {
@@ -2774,10 +2889,28 @@
       function batchStartBots() {
         const configIds = getSelectedConfigIds();
         if (configIds.length === 0) {
-          showToast('请先选择要启动的配置', 'warning');
+          // 检查是否有过滤条件
+          const hasFilters = checkHasActiveFilters();
+          if (hasFilters) {
+            if (!confirm('当前有过滤条件，是否启动所有过滤后的配置？')) return;
+            // 选择所有过滤后的配置
+            selectAllFilteredConfigs();
+            const newConfigIds = getSelectedConfigIds();
+            if (newConfigIds.length === 0) {
+              showToast('过滤后没有找到配置', 'warning');
+              return;
+            }
+            performBatchStart(newConfigIds);
+          } else {
+            showToast('请先选择要启动的配置', 'warning');
+          }
           return;
         }
         
+        performBatchStart(configIds);
+      }
+      
+      function performBatchStart(configIds) {
         if (!confirm(`确定要启动选中的 ${configIds.length} 个机器人吗？`)) return;
         
         fetch("/api/bots/batch_start", {
@@ -2798,10 +2931,28 @@
       function batchStopBots() {
         const configIds = getSelectedConfigIds();
         if (configIds.length === 0) {
-          showToast('请先选择要停止的配置', 'warning');
+          // 检查是否有过滤条件
+          const hasFilters = checkHasActiveFilters();
+          if (hasFilters) {
+            if (!confirm('当前有过滤条件，是否停止所有过滤后的配置？')) return;
+            // 选择所有过滤后的配置
+            selectAllFilteredConfigs();
+            const newConfigIds = getSelectedConfigIds();
+            if (newConfigIds.length === 0) {
+              showToast('过滤后没有找到配置', 'warning');
+              return;
+            }
+            performBatchStop(newConfigIds);
+          } else {
+            showToast('请先选择要停止的配置', 'warning');
+          }
           return;
         }
         
+        performBatchStop(configIds);
+      }
+      
+      function performBatchStop(configIds) {
         if (!confirm(`确定要停止选中的 ${configIds.length} 个机器人吗？`)) return;
         
         fetch("/api/bots/batch_stop", {
@@ -2822,10 +2973,28 @@
       function batchDeleteConfigs() {
         const configIds = getSelectedConfigIds();
         if (configIds.length === 0) {
-          showToast('请先选择要删除的配置', 'warning');
+          // 检查是否有过滤条件
+          const hasFilters = checkHasActiveFilters();
+          if (hasFilters) {
+            if (!confirm('当前有过滤条件，是否删除所有过滤后的配置？此操作不可恢复！')) return;
+            // 选择所有过滤后的配置
+            selectAllFilteredConfigs();
+            const newConfigIds = getSelectedConfigIds();
+            if (newConfigIds.length === 0) {
+              showToast('过滤后没有找到配置', 'warning');
+              return;
+            }
+            performBatchDelete(newConfigIds);
+          } else {
+            showToast('请先选择要删除的配置', 'warning');
+          }
           return;
         }
         
+        performBatchDelete(configIds);
+      }
+      
+      function performBatchDelete(configIds) {
         if (!confirm(`确定要删除选中的 ${configIds.length} 个配置吗？此操作不可恢复！`)) return;
         
         fetch("/api/configs/batch_delete", {
@@ -2841,6 +3010,27 @@
               updateConfigSelect();
             }
           });
+      }
+      
+      // 检查是否有活跃的过滤条件
+      function checkHasActiveFilters() {
+        const configNameFilter = document.getElementById('filterConfigName').value;
+        const symbolFilter = document.getElementById('filterSymbol').value;
+        const exchangeFilter = document.getElementById('filterExchange').value;
+        const statusFilter = document.getElementById('filterStatus').value;
+        
+        return !!(configNameFilter || symbolFilter || exchangeFilter || statusFilter);
+      }
+      
+      // 选择所有过滤后的配置
+      function selectAllFilteredConfigs() {
+        const checkboxes = document.querySelectorAll('#batchConfigsList input[type="checkbox"]');
+        checkboxes.forEach(cb => {
+          cb.checked = true;
+          const row = cb.closest('tr');
+          row.classList.add('selected');
+        });
+        updateSelectAllCheckbox();
       }
       
       window.onload = function () {
