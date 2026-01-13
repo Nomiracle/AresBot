@@ -398,7 +398,41 @@ class CcxtBinanceFutures(BaseExchange):
                 }
             except Exception as e:
                 print(f"{self._get_log_prefix()} ❌ editOrderWs 失败 (order_id={cancel_order_id}): {e}")
-                raise
+                
+                # 检查是否为超过修改次数限制的错误
+                error_str = str(e)
+                if "-5026" in error_str or "Exceed maximum modify order limit" in error_str:
+                    print(f"{self._get_log_prefix()} ⚠️ 检测到超过修改次数限制，回退到取消+新建模式")
+                else:
+                    print(f"{self._get_log_prefix()} 🔄 editOrderWs 失败，回退到取消+新建模式")
+        
+        # 回退到取消+新建模式（或直接使用此模式）
+        try:
+            # 步骤1: 取消原订单
+            print(f"{self._get_log_prefix()} 🚫 步骤1: 取消订单 {cancel_order_id}")
+            cancel_result = self.cancel_order(cancel_order_id)
+            print(f"{self._get_log_prefix()} ✅ 订单取消成功: {cancel_order_id}")
+            
+            # 步骤2: 创建新订单
+            print(f"{self._get_log_prefix()} 📝 步骤2: 创建新订单 price={price}, quantity={quantity}")
+            if side.upper() == 'BUY':
+                new_order = self.order_limit_buy(quantity=quantity, price=price, **kwargs)
+            else:
+                new_order = self.order_limit_sell(quantity=quantity, price=price, **kwargs)
+            
+            new_order_id = str(new_order.get('orderId') or new_order.get('id'))
+            print(f"{self._get_log_prefix()} ✅ 新订单创建成功: {new_order_id}")
+            
+            # 返回标准格式的结果
+            return {
+                "cancelResult": "SUCCESS",
+                "newOrderResult": "SUCCESS", 
+                "newOrderResponse": new_order
+            }
+            
+        except Exception as fallback_error:
+            print(f"{self._get_log_prefix()} ❌ 取消+新建模式失败: {fallback_error}")
+            raise fallback_error
 
     def calculate_estimated_buy_price(self, sell_price: float, sell_offset_percent: float, tick_size: float, price_decimals: int, order: Optional[Dict] = None) -> float:
         """根据卖单价格反推估算的买入价格
