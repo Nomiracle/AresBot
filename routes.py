@@ -184,6 +184,9 @@ def register_routes(app):
             if user_id is None:
                 user_id = get_user_id(username)
             
+            # 获取策略版本（默认v1）
+            strategy_version = config.get('strategy_version', 'v1')
+            
             # 支持通过credential_id引用密钥
             credential_id = config.get('credential_id')
             if credential_id:
@@ -246,19 +249,6 @@ def register_routes(app):
                 if limit_msg:
                     print(f"[{datetime.now().isoformat()}] {limit_msg}")
             
-            # 创建机器人数据（遵循 api_start 的结构）
-            bot_data = {
-                'running': True,
-                'exchange': exchange,
-                'config': config,
-                'current_price': None,
-                'target_price': None,
-                'pending_buys': [],
-                'start_time': datetime.now()
-            }
-            
-            # 启动交易线程
-            from trading import trading_loop
             bot_key = f"{exchange_name}:{symbol}"
             
             if username not in user_bots or not isinstance(user_bots.get(username), dict):
@@ -267,24 +257,57 @@ def register_routes(app):
             if bot_key in user_bots[username]['bots'] and user_bots[username]['bots'][bot_key].get('running'):
                 return False, f'{exchange_name} 交易所的 {symbol} 机器人已运行', None
             
-            user_bots[username]['bots'][bot_key] = bot_data
-            
-            thread = threading.Thread(target=trading_loop, args=(username, bot_key), daemon=True)
-            thread.start()
-            bot_data['thread'] = thread
+            # 根据策略版本选择启动方式
+            if strategy_version == 'v2':
+                # 使用重构后的v2版本
+                from trading_system.api import start_trading_bot, user_bots as v2_user_bots
+                
+                start_trading_bot(username, bot_key, exchange, config)
+                
+                # 从v2的user_bots获取bot_data
+                bot_data = v2_user_bots[username]['bots'].get(bot_key)
+                
+                if not bot_data:
+                    return False, 'v2版本启动失败：未找到bot_data', None
+                
+                # 同时也要在routes.py的user_bots中创建引用，以便其他地方访问
+                user_bots[username]['bots'][bot_key] = bot_data
+                
+                strategy_label = "v2重构版"
+            else:
+                # 使用原有的v1版本
+                bot_data = {
+                    'running': True,
+                    'exchange': exchange,
+                    'config': config,
+                    'current_price': None,
+                    'target_price': None,
+                    'pending_buys': [],
+                    'start_time': datetime.now()
+                }
+                
+                user_bots[username]['bots'][bot_key] = bot_data
+                
+                # 启动v1交易线程
+                from trading import trading_loop
+                thread = threading.Thread(target=trading_loop, args=(username, bot_key), daemon=True)
+                thread.start()
+                bot_data['thread'] = thread
+                
+                strategy_label = "v1原版"
 
-            # 日志输出（遵循 api_start 的格式）
+            # 日志输出
             exchange_name_display = config.get('exchange', 'binance').upper()
             log_prefix = f"[{username}-{exchange_name_display}-{symbol}]"
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ▶️ 机器人已启动 (mode={'SIM' if config.get('simulate_trading',1)==1 else 'REAL'})")
+            print(f"[{datetime.now().isoformat()}] {log_prefix} ▶️ 机器人已启动 (mode={'SIM' if config.get('simulate_trading',1)==1 else 'REAL'}, strategy={strategy_label})")
             
             # 递增启动次数
             from database import increment_start_count
             config_name = config.get('config_name', 'default')
             increment_start_count(username, config_name)
             
-            # 构建返回消息（遵循 api_start 的格式）
-            success_msg = f'{symbol} 机器人已启动 ({"模拟" if config.get("simulate_trading",1)==1 else "实盘"})'
+            # 构建返回消息
+            success_msg = f'{symbol} 机器人已启动 ({"模拟" if config.get("simulate_trading",1)==1 else "实盘"}, {strategy_label})'
             if limit_msg and '调整' in limit_msg:
                 success_msg += '\n' + limit_msg
             
@@ -292,6 +315,8 @@ def register_routes(app):
             
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ 启动失败: {e}")
+            import traceback
+            traceback.print_exc()
             return False, f'启动失败: {str(e)}', None
 
     @app.route('/api/start', methods=['POST'])

@@ -738,6 +738,14 @@
               <option value="0">真实交易</option>
             </select>
           </div>
+          <div class="input-group">
+            <label>策略版本 🎯</label>
+            <select id="strategyVersion">
+              <option value="v1">动态网格 v1（原版）</option>
+              <option value="v2">动态网格 v2（重构版）</option>
+            </select>
+            <small style="color: #666;">v2版本采用工程化架构，推荐使用</small>
+          </div>
           <!-- Polymarket/UpDown15m 高级配置 -->
           <div class="input-group" id="minPriceThresholdGroup" style="display: none;">
             <label>最低价格阈值 💰</label>
@@ -1649,6 +1657,7 @@
           simulate_trading: parseInt(
             document.getElementById("simulateTrading").value
           ),
+          strategy_version: document.getElementById("strategyVersion").value || "v1",
         };
         
         // Polymarket/UpDown15m 阈值参数
@@ -1714,6 +1723,7 @@
           simulate_trading: parseInt(
             document.getElementById("simulateTrading").value
           ),
+          strategy_version: document.getElementById("strategyVersion").value || "v1",
         };
         
         // Polymarket/UpDown15m 阈值参数
@@ -1794,6 +1804,8 @@
               document.getElementById("testnet").value = data.config.testnet;
               document.getElementById("simulateTrading").value =
                 data.config.simulate_trading;
+              document.getElementById("strategyVersion").value =
+                data.config.strategy_version || "v1";
               
               // 恢复阈值参数
               if (data.config.min_price_threshold !== undefined) {
