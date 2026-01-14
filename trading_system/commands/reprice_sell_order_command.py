@@ -170,20 +170,38 @@ class RepriceSellOrderCommand(TradingCommand):
                 if isinstance(new_order_data, dict):
                     new_order_id = str(new_order_data.get('orderId') or new_order_data.get('id'))
             
-            # 更新订单价格
-            self.order_sm.update_price(target_price)
+            log_prefix = self.context.get_log_prefix()
+            print(f"{log_prefix} 🔍 [改价卖单] 旧订单ID: {self.order_sm.info.order_id}, 新订单ID: {new_order_id}")
             
-            # 如果订单ID变化，需要更新
+            # 如果订单ID变化，说明是取消+新建模式
             if new_order_id and new_order_id != self.order_sm.info.order_id:
-                # 移除旧订单
-                self.context.order_manager.remove_order(self.order_sm.info.order_id)
-                # 更新订单ID
-                object.__setattr__(self.order_sm.info, 'order_id', new_order_id)
-                # 重新添加
-                self.context.order_manager.add_order(self.order_sm)
-            
-            # 状态转换回已下单
-            self.order_sm.transition_to(OrderState.PLACED, "改价成功")
+                print(f"{log_prefix} 🔄 [改价卖单] 订单ID变化，创建新订单")
+                
+                # 旧订单标记为已取消
+                self.order_sm.transition_to(OrderState.CANCELLED, "改价时取消")
+                
+                # 创建新订单状态机
+                from ..domain import OrderInfo, OrderStateMachine
+                new_order_info = OrderInfo(
+                    order_id=new_order_id,
+                    symbol=self.order_sm.info.symbol,
+                    side=self.order_sm.info.side,
+                    price=target_price,
+                    quantity=aligned_qty,
+                    grid_index=self.order_sm.info.grid_index,
+                    buy_price=self.order_sm.info.buy_price  # 保留买入价格
+                )
+                new_order_sm = OrderStateMachine(new_order_info, OrderState.PENDING)
+                new_order_sm.transition_to(OrderState.PLACED, "改价后新订单")
+                
+                # 添加新订单到管理器
+                self.context.order_manager.add_order(new_order_sm)
+                print(f"{log_prefix} ✅ [改价卖单] 已添加新订单: {new_order_id}, state={new_order_sm.state.name}")
+            else:
+                # 订单ID未变化（原子改单），只更新价格和状态
+                self.order_sm.update_price(target_price)
+                self.order_sm.transition_to(OrderState.PLACED, "改价成功")
+                print(f"{log_prefix} ✅ [改价卖单] 原子改单成功，订单ID未变化")
             
             return True
             
