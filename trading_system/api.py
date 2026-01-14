@@ -99,6 +99,9 @@ def start_trading_bot(username: str, bot_key: str, exchange, config: Dict[str, A
         name=f"TradingLoop-{username}-{bot_key}"
     )
     thread.start()
+    
+    # 保存线程引用，以便状态检查
+    bot_data['thread'] = thread
 
 
 def stop_trading_bot(username: str, bot_key: str) -> None:
