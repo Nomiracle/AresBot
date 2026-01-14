@@ -11,6 +11,53 @@ from migrate_db import migrate_database
 from routes import register_routes
 from simple_logger import setup_logging
 
+# 导入动态索引管理器
+try:
+    from tools.dynamic_index_manager import DynamicIndexManager
+    INDEX_MANAGER_AVAILABLE = True
+except ImportError:
+    print(f"[{datetime.now().isoformat()}] ⚠️ 动态索引管理器不可用，将跳过索引优化")
+    INDEX_MANAGER_AVAILABLE = False
+
+def auto_optimize_indexes():
+    """自动优化数据库索引"""
+    if not INDEX_MANAGER_AVAILABLE:
+        return False
+    
+    try:
+        print(f"[{datetime.now().isoformat()}] 🔧 开始自动优化数据库索引...")
+        
+        manager = DynamicIndexManager()
+        
+        # 检查是否需要创建索引
+        if not manager.check_index_exists('idx_orders_user_side_status'):
+            print(f"[{datetime.now().isoformat()}] 📊 检测到缺少性能索引，正在创建...")
+            
+            # 创建性能索引
+            created = manager.create_performance_indexes()
+            
+            if created:
+                print(f"[{datetime.now().isoformat()}] ✅ 数据库索引优化完成，盈利统计页面性能已提升")
+                
+                # 快速性能验证
+                try:
+                    manager.analyze_query_performance()
+                except Exception:
+                    pass  # 性能分析失败不影响主要功能
+                    
+                return True
+            else:
+                print(f"[{datetime.now().isoformat()}] ℹ️ 所有索引已存在")
+                return False
+        else:
+            print(f"[{datetime.now().isoformat()}] ✅ 性能索引已存在，跳过优化")
+            return False
+            
+    except Exception as e:
+        print(f"[{datetime.now().isoformat()}] ⚠️ 自动索引优化失败: {e}")
+        print(f"[{datetime.now().isoformat()}] 💡 手动优化: python3 tools/quick_optimize.py")
+        return False
+
 # 设置日志重定向（所有 print 输出会同时写入文件和控制台）
 setup_logging(log_dir='logs', prefix='aresbot')
 
@@ -115,5 +162,13 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"\n❌ 迁移失败: {e}")
             print("请检查错误信息并重试")
+
+        # 自动优化数据库索引
+        try:
+            auto_optimize_indexes()
+        except Exception as e:
+            print(f"\n⚠️ 索引优化失败: {e}")
+            print("应用将继续启动，但盈利统计页面可能较慢")
+            print("💡 手动优化: python3 tools/quick_optimize.py")
 
     app.run(debug=False, host='0.0.0.0', port=PORT)
