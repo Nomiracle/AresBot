@@ -75,8 +75,8 @@ class TradingContext:
             if not self.runtime.running:
                 return False, "交易未启动"
             
-            if self.runtime.is_placing_order:
-                return False, "正在下单中"
+            # 注意：不检查 is_placing_order，因为该标志在外层（_place_missing_orders）设置
+            # 用于防止并发补单，而不是阻止单个下单命令的执行
             
             if self.runtime.is_handling_buy_filled:
                 return False, "正在处理买单成交"

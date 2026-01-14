@@ -655,8 +655,15 @@ def register_routes(app):
         if 'user' not in session:
             return jsonify({'success': False, 'bots': []}), 401
         username = session['user']
-        user_data = user_bots.get(username, {})
+        
+        # 从 v2 获取数据（v2 已经兼容 v1 接口）
+        from trading_system.api import user_bots as v2_user_bots, get_bot_status
+        
+        user_data = v2_user_bots.get(username, {})
+        
         bots = []
+        
+        # 处理所有机器人
         if isinstance(user_data, dict):
             for bot_key, b in user_data.get('bots', {}).items():
                 # 从 bot_key 中提取 symbol（格式: exchange:symbol）
@@ -666,24 +673,41 @@ def register_routes(app):
                 thread = b.get('thread')
                 thread_alive = thread.is_alive() if thread else False
                 
-                # 获取监听器状态
-                monitor_started = b.get('monitor_started', False)
-                order_monitor_enabled = b.get('order_monitor_enabled', False)
+                # 判断是 v1 还是 v2（通过是否有 context 字段）
+                is_v2 = 'context' in b
+                strategy_version = b.get('config', {}).get('strategy_version', 'v2' if is_v2 else 'v1')
                 
-                # 获取pending_buys数量
-                pending_buys_count = len(b.get('pending_buys', [])) + len(b.get('pending_sells', []))
+                # 如果是 v2，从 TradingContext 获取实时数据
+                if is_v2:
+                    bot_status = get_bot_status(username, bot_key)
+                    is_running = bot_status.get('running', False)
+                    current_price = bot_status.get('current_price')
+                    target_price = bot_status.get('target_price')
+                    last_error = bot_status.get('last_error')
+                    error_count = bot_status.get('error_count', 0)
+                    last_error_time = bot_status.get('last_error_time')
+                    last_warning = bot_status.get('last_warning')
+                    pending_buys = bot_status.get('pending_buys', [])
+                    pending_sells = bot_status.get('pending_sells', [])
+                    monitor_started = is_running and thread_alive
+                    order_monitor_enabled = monitor_started
+                else:
+                    # v1 数据
+                    is_running = bool(b.get('running'))
+                    current_price = b.get('current_price')
+                    target_price = b.get('target_price')
+                    last_error = b.get('last_error')
+                    error_count = b.get('error_count', 0)
+                    last_error_time = b.get('last_error_time')
+                    last_warning = b.get('last_warning')
+                    pending_buys = b.get('pending_buys', [])
+                    pending_sells = b.get('pending_sells', [])
+                    monitor_started = b.get('monitor_started', False)
+                    order_monitor_enabled = b.get('order_monitor_enabled', False)
                 
-                # 获取错误信息
-                last_error = b.get('last_error')
-                error_count = b.get('error_count', 0)
-                last_error_time = b.get('last_error_time')
-                
-                # 获取警告信息
-                last_warning = b.get('last_warning')
-                warning_count = b.get('warning_count', 0)
+                warning_count = 0 if is_v2 else b.get('warning_count', 0)
                 
                 # 判断机器人健康状态
-                is_running = bool(b.get('running'))
                 is_healthy = is_running and thread_alive and monitor_started and not last_error and not last_warning
                 
                 # 状态描述
@@ -731,20 +755,26 @@ def register_routes(app):
                     except:
                         pass
                 
-                # 获取挂单价格列表
-                pending_buys = b.get('pending_buys', [])
-                pending_sells = b.get('pending_sells', [])
+                # 获取挂单价格列表（使用已获取的 pending_buys 和 pending_sells）
                 buy_prices = [float(pb.get('price', 0)) for pb in pending_buys if pb.get('price')]
                 sell_prices = [float(ps.get('price', 0)) for ps in pending_sells if ps.get('price')]
+                
+                # 计算价格差异百分比
+                buy_price_diffs = []
+                sell_price_diffs = []
+                if current_price and current_price > 0:
+                    buy_price_diffs = [(current_price - p) / current_price * 100 for p in buy_prices]
+                    sell_price_diffs = [(p - current_price) / current_price * 100 for p in sell_prices]
                 
                 bots.append({
                     'symbol': sym,
                     'running': is_running,
                     'healthy': is_healthy,
                     'status_text': status_text,
-                    'current_price': b.get('current_price'),
-                    'target_price': b.get('target_price'),
+                    'current_price': current_price,
+                    'target_price': target_price,
                     'config': b.get('config', {}),
+                    'strategy_version': strategy_version,
                     'monitor_started': monitor_started,
                     'order_monitor_enabled': order_monitor_enabled,
                     'pending_buys_count': len(pending_buys),
@@ -761,12 +791,12 @@ def register_routes(app):
                     'rate_limit_status': rate_limit_status,
                     'market_info': market_info,
                     'seconds_until_close': seconds_until_close,
-                    'buy_min_price_diff_percent': b.get('buy_min_price_diff_percent'),
-                    'buy_max_price_diff_percent': b.get('buy_max_price_diff_percent'),
-                    'buy_avg_price_diff_percent': b.get('buy_avg_price_diff_percent'),
-                    'sell_min_price_diff_percent': b.get('sell_min_price_diff_percent'),
-                    'sell_max_price_diff_percent': b.get('sell_max_price_diff_percent'),
-                    'sell_avg_price_diff_percent': b.get('sell_avg_price_diff_percent')
+                    'buy_min_price_diff_percent': min(buy_price_diffs) if buy_price_diffs else None,
+                    'buy_max_price_diff_percent': max(buy_price_diffs) if buy_price_diffs else None,
+                    'buy_avg_price_diff_percent': sum(buy_price_diffs) / len(buy_price_diffs) if buy_price_diffs else None,
+                    'sell_min_price_diff_percent': min(sell_price_diffs) if sell_price_diffs else None,
+                    'sell_max_price_diff_percent': max(sell_price_diffs) if sell_price_diffs else None,
+                    'sell_avg_price_diff_percent': sum(sell_price_diffs) / len(sell_price_diffs) if sell_price_diffs else None
                 })
         return jsonify({'success': True, 'bots': bots})
 

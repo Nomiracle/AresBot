@@ -125,23 +125,17 @@ class TradingLoopOrchestrator:
                     self.context.runtime.clear_error()
                     self.context.runtime.clear_warning()
                 
-                # 查询开放订单
+                # 查询开放订单并同步订单状态
                 try:
-                    open_orders = self.context.exchange.get_open_orders()
-                    
-                    # 首次恢复订单
-                    if not self._orders_recovered:
-                        self.synchronizer.sync_from_exchange(
-                            self.tick_size, self.price_decimals,
-                            self.step_size, self.qty_decimals
-                        )
-                        self._orders_recovered = True
-                    
-                    # 同步订单状态
+                    # 同步订单状态（首次会恢复订单）
                     self.synchronizer.sync_from_exchange(
                         self.tick_size, self.price_decimals,
                         self.step_size, self.qty_decimals
                     )
+                    
+                    # 标记首次恢复完成
+                    if not self._orders_recovered:
+                        self._orders_recovered = True
                     
                     # 改价订单
                     self.repricing_service.reprice_buy_orders(self.tick_size, self.price_decimals)

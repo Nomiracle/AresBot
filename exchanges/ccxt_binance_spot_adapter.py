@@ -288,11 +288,11 @@ class CcxtBinanceSpot(BaseExchange):
                 params={"timeInForce": kwargs.get("timeInForce", "GTC")}
             )
             order_id = str(o.get("id"))
-            print(f"{self._get_log_prefix()} ✅ 买单成功: orderId={order_id}")
-            print(f"{self._get_log_prefix()} 🔍 订单详情: {o}")
+            # print(f"{self._get_log_prefix()} ✅ 买单成功: orderId={order_id}")
+            # print(f"{self._get_log_prefix()} 🔍 订单详情: {o}")
             return {"orderId": order_id, "id": order_id, **(o or {})}
         except Exception as e:
-            print(f"{self._get_log_prefix()} ❌ 下买单失败: {e}")
+            print(f"{self._get_log_prefix()} ❌ 下买单失败: {e.__str__()}")
             traceback.print_exc()
             raise
 
@@ -307,8 +307,8 @@ class CcxtBinanceSpot(BaseExchange):
                 params={"timeInForce": kwargs.get("timeInForce", "GTC")}
             )
             order_id = str(o.get("id"))
-            print(f"{self._get_log_prefix()} ✅ 卖单成功: orderId={order_id}")
-            print(f"{self._get_log_prefix()} 🔍 订单详情: {o}")
+            # print(f"{self._get_log_prefix()} ✅ 卖单成功: orderId={order_id}")
+            # print(f"{self._get_log_prefix()} 🔍 订单详情: {o}")
             return {"orderId": order_id, "id": order_id, **(o or {})}
         except Exception as e:
             print(f"{self._get_log_prefix()} ❌ 下卖单失败: {e}")
@@ -567,15 +567,15 @@ class CcxtBinanceSpot(BaseExchange):
                             fee = o.get("fee", {})
 
                             # 打印详细订单事件
-                            print(f"{self._get_log_prefix()} 📨 订单事件详情:")
-                            print(f"    - order_id: {order_id}")
-                            print(f"    - status: {raw_status} -> {status}")
-                            print(f"    - side: {side}")
-                            print(f"    - price: {price}")
-                            print(f"    - amount: {amount}")
-                            print(f"    - filled: {filled}")
-                            print(f"    - fee: {fee}")
-                            print(f"    - raw: {o}")
+                            # print(f"{self._get_log_prefix()} 📨 订单事件详情:")
+                            # print(f"    - order_id: {order_id}")
+                            # print(f"    - status: {raw_status} -> {status}")
+                            # print(f"    - side: {side}")
+                            # print(f"    - price: {price}")
+                            # print(f"    - amount: {amount}")
+                            # print(f"    - filled: {filled}")
+                            # print(f"    - fee: {fee}")
+                            # print(f"    - raw: {o}")
 
                             # 现货手续费判断
                             # 如果用 BNB 支付手续费，则不从交易币种中扣除
