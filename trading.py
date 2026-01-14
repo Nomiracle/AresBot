@@ -557,8 +557,21 @@ def reprice_sell_orders(open_sell_orders, bot_data, exchange, config, tick_size,
                 buy_price = ps.get('buy_price')
                 reprice_count = ps.get('reprice_count', 0)
                 break
+
+        print(f"{log_prefix} 📊 开始改价卖单[{grad_index}]: {sell_order_id}, 当前价格: {current_sell_price}, 买入价: {buy_price}, 现价: {current_price}, 改价次数: {reprice_count}")
         
         if not buy_price:
+            continue
+        
+        # 检查是否为虚拟订单
+        is_virtual = False
+        for ps in bot_data.get('pending_sells', []):
+            if ps.get('order_id') == sell_order_id and ps.get('is_virtual', False):
+                is_virtual = True
+                break
+        
+        if is_virtual:
+            print(f"{log_prefix} ⏭️ 跳过虚拟订单改价: {sell_order_id} (虚拟订单无法改价)")
             continue
         
         # 获取配置参数
@@ -1064,6 +1077,25 @@ def _trading_loop_inner(username, bot_key, bot_data, log_prefix):
                     virtual_orders = [o for o in open_sell_orders if o.get('info', {}).get('virtual', False)]
                     if len(virtual_orders) == len(open_sell_orders) and len(open_sell_orders) > 0:
                         print(f"{log_prefix} ⚠️ 检测到只返回虚拟订单 {[o['orderId'] for o in virtual_orders]}，跳过 pending_sells 清理")
+                        
+                        # 将虚拟订单添加到 pending_sells 中，以便改价逻辑能获取买入价
+                        for virtual_order in virtual_orders:
+                            virtual_order_id = str(virtual_order['orderId'])
+                            # 检查是否已经在 pending_sells 中
+                            if not any(ps['order_id'] == virtual_order_id for ps in bot_data.get('pending_sells', [])):
+                                virtual_sell_entry = {
+                                    'order_id': virtual_order_id,
+                                    'price': float(virtual_order['price']),
+                                    'quantity': float(virtual_order['origQty']),
+                                    'symbol': config['symbol'],
+                                    'user_id': bot_data.get('user_id'),
+                                    'buy_price': virtual_order.get('info', {}).get('entry_price', float(virtual_order['price'])),
+                                    'reprice_count': 0,
+                                    'original_order_id': virtual_order_id,
+                                    'is_virtual': True  # 标记为虚拟订单
+                                }
+                                bot_data.setdefault('pending_sells', []).append(virtual_sell_entry)
+                                print(f"{log_prefix} 🔄 添加虚拟订单到 pending_sells: {virtual_order_id}, 买入价={virtual_sell_entry['buy_price']}")
                     else:
                         open_sell_order_ids = {str(o['orderId']) for o in open_sell_orders}
                         pending_sell_ids = {ps['order_id'] for ps in bot_data['pending_sells']}

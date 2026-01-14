@@ -323,6 +323,7 @@ class NativePolymarketSpot(BaseExchange):
                     'symbol': asset_id,
                     'side': 'SELL',
                     'price': str(entry_price) if entry_price > 0 else '0',
+                    'buy_price': str(entry_price) if entry_price > 0 else '0',
                     'origQty': token_balance,
                     'executedQty': 0,
                     'status': 'NEW',
