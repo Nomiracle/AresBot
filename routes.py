@@ -814,10 +814,26 @@ def register_routes(app):
         if not symbol:
             return jsonify({'success': False, 'message': '缺少symbol'}), 400
         bot_key = f"{exchange_name}:{symbol}"
-        user_data = user_bots.get(username, {})
+        
+        # 同时从 v1 和 v2 查找机器人
+        from trading_system.api import user_bots as v2_user_bots
+        
+        v1_data = user_bots.get(username, {})
+        v2_data = v2_user_bots.get(username, {})
+        
         bot = None
-        if isinstance(user_data, dict):
-            bot = user_data.get('bots', {}).get(bot_key)
+        is_v2 = False
+        
+        # 优先从 v2 查找
+        if isinstance(v2_data, dict):
+            bot = v2_data.get('bots', {}).get(bot_key)
+            if bot:
+                is_v2 = True
+        
+        # 如果 v2 没有，从 v1 查找
+        if not bot and isinstance(v1_data, dict):
+            bot = v1_data.get('bots', {}).get(bot_key)
+        
         if not bot:
             return jsonify({'success': False, 'message': '机器人不存在'})
         
@@ -826,6 +842,14 @@ def register_routes(app):
         
         # 停止机器人运行
         bot['running'] = False
+        
+        # 如果是 v2，需要停止 TradingContext 的运行标志
+        if is_v2:
+            context = bot.get('context')
+            if context:
+                context.stop_trading()
+                print(f"[{datetime.now().isoformat()}] {log_prefix} 🛑 停止 v2 交易循环")
+        
         print(f"[{datetime.now().isoformat()}] {log_prefix} 🛑 停止机器人运行")
         
         # 获取交易所实例
@@ -858,11 +882,17 @@ def register_routes(app):
             except Exception as e:
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 清理订单时出错: {e}")
         
-        # 从内存中删除机器人
-        if isinstance(user_data, dict) and 'bots' in user_data:
-            if bot_key in user_data['bots']:
-                del user_data['bots'][bot_key]
-                print(f"[{datetime.now().isoformat()}] {log_prefix} 🗑️ 已从内存中删除机器人")
+        # 从内存中删除机器人（从正确的数据源删除）
+        if is_v2:
+            if isinstance(v2_data, dict) and 'bots' in v2_data:
+                if bot_key in v2_data['bots']:
+                    del v2_data['bots'][bot_key]
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🗑️ 已从 v2 内存中删除机器人")
+        else:
+            if isinstance(v1_data, dict) and 'bots' in v1_data:
+                if bot_key in v1_data['bots']:
+                    del v1_data['bots'][bot_key]
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🗑️ 已从 v1 内存中删除机器人")
         
         return jsonify({'success': True, 'message': f'{symbol} 机器人已删除，所有订单已取消'})
 
