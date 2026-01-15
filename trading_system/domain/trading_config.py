@@ -3,7 +3,7 @@
 """
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,8 @@ class TradingConfig:
     sell_decay_count: int = 0
     reprice_threshold_percent: float = 0.01
     simulate_trading: int = 0
+    stop_loss_delay: int = 600
+    min_price_threshold: float = 1.0
     
     def validate(self) -> List[str]:
         """
@@ -49,6 +51,12 @@ class TradingConfig:
         
         if self.reprice_threshold_percent < 0:
             errors.append(f"reprice_threshold_percent必须>=0: {self.reprice_threshold_percent}")
+
+        if self.stop_loss_delay < 0:
+            errors.append(f"stop_loss_delay必须>=0: {self.stop_loss_delay}")
+
+        if self.min_price_threshold < 0:
+            errors.append(f"min_price_threshold必须>=0: {self.min_price_threshold}")
         
         return errors
     

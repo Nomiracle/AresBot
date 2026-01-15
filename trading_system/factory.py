@@ -25,18 +25,26 @@ class TradingContextFactory:
             交易上下文
         """
         # 创建配置对象
-        config = TradingConfig(
-            symbol=config_dict['symbol'],
-            exchange=config_dict.get('exchange', 'unknown'),
-            quantity=config_dict['quantity'],
-            interval=config_dict.get('interval', 1),
-            offset_percent=config_dict.get('offset_percent', -0.1),
-            sell_offset_percent=config_dict.get('sell_offset_percent', 0.5),
-            order_grid=config_dict.get('order_grid', 1),
-            sell_decay_count=config_dict.get('sell_decay_count', 0),
-            reprice_threshold_percent=config_dict.get('reprice_threshold_percent', 0.01),
-            simulate_trading=config_dict.get('simulate_trading', 0)
-        )
+        config_kwargs: Dict[str, Any] = {
+            'symbol': config_dict['symbol'],
+            'exchange': config_dict.get('exchange', 'unknown'),
+            'quantity': config_dict['quantity'],
+            'interval': config_dict.get('interval', 1),
+            'offset_percent': config_dict.get('offset_percent', -0.1),
+            'sell_offset_percent': config_dict.get('sell_offset_percent', 0.5),
+            'order_grid': config_dict.get('order_grid', 1),
+            'sell_decay_count': config_dict.get('sell_decay_count', 0),
+            'reprice_threshold_percent': config_dict.get('reprice_threshold_percent', 0.01),
+            'simulate_trading': config_dict.get('simulate_trading', 0),
+        }
+
+        if config_dict.get('stop_loss_delay') is not None:
+            config_kwargs['stop_loss_delay'] = config_dict.get('stop_loss_delay')
+
+        if config_dict.get('min_price_threshold') is not None:
+            config_kwargs['min_price_threshold'] = config_dict.get('min_price_threshold')
+
+        config = TradingConfig(**config_kwargs)
         
         # 验证配置
         errors = config.validate()

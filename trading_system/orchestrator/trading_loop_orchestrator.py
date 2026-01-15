@@ -56,6 +56,9 @@ class TradingLoopOrchestrator:
         
         # 是否已恢复订单
         self._orders_recovered = False
+
+        # 止损幂等保护（记录已触发止损的卖单ID）
+        self._stop_loss_triggered_sell_orders: set[str] = set()
     
     def run(self) -> None:
         """启动交易循环"""
@@ -143,6 +146,9 @@ class TradingLoopOrchestrator:
                         self.tick_size, self.price_decimals,
                         self.step_size, self.qty_decimals
                     )
+
+                    # 卖单止损检查
+                    self._check_sell_stop_loss()
                     
                     # 调整网格（取消超范围订单）
                     self._adjust_grid()
@@ -313,11 +319,20 @@ class TradingLoopOrchestrator:
             # 获取订单状态机
             order_sm = self.context.order_manager.get_order(order_id)
             if not order_sm:
+                # 兜底：成交事件可能先于下单返回/本地入库，按递增延迟重试获取
+                for i in range(1, 11):
+                    time.sleep(i * 0.1)
+                    order_sm = self.context.order_manager.get_order(order_id)
+                    if order_sm:
+                        break
+            if not order_sm:
                 print(f"{log_prefix} ⚠️ 买单 {order_id} 未找到")
                 return
             
             # 更新状态
             order_sm.transition_to(OrderState.FILLED, "订单成交")
+
+            entry_filled_at = order_sm.metrics.filled_at
             
             buy_price = order_sm.info.price
             executed_qty = float(event.get('executedQty') or event.get('quantity', 0))
@@ -355,7 +370,7 @@ class TradingLoopOrchestrator:
             dynamic_sell_offset = self._calculate_dynamic_sell_offset()
             
             # 挂卖单
-            self._place_sell_order(order_id, buy_price, aligned_qty, dynamic_sell_offset)
+            self._place_sell_order(order_id, buy_price, aligned_qty, dynamic_sell_offset, entry_filled_at)
             
         finally:
             # 清除禁止下单标志
@@ -369,6 +384,13 @@ class TradingLoopOrchestrator:
         
         # 获取订单状态机
         order_sm = self.context.order_manager.get_order(order_id)
+        if not order_sm:
+            # 兜底：成交事件可能先于下单返回/本地入库，按递增延迟重试获取
+            for i in range(1, 11):
+                time.sleep(i * 0.1)
+                order_sm = self.context.order_manager.get_order(order_id)
+                if order_sm:
+                    break
         buy_price = order_sm.info.buy_price if order_sm else None
         
         # 更新状态
@@ -412,7 +434,7 @@ class TradingLoopOrchestrator:
         
         return dynamic_sell_offset
     
-    def _place_sell_order(self, buy_order_id: str, buy_price: float, quantity: float, dynamic_sell_offset: float) -> None:
+    def _place_sell_order(self, buy_order_id: str, buy_price: float, quantity: float, dynamic_sell_offset: float, entry_filled_at: Optional[datetime]) -> None:
         """挂卖单"""
         log_prefix = self.context.get_log_prefix()
         
@@ -437,6 +459,12 @@ class TradingLoopOrchestrator:
             
             if success:
                 print(f"{log_prefix} ✅ 卖单已挂 {order_id}: 价格={self.context.market.target_price}")
+
+                # 记录买单成交时间到卖单（用于止损：距离成交时间）
+                if entry_filled_at is not None:
+                    sell_sm = self.context.order_manager.get_order(order_id)
+                    if sell_sm:
+                        sell_sm.metrics.filled_at = entry_filled_at
                 
                 # 插入数据库
                 self._insert_sell_order_to_db(order_id, buy_price, quantity)
@@ -452,8 +480,147 @@ class TradingLoopOrchestrator:
                 else:
                     print(f"{log_prefix} ❌ 挂卖单失败，已重试{max_retry}次: {error}")
                     self.context.runtime.record_error(f"挂卖单失败: {error}")
+
+    def _is_short_mode(self) -> bool:
+        """判断是否为做空模式（用于止损亏损百分比计算）"""
+        try:
+            info = self.context.exchange.get_exchange_info() if hasattr(self.context.exchange, 'get_exchange_info') else {}
+            exchange_id = str((info or {}).get('id', '')).lower()
+            return 'short' in exchange_id
+        except Exception:
+            return False
+
+    def _calculate_loss_percent(self, entry_price: float, current_price: float, is_short: bool) -> Optional[float]:
+        """计算亏损百分比（只返回亏损，不返回盈利；单位：百分比）"""
+        try:
+            if entry_price <= 0 or current_price <= 0:
+                return None
+
+            if is_short:
+                # 做空：价格上涨为亏损
+                loss = (current_price - entry_price) / entry_price * 100
+            else:
+                # 做多：价格下跌为亏损
+                loss = (entry_price - current_price) / entry_price * 100
+
+            return max(0.0, float(loss))
+        except Exception:
+            return None
+
+    def _check_sell_stop_loss(self) -> None:
+        """检查卖单止损：超时或亏损达到阈值则取消挂单并抛售"""
+        log_prefix = self.context.get_log_prefix()
+
+        stop_loss_delay = self.context.config.stop_loss_delay
+        min_price_threshold = self.context.config.min_price_threshold
+
+        # 任意一个配置存在才启用止损检查
+        if stop_loss_delay is None and min_price_threshold is None:
+            return
+
+        current_price = self.context.market.current_price
+        if current_price is None or current_price <= 0:
+            return
+
+        is_short = self._is_short_mode()
+        now = datetime.now()
+
+        sell_orders = self.context.order_manager.get_active_orders(OrderSide.SELL)
+        for order_sm in sell_orders:
+            sell_order_id = order_sm.info.order_id
+
+            if sell_order_id in self._stop_loss_triggered_sell_orders:
+                continue
+
+            entry_price = order_sm.info.buy_price
+            if entry_price is None:
+                continue
+
+            # 条件A：距离成交时间（买单成交时间写入到卖单 metrics.filled_at）
+            hit_by_time = False
+            if stop_loss_delay is not None:
+                filled_at = order_sm.metrics.filled_at
+                if filled_at is not None:
+                    try:
+                        elapsed = (now - filled_at).total_seconds()
+                        hit_by_time = elapsed > float(stop_loss_delay)
+                    except Exception:
+                        hit_by_time = False
+
+            # 条件B：亏损百分比
+            hit_by_loss = False
+            loss_percent = None
+            if min_price_threshold is not None:
+                loss_percent = self._calculate_loss_percent(float(entry_price), float(current_price), is_short)
+                if loss_percent is not None:
+                    hit_by_loss = loss_percent >= float(min_price_threshold)
+
+            if not (hit_by_time or hit_by_loss):
+                continue
+
+            reason = ""
+            if hit_by_time and hit_by_loss:
+                reason = f"超时+亏损({loss_percent:.4f}%)"
+            elif hit_by_time:
+                reason = "超时"
+            else:
+                reason = f"亏损({loss_percent:.4f}%)"
+
+            print(f"{log_prefix} 🛡️ 触发卖单止损 {sell_order_id}: {reason}，开始取消挂单并抛售")
+
+            # 幂等标记：先标记，避免取消/下单过程异常导致下一轮重复触发
+            self._stop_loss_triggered_sell_orders.add(sell_order_id)
+
+            try:
+                # 1) 取消挂单
+                try:
+                    self.context.exchange.cancel_order(sell_order_id)
+                except Exception as cancel_e:
+                    print(f"{log_prefix} ⚠️ 止损取消卖单失败 {sell_order_id}: {cancel_e}")
+
+                # 本地移除，避免后续循环重复处理
+                self.context.order_manager.remove_order(sell_order_id)
+
+                # 2) 市价抛售（统一使用限价单按当前价近似市价）
+                qty = float(order_sm.info.quantity)
+                if qty <= 0:
+                    return
+
+                order_result = self.context.exchange.order_limit_sell(
+                    quantity=qty,
+                    price=f"{float(current_price)}",
+                    current_price=float(current_price),
+                    entry_price=float(entry_price)
+                )
+
+                stop_loss_order_id = str((order_result or {}).get('orderId') or (order_result or {}).get('id'))
+                if not stop_loss_order_id:
+                    raise RuntimeError("止损卖单返回的订单ID为空")
+
+                # 将止损卖单纳入幂等，避免下一轮再次对该卖单重复触发止损
+                self._stop_loss_triggered_sell_orders.add(stop_loss_order_id)
+
+                # 将止损卖单加入订单管理器，确保成交事件能取到 buy_price 等信息
+                stop_loss_order_info = OrderInfo(
+                    order_id=stop_loss_order_id,
+                    symbol=self.context.config.symbol,
+                    side=OrderSide.SELL,
+                    price=float(current_price),
+                    quantity=qty,
+                    buy_order_id=order_sm.info.buy_order_id,
+                    buy_price=float(entry_price)
+                )
+                stop_loss_order_sm = OrderStateMachine(stop_loss_order_info, OrderState.PENDING)
+                stop_loss_order_sm.transition_to(OrderState.PLACED, "止损抛售")
+                self.context.order_manager.add_order(stop_loss_order_sm)
+
+                # 写入数据库（显式传入价格，避免修改 market 状态）
+                self._insert_sell_order_to_db(stop_loss_order_id, float(entry_price), qty, sell_price=float(current_price))
+
+            except Exception as e:
+                print(f"{log_prefix} ❌ 卖单止损执行失败 {sell_order_id}: {e}")
     
-    def _insert_sell_order_to_db(self, order_id: str, buy_price: float, quantity: float) -> None:
+    def _insert_sell_order_to_db(self, order_id: str, buy_price: float, quantity: float, sell_price: Optional[float] = None) -> None:
         """插入卖单到数据库"""
         log_prefix = self.context.get_log_prefix()
         
@@ -468,7 +635,7 @@ class TradingLoopOrchestrator:
             insert_order(
                 user_id=self.context.user_id,
                 symbol=self.context.config.symbol,
-                price=str(self.context.market.target_price),
+                price=str(sell_price if sell_price is not None else self.context.market.target_price),
                 quantity=str(quantity),
                 side='SELL',
                 status='NEW',
@@ -598,7 +765,7 @@ class TradingLoopOrchestrator:
             return
         
         # 计算需要补挂的订单数
-        orders_to_add = math.ceil(missing_qty / self.context.config.quantity) if self.context.config.quantity > 0 else 0
+        orders_to_add = math.floor(missing_qty / self.context.config.quantity) if self.context.config.quantity > 0 else 0
         
         # 获取当前最大的grid_index
         max_grid_index = max([o.info.grid_index for o in buy_orders], default=0)
