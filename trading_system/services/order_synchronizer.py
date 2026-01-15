@@ -3,6 +3,7 @@
 """
 
 from typing import TYPE_CHECKING, Dict, Any
+from datetime import datetime
 from ..domain import OrderInfo, OrderStateMachine, OrderState, OrderSide
 
 if TYPE_CHECKING:
@@ -182,6 +183,8 @@ class OrderSynchronizer:
         
         # 清理已取消/成交的卖单（排除虚拟订单）
         if managed_order_ids and exchange_order_ids:
+            now = datetime.now()
+            cleanup_grace_seconds = 3.0
             virtual_orders = [o for o in open_sell_orders if o.get('info', {}).get('virtual', False)]
             if len(virtual_orders) == len(open_sell_orders) and len(open_sell_orders) > 0:
                 print(f"{log_prefix} ⚠️ 检测到只返回虚拟订单，跳过卖单清理")
@@ -190,5 +193,13 @@ class OrderSynchronizer:
                 for order_id in removed_order_ids:
                     order_sm = self.context.order_manager.get_order(order_id)
                     if order_sm and order_sm.state == OrderState.PLACED:
+                        # 新挂卖单可能尚未出现在交易所开放订单列表，给宽限期避免误清理
+                        try:
+                            created_at = order_sm.metrics.created_at
+                            if created_at and (now - created_at).total_seconds() < cleanup_grace_seconds:
+                                print(f"{log_prefix} ⏳ 卖单 {order_id} 刚创建，跳过清理")
+                                continue
+                        except Exception:
+                            pass
                         self.context.order_manager.remove_order(order_id)
                         print(f"{log_prefix} 🧹 清理已完成卖单: {order_id}")
