@@ -1064,13 +1064,21 @@ def register_routes(app):
             except Exception as e:
                 print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 清理订单时出错: {e}")
         
-        # 从内存中删除机器人（从正确的数据源删除）
+        # 从内存中删除机器人
+        # 注意：v2 机器人会同时存在于 v1 和 v2 字典中（见 start_bot 第355行），需要同时删除
         if is_v2:
+            # 删除 v2 字典中的机器人
             if isinstance(v2_data, dict) and 'bots' in v2_data:
                 if bot_key in v2_data['bots']:
                     del v2_data['bots'][bot_key]
                     print(f"[{datetime.now().isoformat()}] {log_prefix} 🗑️ 已从 v2 内存中删除机器人")
+            # 同时删除 v1 字典中的引用
+            if isinstance(v1_data, dict) and 'bots' in v1_data:
+                if bot_key in v1_data['bots']:
+                    del v1_data['bots'][bot_key]
+                    print(f"[{datetime.now().isoformat()}] {log_prefix} 🗑️ 已从 v1 内存中删除机器人引用")
         else:
+            # v1 机器人只在 v1 字典中
             if isinstance(v1_data, dict) and 'bots' in v1_data:
                 if bot_key in v1_data['bots']:
                     del v1_data['bots'][bot_key]
