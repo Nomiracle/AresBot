@@ -16,6 +16,10 @@ from notification import DingTalkNotification
 from trading import trading_loop, user_bots
 from rate_limit_manager import check_and_adjust_rate_limit
 
+# 批量启动锁：防止同一 bot_key 被重复启动
+_bot_start_locks = {}
+_bot_start_locks_lock = threading.Lock()
+
 
 def register_routes(app):
     @app.route('/')
@@ -219,99 +223,124 @@ def register_routes(app):
             if stop_loss_delay is not None:
                 stop_loss_delay = int(stop_loss_delay)
             
-            exchange = ExchangeFactory.create(
-                exchange_name,
-                api_key,
-                api_secret,
-                symbol=symbol,
-                testnet=testnet,
-                min_price_threshold=min_price_threshold,
-                market_close_threshold=market_close_threshold,
-                stop_loss_delay=stop_loss_delay,
-                username=username
-            )
-            
-            if not exchange:
-                return False, f'不支持的交易所: {exchange_name}', None
-                
-            exchange.ping()
-            
-            # 只对币安交易所检查并调整API限制
-            limit_msg = ""
-            if exchange_name == 'binance':
-                from trading import check_and_adjust_rate_limit
-                can_start, limit_msg, adjusted_config = check_and_adjust_rate_limit(user_bots, config, api_key)
-                if not can_start:
-                    return False, f'API限制检查失败:\n{limit_msg}', None
-                
-                # 使用调整后的配置
-                config = adjusted_config
-                if limit_msg:
-                    print(f"[{datetime.now().isoformat()}] {limit_msg}")
-            
             bot_key = f"{exchange_name}:{symbol}"
+            lock_key = f"{username}:{bot_key}"
             
-            if username not in user_bots or not isinstance(user_bots.get(username), dict):
-                user_bots[username] = {'bots': {}}
-                
-            if bot_key in user_bots[username]['bots'] and user_bots[username]['bots'][bot_key].get('running'):
-                return False, f'{exchange_name} 交易所的 {symbol} 机器人已运行', None
+            # 获取或创建该 bot_key 的锁
+            with _bot_start_locks_lock:
+                if lock_key not in _bot_start_locks:
+                    _bot_start_locks[lock_key] = threading.Lock()
+                bot_lock = _bot_start_locks[lock_key]
             
-            # 根据策略版本选择启动方式
-            if strategy_version == 'v2':
-                # 使用重构后的v2版本
-                from trading_system.api import start_trading_bot, user_bots as v2_user_bots
+            # 使用锁保护整个启动流程
+            with bot_lock:
+                # 初始化用户数据结构
+                if username not in user_bots or not isinstance(user_bots.get(username), dict):
+                    user_bots[username] = {'bots': {}}
                 
-                start_trading_bot(username, bot_key, exchange, config)
+                # 幂等检查：检查 routes.user_bots
+                if bot_key in user_bots[username]['bots'] and user_bots[username]['bots'][bot_key].get('running'):
+                    return False, f'{exchange_name} 交易所的 {symbol} 机器人已运行', None
                 
-                # 从v2的user_bots获取bot_data
-                bot_data = v2_user_bots[username]['bots'].get(bot_key)
+                # v2 版本额外检查 v2_user_bots
+                if strategy_version == 'v2':
+                    from trading_system.api import user_bots as v2_user_bots
+                    if username in v2_user_bots and bot_key in v2_user_bots[username].get('bots', {}):
+                        v2_bot = v2_user_bots[username]['bots'][bot_key]
+                        if v2_bot.get('running'):
+                            return False, f'{exchange_name} 交易所的 {symbol} 机器人已运行 (v2)', None
                 
-                if not bot_data:
-                    return False, 'v2版本启动失败：未找到bot_data', None
+                exchange = ExchangeFactory.create(
+                    exchange_name,
+                    api_key,
+                    api_secret,
+                    symbol=symbol,
+                    testnet=testnet,
+                    min_price_threshold=min_price_threshold,
+                    market_close_threshold=market_close_threshold,
+                    stop_loss_delay=stop_loss_delay,
+                    username=username
+                )
                 
-                # 同时也要在routes.py的user_bots中创建引用，以便其他地方访问
-                user_bots[username]['bots'][bot_key] = bot_data
+                if not exchange:
+                    return False, f'不支持的交易所: {exchange_name}', None
+                    
+                exchange.ping()
                 
-                strategy_label = "v2重构版"
-            else:
-                # 使用原有的v1版本
-                bot_data = {
-                    'running': True,
-                    'exchange': exchange,
-                    'config': config,
-                    'current_price': None,
-                    'target_price': None,
-                    'pending_buys': [],
-                    'start_time': datetime.now()
-                }
+                # 只对币安交易所检查并调整API限制
+                limit_msg = ""
+                if exchange_name == 'binance':
+                    from trading import check_and_adjust_rate_limit
+                    can_start, limit_msg, adjusted_config = check_and_adjust_rate_limit(user_bots, config, api_key)
+                    if not can_start:
+                        return False, f'API限制检查失败:\n{limit_msg}', None
+                    
+                    # 使用调整后的配置
+                    config = adjusted_config
+                    if limit_msg:
+                        print(f"[{datetime.now().isoformat()}] {limit_msg}")
                 
-                user_bots[username]['bots'][bot_key] = bot_data
-                
-                # 启动v1交易线程
-                from trading import trading_loop
-                thread = threading.Thread(target=trading_loop, args=(username, bot_key), daemon=True)
-                thread.start()
-                bot_data['thread'] = thread
-                
-                strategy_label = "v1原版"
+                # 根据策略版本选择启动方式
+                if strategy_version == 'v2':
+                    # 使用重构后的v2版本
+                    from trading_system.api import start_trading_bot, user_bots as v2_user_bots
+                    
+                    start_trading_bot(username, bot_key, exchange, config)
+                    
+                    # 从v2的user_bots获取bot_data
+                    bot_data = v2_user_bots[username]['bots'].get(bot_key)
+                    
+                    if not bot_data:
+                        return False, 'v2版本启动失败：未找到bot_data', None
+                    
+                    # 同时也要在routes.py的user_bots中创建引用，以便其他地方访问
+                    user_bots[username]['bots'][bot_key] = bot_data
+                    
+                    # 等待线程启动并设置 running 状态（最多等待 2 秒）
+                    for _ in range(20):
+                        if bot_data.get('running'):
+                            break
+                        time.sleep(0.1)
+                    
+                    strategy_label = "v2重构版"
+                else:
+                    # 使用原有的v1版本
+                    bot_data = {
+                        'running': True,
+                        'exchange': exchange,
+                        'config': config,
+                        'current_price': None,
+                        'target_price': None,
+                        'pending_buys': [],
+                        'start_time': datetime.now()
+                    }
+                    
+                    user_bots[username]['bots'][bot_key] = bot_data
+                    
+                    # 启动v1交易线程
+                    from trading import trading_loop
+                    thread = threading.Thread(target=trading_loop, args=(username, bot_key), daemon=True)
+                    thread.start()
+                    bot_data['thread'] = thread
+                    
+                    strategy_label = "v1原版"
 
-            # 日志输出
-            exchange_name_display = config.get('exchange', 'binance').upper()
-            log_prefix = f"[{username}-{exchange_name_display}-{symbol}]"
-            print(f"[{datetime.now().isoformat()}] {log_prefix} ▶️ 机器人已启动 (mode={'SIM' if config.get('simulate_trading',1)==1 else 'REAL'}, strategy={strategy_label})")
-            
-            # 递增启动次数
-            from database import increment_start_count
-            config_name = config.get('config_name', 'default')
-            increment_start_count(username, config_name)
-            
-            # 构建返回消息
-            success_msg = f'{symbol} 机器人已启动 ({"模拟" if config.get("simulate_trading",1)==1 else "实盘"}, {strategy_label})'
-            if limit_msg and '调整' in limit_msg:
-                success_msg += '\n' + limit_msg
-            
-            return True, success_msg, bot_data
+                # 日志输出
+                exchange_name_display = config.get('exchange', 'binance').upper()
+                log_prefix = f"[{username}-{exchange_name_display}-{symbol}]"
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ▶️ 机器人已启动 (mode={'SIM' if config.get('simulate_trading',1)==1 else 'REAL'}, strategy={strategy_label})")
+                
+                # 递增启动次数
+                from database import increment_start_count
+                config_name = config.get('config_name', 'default')
+                increment_start_count(username, config_name)
+                
+                # 构建返回消息
+                success_msg = f'{symbol} 机器人已启动 ({"模拟" if config.get("simulate_trading",1)==1 else "实盘"}, {strategy_label})'
+                if limit_msg and '调整' in limit_msg:
+                    success_msg += '\n' + limit_msg
+                
+                return True, success_msg, bot_data
             
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] ❌ 启动失败: {e}")
