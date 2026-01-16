@@ -765,10 +765,16 @@
         </div>
 
         <div style="margin-bottom: 15px;">
+          <label style="font-weight: 600; margin-bottom: 5px; display: block;">🔍 关键字过滤</label>
+          <input type="text" id="configFilterInput" placeholder="输入关键字过滤配置（支持空格分词，如: btc grid）" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; margin-bottom: 10px;" oninput="filterConfigSelect()" />
+          
           <label style="font-weight: 600; margin-bottom: 5px; display: block;">选择配置</label>
           <select id="configSelect" onchange="onConfigSelectChange()" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; margin-bottom: 10px;">
             <option value="default">default</option>
           </select>
+          <div id="configFilterNoResult" style="display: none; padding: 10px; background: #fff3cd; border-radius: 6px; margin-bottom: 10px; color: #856404; font-size: 14px;">
+            ⚠️ 无匹配结果，请调整关键字
+          </div>
           
           <label style="font-weight: 600; margin-bottom: 5px; display: block;">配置别名（保存时使用）</label>
           <input type="text" id="configAlias" placeholder="输入配置别名，如: binance-btc, backpack-sol" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px;" value="default" />
@@ -778,9 +784,6 @@
         <div class="controls">
           <button class="btn btn-success" onclick="startBot()">
             🚀 启动机器人
-          </button>
-          <button class="btn btn-danger" onclick="stopBot()">
-            ⏹️ 停止机器人
           </button>
           <button class="btn btn-primary" onclick="saveConfig()">
             💾 保存当前配置
@@ -898,6 +901,10 @@
       <div id="bots-tab" class="tab-content">
         <h3>挂单机器人 <span style="font-size: 14px; color: #666;">(自动刷新)</span></h3>
         <p style="color:#666; margin: 8px 0 12px;">展示每个交易对的机器人状态与参数，可在线编辑参数并保存。需要启动新机器人请在"交易配置"页选择交易对并点击"启动机器人"。</p>
+        <div id="totalPositionDisplay" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; display: none;">
+          <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px;">📊 全部机器人总仓位</div>
+          <div id="totalPositionContent" style="font-size: 14px; line-height: 1.6;"></div>
+        </div>
         <div id="botsList" class="order-history">
           <p>加载中...</p>
         </div>
@@ -1173,6 +1180,9 @@
           });
       }
       
+      // 存储所有配置数据供过滤使用
+      let allConfigs = [];
+      
       // 页面加载时更新配置下拉框
       function updateConfigSelect(autoLoad = false) {
         fetch("/api/configs")
@@ -1182,6 +1192,9 @@
             const currentValue = select.value;
             
             if (data.success && data.configs.length > 0) {
+              // 保存所有配置数据
+              allConfigs = data.configs;
+              
               select.innerHTML = data.configs
                 .map((cfg) => {
                   const exchangeName = exchangeDisplayNames[cfg.exchange] || cfg.exchange;
@@ -1206,6 +1219,76 @@
               }
             }
           });
+      }
+      
+      // 配置过滤函数
+      function filterConfigSelect() {
+        const filterInput = document.getElementById('configFilterInput');
+        const select = document.getElementById('configSelect');
+        const noResultDiv = document.getElementById('configFilterNoResult');
+        const currentValue = select.value;
+        
+        const keyword = filterInput.value.trim().toLowerCase();
+        
+        // 如果关键字为空，显示所有配置
+        if (!keyword) {
+          select.innerHTML = allConfigs
+            .map((cfg) => {
+              const exchangeName = exchangeDisplayNames[cfg.exchange] || cfg.exchange;
+              return `<option value="${cfg.config_name}">${cfg.config_name} (${exchangeName} - ${cfg.symbol})</option>`;
+            })
+            .join("");
+          noResultDiv.style.display = 'none';
+          
+          // 恢复之前选中的值
+          if (currentValue && allConfigs.find(c => c.config_name === currentValue)) {
+            select.value = currentValue;
+          }
+          return;
+        }
+        
+        // 支持空格分词（AND逻辑）
+        const keywords = keyword.split(/\s+/).filter(k => k.length > 0);
+        
+        // 过滤配置
+        const filtered = allConfigs.filter(cfg => {
+          const exchangeName = (exchangeDisplayNames[cfg.exchange] || cfg.exchange).toLowerCase();
+          const configName = cfg.config_name.toLowerCase();
+          const symbol = (cfg.symbol || '').toLowerCase();
+          
+          // 所有关键字都要匹配（AND逻辑）
+          return keywords.every(kw => {
+            return configName.includes(kw) || 
+                   symbol.includes(kw) || 
+                   exchangeName.includes(kw);
+          });
+        });
+        
+        // 更新下拉框
+        if (filtered.length > 0) {
+          select.innerHTML = filtered
+            .map((cfg) => {
+              const exchangeName = exchangeDisplayNames[cfg.exchange] || cfg.exchange;
+              return `<option value="${cfg.config_name}">${cfg.config_name} (${exchangeName} - ${cfg.symbol})</option>`;
+            })
+            .join("");
+          noResultDiv.style.display = 'none';
+          
+          // 如果当前选中的值在过滤结果中，保持选中
+          if (currentValue && filtered.find(c => c.config_name === currentValue)) {
+            select.value = currentValue;
+          } else {
+            // 否则选择第一个
+            select.value = filtered[0].config_name;
+          }
+          
+          // 同步别名输入框
+          document.getElementById("configAlias").value = select.value;
+        } else {
+          // 无匹配结果
+          select.innerHTML = '<option value="">无匹配结果</option>';
+          noResultDiv.style.display = 'block';
+        }
       }
       
       // 配置下拉框改变时自动加载并同步别名输入框
@@ -1680,14 +1763,6 @@
           });
       }
 
-      function stopBot() {
-        fetch("/api/stop", { method: "POST" })
-          .then((r) => r.json())
-          .then((data) => {
-            showResponseToast(data);
-          });
-      }
-
       function saveConfig() {
         const config_name = document.getElementById("configAlias").value.trim() || 'default';
         const credId = document.getElementById("credentialSelect").value;
@@ -2120,6 +2195,68 @@
       let botsRefreshInterval = null;
       let isEditingBot = false;  // 标记是否正在编辑机器人
 
+      // 计算并显示总仓位
+      function calculateAndDisplayTotalPosition(bots) {
+        const displayDiv = document.getElementById('totalPositionDisplay');
+        const contentDiv = document.getElementById('totalPositionContent');
+        
+        if (!bots || bots.length === 0) {
+          displayDiv.style.display = 'none';
+          return;
+        }
+        
+        // 按symbol分组统计仓位
+        const positionBySymbol = {};
+        let totalPositionUSD = 0;
+        
+        bots.forEach(bot => {
+          const qty = bot.config && bot.config.quantity ? parseFloat(bot.config.quantity) : 0;
+          const buyPrices = bot.buy_prices || [];
+          const sellPrices = bot.sell_prices || [];
+          const symbol = bot.symbol || 'UNKNOWN';
+          
+          if (qty > 0 && (buyPrices.length > 0 || sellPrices.length > 0)) {
+            const buyTotal = buyPrices.reduce((sum, p) => {
+              const price = parseFloat(p);
+              return sum + (isNaN(price) ? 0 : price * qty);
+            }, 0);
+            const sellTotal = sellPrices.reduce((sum, p) => {
+              const price = parseFloat(p);
+              return sum + (isNaN(price) ? 0 : price * qty);
+            }, 0);
+            const botPosition = buyTotal + sellTotal;
+            
+            if (!positionBySymbol[symbol]) {
+              positionBySymbol[symbol] = 0;
+            }
+            positionBySymbol[symbol] += botPosition;
+            totalPositionUSD += botPosition;
+          }
+        });
+        
+        // 构建显示内容
+        if (totalPositionUSD > 0) {
+          let html = `<div style="font-size: 18px; font-weight: 700; margin-bottom: 10px;">总计: <span style="color: #ffd700;">≈$${totalPositionUSD.toFixed(2)}</span></div>`;
+          
+          const symbolKeys = Object.keys(positionBySymbol).sort();
+          if (symbolKeys.length > 0) {
+            html += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px;">';
+            symbolKeys.forEach(symbol => {
+              const value = positionBySymbol[symbol];
+              html += `<div style="background: rgba(255,255,255,0.2); padding: 8px 12px; border-radius: 6px;">
+                <strong>${symbol}:</strong> ≈$${value.toFixed(2)}
+              </div>`;
+            });
+            html += '</div>';
+          }
+          
+          contentDiv.innerHTML = html;
+          displayDiv.style.display = 'block';
+        } else {
+          displayDiv.style.display = 'none';
+        }
+      }
+
       function loadBots() {
         // 如果正在编辑，跳过刷新
         if (isEditingBot) {
@@ -2136,6 +2273,10 @@
               return;
             }
             botsCache = Object.fromEntries(data.bots.map(b => [`${b.config.exchange || 'binance'}:${b.symbol}`, b]));
+            
+            // 计算总仓位（前端计算）
+            calculateAndDisplayTotalPosition(data.bots);
+            
             container.innerHTML = data.bots
               .map((bot, index) => {
                 const botIndex = index + 1;

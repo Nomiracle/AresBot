@@ -422,41 +422,6 @@ def register_routes(app):
         else:
             return jsonify({'success': False, 'message': message}), 400
 
-    @app.route('/api/stop', methods=['POST'])
-    def api_stop():
-        if 'user' not in session:
-            return jsonify({'success': False, 'message': '未授权'}), 401
-
-        username = session['user']
-        # 停止该用户的所有机器人（兼容旧接口）
-        user_data = user_bots.get(username, {})
-        stopped_any = False
-        stopped_bots = []
-        if isinstance(user_data, dict):
-            for symbol, b in user_data.get('bots', {}).items():
-                if b.get('running'):
-                    exchange_name = b.get('config', {}).get('exchange', 'binance').upper()
-                    b['running'] = False
-                    
-                    # 停止监听器并清理连接
-                    exchange = b.get('exchange')
-                    if exchange:
-                        try:
-                            if hasattr(exchange, 'cleanup'):
-                                exchange.cleanup()
-                            else:
-                                exchange.stop_ws()
-                        except Exception as e:
-                            print(f"[{datetime.now().isoformat()}] [{username}-{exchange_name}-{symbol}] ⚠️ 停止监听器时出错: {e}")
-                    
-                    stopped_any = True
-                    stopped_bots.append(f"{exchange_name}-{symbol}")
-                    print(f"[{datetime.now().isoformat()}] [{username}-{exchange_name}-{symbol}] ⏹️ 通过 /api/stop 停止")
-        if not stopped_any:
-            return jsonify({'success': False, 'message': '机器人未在运行'})
-        print(f"[{datetime.now().isoformat()}] [{username}-ALL-ALL] ◼️ 停止了 {len(stopped_bots)} 个机器人: {', '.join(stopped_bots)}")
-        return jsonify({'success': True, 'message': '所有机器人已停止'})
-
     @app.route('/api/config/save', methods=['POST'])
     def api_save_config():
         if 'user' not in session:
