@@ -1278,11 +1278,16 @@
           if (currentValue && filtered.find(c => c.config_name === currentValue)) {
             select.value = currentValue;
           } else {
-            // 否则选择第一个
+            // 否则选择第一个并加载配置
             select.value = filtered[0].config_name;
+            // 同步别名输入框
+            document.getElementById("configAlias").value = select.value;
+            // 加载配置数据
+            loadConfigByName(select.value);
+            return; // 已加载配置，直接返回
           }
           
-          // 同步别名输入框
+          // 同步别名输入框（保持选中的情况）
           document.getElementById("configAlias").value = select.value;
         } else {
           // 无匹配结果
@@ -1657,7 +1662,7 @@
       let credentialsCache = [];
       function updateCredentialSelect() {
         const exchange = document.getElementById("exchange").value;
-        fetch("/api/credentials")
+        return fetch("/api/credentials")
           .then((r) => r.json())
           .then((data) => {
             credentialsCache = data.credentials || [];
@@ -1684,6 +1689,8 @@
             if (filtered.length === 0) {
               select.innerHTML = '<option value="">—— 请先在"API密钥管理"页面添加密钥 ——</option>';
             }
+            
+            return select; // 返回 select 元素供后续使用
           });
       }
 
@@ -1841,27 +1848,61 @@
 
               
               // 加载交易所选择
+              const credentialId = data.config.credential_id;
               if (data.config.exchange) {
                 document.getElementById("exchange").value = data.config.exchange;
-                updateExchangeUI(); // 更新 UI,会同时更新密钥选择器
-              }
-              
-              // 处理credential_id
-              const credentialId = data.config.credential_id;
-              if (credentialId) {
-                // 如果配置使用了credential_id,选择对应的凭证
-                setTimeout(() => {
-                  const credSelect = document.getElementById("credentialSelect");
-                  credSelect.value = credentialId;
-                  onCredentialChange(); // 触发密钥选择器变化事件
-                }, 200); // 延迟以确保updateExchangeUI完成
-              } else {
-                // 旧配置(没有credential_id),提示用户需要重新选择密钥
-                console.warn(`[加载配置] 配置 ${config_name} 没有关联API密钥,请重新选择`);
-                document.getElementById("credentialSelect").value = "";
-                document.getElementById("apiKey").value = "";
-                document.getElementById("apiSecret").value = "";
-                showToast(`配置 "${config_name}" 没有关联API密钥。请在"API密钥管理"页面添加密钥后,重新选择并保存配置。`, 'warning');
+                // 更新 UI 并等待密钥选择器更新完成
+                const credentialSelectPromise = updateCredentialSelect();
+                
+                // 更新其他 UI 元素（不依赖密钥选择器）
+                const exchange = data.config.exchange;
+                const polymarketGroup = document.getElementById("polymarketSearchGroup");
+                const minPriceThresholdGroup = document.getElementById("minPriceThresholdGroup");
+                const marketCloseThresholdGroup = document.getElementById("marketCloseThresholdGroup");
+                const stopLossDelayGroup = document.getElementById("stopLossDelayGroup");
+                
+                // 只在元素存在时更新显示状态（某些页面可能没有这些元素）
+                if (polymarketGroup && minPriceThresholdGroup && marketCloseThresholdGroup && stopLossDelayGroup) {
+                  if (exchange === 'polymarket' || exchange === 'polymarket_updown15m' || exchange === 'polymarket_updown4h') {
+                    polymarketGroup.style.display = 'block';
+                    minPriceThresholdGroup.style.display = 'block';
+                    marketCloseThresholdGroup.style.display = 'block';
+                    stopLossDelayGroup.style.display = 'block';
+                  } else {
+                    polymarketGroup.style.display = 'none';
+                    minPriceThresholdGroup.style.display = 'none';
+                    marketCloseThresholdGroup.style.display = 'none';
+                    stopLossDelayGroup.style.display = 'none';
+                  }
+                }
+                
+                loadTradingPairs();
+                const symbolInput = document.getElementById("symbol");
+                if (symbolInput && symbolInput.value) {
+                  const cacheKey = `${exchange}:${symbolInput.value}`;
+                  delete atrCache[cacheKey];
+                }
+                
+                // 等待密钥选择器更新完成后再设置 credential_id
+                credentialSelectPromise.then(() => {
+                  if (credentialId) {
+                    const credSelect = document.getElementById("credentialSelect");
+                    credSelect.value = credentialId;
+                    onCredentialChange(); // 触发密钥选择器变化事件
+                  } else {
+                    // 旧配置(没有credential_id),提示用户需要重新选择密钥
+                    console.warn(`[加载配置] 配置 ${config_name} 没有关联API密钥,请重新选择`);
+                    document.getElementById("credentialSelect").value = "";
+                    document.getElementById("apiKey").value = "";
+                    document.getElementById("apiSecret").value = "";
+                    showToast(`配置 "${config_name}" 没有关联API密钥。请在"API密钥管理"页面添加密钥后,重新选择并保存配置。`, 'warning');
+                  }
+                });
+              } else if (credentialId) {
+                // 没有交易所信息但有 credential_id（不太可能出现）
+                const credSelect = document.getElementById("credentialSelect");
+                credSelect.value = credentialId;
+                onCredentialChange();
               }
               
               desiredSymbolFromConfig = data.config.symbol;
