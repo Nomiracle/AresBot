@@ -130,8 +130,8 @@ class TradingLoopOrchestrator:
                 
                 # 查询开放订单并同步订单状态
                 try:
-                    # 同步订单状态（首次会恢复订单）
-                    self.synchronizer.sync_from_exchange(
+                    # 同步订单状态（首次会恢复订单，返回持仓信息）
+                    positions = self.synchronizer.sync_from_exchange(
                         self.tick_size, self.price_decimals,
                         self.step_size, self.qty_decimals
                     )
@@ -139,6 +139,9 @@ class TradingLoopOrchestrator:
                     # 标记首次恢复完成
                     if not self._orders_recovered:
                         self._orders_recovered = True
+                    
+                    # 处理无挂单但有持仓的情况
+                    self._handle_positions_without_orders(positions)
                     
                     # 改价订单
                     self.repricing_service.reprice_buy_orders(self.tick_size, self.price_decimals)
@@ -794,3 +797,50 @@ class TradingLoopOrchestrator:
             self.context.runtime.record_error(f"补单失败: {e}")
         finally:
             self.context.runtime.is_placing_order = False
+    
+    def _handle_positions_without_orders(self, positions: list) -> None:
+        """处理持仓与卖单数量不匹配的情况，创建平仓卖单"""
+        from ..domain import OrderSide
+        
+        log_prefix = self.context.get_log_prefix()
+        
+        if not positions:
+            return
+        
+        # 计算持仓总数量
+        total_position_qty = sum(position.contracts for position in positions)
+        
+        # 计算卖单总数量
+        sell_orders = self.context.order_manager.get_all_orders(OrderSide.SELL)
+        total_sell_qty = sum(order.info.quantity for order in sell_orders)
+        
+        # 如果持仓总数量小于等于卖单总数量，无需创建卖单
+        if total_position_qty <= total_sell_qty:
+            return
+        
+        # 需要创建的卖单数量 = 持仓总数量 - 卖单总数量
+        missing_qty = total_position_qty - total_sell_qty
+        
+        print(f"{log_prefix} 📍 持仓总量={total_position_qty}, 卖单总量={total_sell_qty}, 需补卖单数量={missing_qty}")
+        
+        # 为持仓创建卖单，直到补足差额
+        remaining_qty = missing_qty
+        for position in positions:
+            if remaining_qty <= 0:
+                break
+            
+            try:
+                buy_price = position.entry_price
+                quantity = min(position.contracts, remaining_qty)
+                sell_offset_percent = self.context.config.sell_offset_percent
+                
+                buy_order_id = f"position_{position.symbol}_{position.side}"
+                
+                print(f"{log_prefix} 📝 为持仓创建平仓卖单: symbol={position.symbol}, side={position.side}, qty={quantity}, entry_price={buy_price}")
+                
+                self._place_sell_order(buy_order_id, buy_price, quantity, sell_offset_percent, None)
+                
+                remaining_qty -= quantity
+                
+            except Exception as e:
+                print(f"{log_prefix} ❌ 为持仓创建卖单失败: {e}")

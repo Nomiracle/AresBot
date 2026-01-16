@@ -286,6 +286,31 @@ class CcxtBinanceFuturesShort(CcxtBinanceFutures):
         
         return orders
     
+    def get_open_ordersv2(self) -> List['ExchangeOrder']:
+        """获取真实未完成订单（v2专用，不含虚拟订单，反转side）
+        
+        只返回真实的开放订单，不做持仓映射，但需要反转side以兼容做空逻辑
+        """
+        from trading_system.domain import ExchangeOrder
+        from dataclasses import replace
+        
+        orders = super().get_open_ordersv2()
+        
+        # 反转每个订单的 side（使用dataclass的replace创建新实例）
+        reversed_orders = []
+        for order in orders:
+            new_side = 'SELL' if order.side == 'BUY' else 'BUY'
+            reversed_orders.append(replace(order, side=new_side))
+        
+        return reversed_orders
+    
+    def get_open_positionv2(self) -> List['PositionInfo']:
+        """获取当前活跃仓位（v2专用）
+        
+        返回当前持仓信息，做空适配器直接复用父类
+        """
+        return super().get_open_positionv2()
+    
     def _process_order_event(self, o: Dict, on_order_update):
         """处理订单事件（反转 side，使 trading.py 逻辑兼容做空）
         

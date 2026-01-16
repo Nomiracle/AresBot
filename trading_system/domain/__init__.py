@@ -11,6 +11,8 @@ from .market_state import MarketState
 from .runtime_state import RuntimeState
 from .trading_config import TradingConfig
 from .trading_context import TradingContext
+from .exchange_order import ExchangeOrder
+from .position_info import PositionInfo
 
 __all__ = [
     'OrderState',
@@ -23,4 +25,6 @@ __all__ = [
     'RuntimeState',
     'TradingConfig',
     'TradingContext',
+    'ExchangeOrder',
+    'PositionInfo',
 ]

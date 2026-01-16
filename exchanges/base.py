@@ -119,6 +119,30 @@ class BaseExchange(ABC):
         """取消并替换订单（改价）"""
         pass
     
+    def get_open_ordersv2(self) -> List['ExchangeOrder']:
+        """获取真实未完成订单（v2专用，不含虚拟订单）
+        
+        默认实现：调用 get_open_orders() 并转换为实体类
+        注意：对于含虚拟订单映射的交易所（如合约），必须 override 此方法
+        
+        Returns:
+            List[ExchangeOrder]: 真实订单列表，不包含持仓映射的虚拟订单
+        """
+        from trading_system.domain import ExchangeOrder
+        orders = self.get_open_orders()
+        return [ExchangeOrder.from_dict(o) for o in orders]
+    
+    def get_open_positionv2(self) -> List['PositionInfo']:
+        """获取当前活跃仓位（v2专用）
+        
+        默认实现：返回空列表（现货无持仓概念）
+        合约交易所需要 override 此方法返回真实持仓
+        
+        Returns:
+            List[PositionInfo]: 持仓列表
+        """
+        return []
+    
     @abstractmethod
     def get_trading_rules(self) -> Dict:
         """获取交易规则（精度信息）

@@ -166,6 +166,34 @@ class CcxtBinanceFutures(BaseExchange):
         - 多单持仓 → 虚拟卖单（等待平仓）
         - 空单持仓 → 虚拟买单（等待平仓）
         """
+        orders = self._fetch_real_orders()
+        
+        # 如果没有挂单，检查持仓并映射为虚拟订单
+        if not orders:
+            orders = self._position_to_virtual_orders()
+        
+        return orders
+    
+    def get_open_ordersv2(self) -> List['ExchangeOrder']:
+        """获取真实未完成订单（v2专用，不含虚拟订单）
+        
+        只返回真实的开放订单，不做持仓映射
+        """
+        from trading_system.domain import ExchangeOrder
+        orders = self._fetch_real_orders()
+        return [ExchangeOrder.from_dict(o) for o in orders]
+    
+    def get_open_positionv2(self) -> List['PositionInfo']:
+        """获取当前活跃仓位（v2专用）
+        
+        返回当前持仓信息（按 symbol/方向/数量/开仓价等）
+        """
+        from trading_system.domain import PositionInfo
+        positions = self.get_position()
+        return [PositionInfo.from_dict(p) for p in positions]
+    
+    def _fetch_real_orders(self) -> List[Dict]:
+        """获取真实订单（内部方法，不含虚拟订单映射）"""
         orders = []
         
         # 优先使用 fetchOpenOrdersWs（WebSocket 方式），失败后禁用
@@ -194,10 +222,6 @@ class CcxtBinanceFutures(BaseExchange):
             except Exception as e:
                 print(f"{self._get_log_prefix()} ❌ 获取未完成订单失败: {e}")
                 return []
-        
-        # 如果没有挂单，检查持仓并映射为虚拟订单
-        if not orders:
-            orders = self._position_to_virtual_orders()
         
         return orders
 
