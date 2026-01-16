@@ -123,9 +123,8 @@ class TradingLoopOrchestrator:
                     time.sleep(self.context.config.interval)
                     continue
                 
-                # 清除警告
-                if self.context.runtime.last_error or self.context.runtime.last_warning:
-                    self.context.runtime.clear_error()
+                # 只清除警告，保留错误信息（错误应在成功下单后清除）
+                if self.context.runtime.last_warning:
                     self.context.runtime.clear_warning()
                 
                 # 查询开放订单并同步订单状态
@@ -779,7 +778,7 @@ class TradingLoopOrchestrator:
         self.context.runtime.is_placing_order = True
         
         try:
-            self.placement_service.place_buy_orders(
+            order_ids = self.placement_service.place_buy_orders(
                 count=orders_to_add,
                 start_grid_index=max_grid_index + 1,
                 tick_size=self.tick_size,
@@ -788,9 +787,10 @@ class TradingLoopOrchestrator:
                 qty_decimals=self.qty_decimals
             )
             
-            # 清除错误
-            self.context.runtime.clear_error()
-            self.context.runtime.clear_warning()
+            # 只在成功下单后清除错误
+            if order_ids:
+                self.context.runtime.clear_error()
+                self.context.runtime.clear_warning()
             
         except Exception as e:
             print(f"{log_prefix} ❌ 补单失败: {e}")
