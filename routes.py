@@ -455,15 +455,28 @@ def register_routes(app):
         configs = get_user_config_list_with_details(username, include_default=True)
         
         # 为每个配置添加机器人状态信息
+        from trading_system.api import user_bots as v2_user_bots, get_bot_status
+        
         for config in configs:
             exchange_name = config['exchange'].lower()
             symbol = config['symbol']
             bot_key = f"{exchange_name}:{symbol}"
             
-            user_data = user_bots.get(username, {})
             bot = None
-            if isinstance(user_data, dict):
-                bot = user_data.get('bots', {}).get(bot_key)
+            is_v2 = False
+            
+            # 先从v2查找
+            v2_data = v2_user_bots.get(username, {})
+            if isinstance(v2_data, dict):
+                bot = v2_data.get('bots', {}).get(bot_key)
+                if bot and 'context' in bot:
+                    is_v2 = True
+            
+            # 如果v2没有，从v1查找
+            if not bot:
+                v1_data = user_bots.get(username, {})
+                if isinstance(v1_data, dict):
+                    bot = v1_data.get('bots', {}).get(bot_key)
             
             if bot:
                 # 机器人存在，检查是否基于当前配置
@@ -483,18 +496,23 @@ def register_routes(app):
                 
                 if is_same_config:
                     # 基于当前配置的机器人 - 使用健康检查逻辑
-                    is_running = bool(bot.get('running'))
-                    
-                    # 检查线程状态
                     thread = bot.get('thread')
                     thread_alive = thread.is_alive() if thread else False
                     
-                    # 获取监听器状态
-                    monitor_started = bot.get('monitor_started', False)
-                    
-                    # 获取错误和警告信息
-                    last_error = bot.get('last_error')
-                    last_warning = bot.get('last_warning')
+                    if is_v2:
+                        # v2机器人：从context获取状态
+                        bot_status = get_bot_status(username, bot_key)
+                        is_running = bot_status.get('running', False)
+                        last_error = bot_status.get('last_error')
+                        last_warning = bot_status.get('last_warning')
+                        # v2的monitor_started等同于running且线程存活
+                        monitor_started = is_running and thread_alive
+                    else:
+                        # v1机器人：直接读取字段
+                        is_running = bool(bot.get('running'))
+                        last_error = bot.get('last_error')
+                        last_warning = bot.get('last_warning')
+                        monitor_started = bot.get('monitor_started', False)
                     
                     # 判断机器人健康状态
                     is_healthy = is_running and thread_alive and monitor_started and not last_error and not last_warning
@@ -685,16 +703,22 @@ def register_routes(app):
             return jsonify({'success': False, 'bots': []}), 401
         username = session['user']
         
-        # 从 v2 获取数据（v2 已经兼容 v1 接口）
+        # 同时从v1和v2获取数据
         from trading_system.api import user_bots as v2_user_bots, get_bot_status
         
-        user_data = v2_user_bots.get(username, {})
+        v1_data = user_bots.get(username, {})
+        v2_data = v2_user_bots.get(username, {})
         
         bots = []
+        processed_keys = set()
         
-        # 处理所有机器人
-        if isinstance(user_data, dict):
-            for bot_key, b in user_data.get('bots', {}).items():
+        # 先处理v2机器人
+        if isinstance(v2_data, dict):
+            for bot_key, b in v2_data.get('bots', {}).items():
+                if 'context' not in b:
+                    continue
+                processed_keys.add(bot_key)
+                
                 # 从 bot_key 中提取 symbol（格式: exchange:symbol）
                 sym = b.get('config', {}).get('symbol', bot_key)
                 
@@ -702,39 +726,144 @@ def register_routes(app):
                 thread = b.get('thread')
                 thread_alive = thread.is_alive() if thread else False
                 
-                # 判断是 v1 还是 v2（通过是否有 context 字段）
-                is_v2 = 'context' in b
-                strategy_version = b.get('config', {}).get('strategy_version', 'v2' if is_v2 else 'v1')
+                # v2机器人
+                strategy_version = b.get('config', {}).get('strategy_version', 'v2')
                 
-                # 如果是 v2，从 TradingContext 获取实时数据
-                if is_v2:
-                    bot_status = get_bot_status(username, bot_key)
-                    is_running = bot_status.get('running', False)
-                    current_price = bot_status.get('current_price')
-                    target_price = bot_status.get('target_price')
-                    last_error = bot_status.get('last_error')
-                    error_count = bot_status.get('error_count', 0)
-                    last_error_time = bot_status.get('last_error_time')
-                    last_warning = bot_status.get('last_warning')
-                    pending_buys = bot_status.get('pending_buys', [])
-                    pending_sells = bot_status.get('pending_sells', [])
-                    monitor_started = is_running and thread_alive
-                    order_monitor_enabled = monitor_started
+                # 从 TradingContext 获取实时数据
+                bot_status = get_bot_status(username, bot_key)
+                is_running = bot_status.get('running', False)
+                current_price = bot_status.get('current_price')
+                target_price = bot_status.get('target_price')
+                last_error = bot_status.get('last_error')
+                error_count = bot_status.get('error_count', 0)
+                last_error_time = bot_status.get('last_error_time')
+                last_warning = bot_status.get('last_warning')
+                pending_buys = bot_status.get('pending_buys', [])
+                pending_sells = bot_status.get('pending_sells', [])
+                monitor_started = is_running and thread_alive
+                order_monitor_enabled = monitor_started
+                warning_count = 0
+                
+                # 判断机器人健康状态
+                is_healthy = is_running and thread_alive and monitor_started and not last_error and not last_warning
+                
+                # 状态描述
+                if not is_running:
+                    status_text = '已停止'
+                elif not thread_alive:
+                    status_text = '异常：线程已终止'
+                elif not monitor_started:
+                    status_text = '启动中...'
+                elif last_error:
+                    status_text = f'错误 (共{error_count}次)'
+                elif last_warning:
+                    status_text = f'警告 (共{warning_count}次)'
                 else:
-                    # v1 数据
-                    is_running = bool(b.get('running'))
-                    current_price = b.get('current_price')
-                    target_price = b.get('target_price')
-                    last_error = b.get('last_error')
-                    error_count = b.get('error_count', 0)
-                    last_error_time = b.get('last_error_time')
-                    last_warning = b.get('last_warning')
-                    pending_buys = b.get('pending_buys', [])
-                    pending_sells = b.get('pending_sells', [])
-                    monitor_started = b.get('monitor_started', False)
-                    order_monitor_enabled = b.get('order_monitor_enabled', False)
+                    status_text = '正常运行'
                 
-                warning_count = 0 if is_v2 else b.get('warning_count', 0)
+                # 获取启动时间戳
+                start_timestamp = None
+                start_time = b.get('start_time')
+                if start_time:
+                    start_timestamp = int(start_time.timestamp() * 1000)
+                
+                # 获取币安API限制使用情况
+                rate_limit_status = None
+                exchange = b.get('exchange')
+                if exchange and hasattr(exchange, 'get_rate_limit_status'):
+                    try:
+                        rate_limit_status = exchange.get_rate_limit_status()
+                    except:
+                        pass
+                
+                # 获取市场信息(适用于 BtcUpDown15m 等动态市场)
+                market_info = None
+                if exchange and hasattr(exchange, 'get_market_info'):
+                    try:
+                        market_info = exchange.get_market_info()
+                    except:
+                        pass
+                
+                # 获取市场剩余时间
+                seconds_until_close = None
+                if exchange and hasattr(exchange, 'get_seconds_until_market_close'):
+                    try:
+                        seconds_until_close = exchange.get_seconds_until_market_close()
+                    except:
+                        pass
+                
+                # 获取挂单价格列表（使用已获取的 pending_buys 和 pending_sells）
+                buy_prices = [float(pb.get('price', 0)) for pb in pending_buys if pb.get('price')]
+                sell_prices = [float(ps.get('price', 0)) for ps in pending_sells if ps.get('price')]
+                
+                # 计算价格差异百分比
+                buy_price_diffs = []
+                sell_price_diffs = []
+                if current_price and current_price > 0:
+                    buy_price_diffs = [(current_price - p) / current_price * 100 for p in buy_prices]
+                    sell_price_diffs = [(p - current_price) / current_price * 100 for p in sell_prices]
+                
+                bots.append({
+                    'symbol': sym,
+                    'running': is_running,
+                    'healthy': is_healthy,
+                    'status_text': status_text,
+                    'current_price': current_price,
+                    'target_price': target_price,
+                    'config': b.get('config', {}),
+                    'strategy_version': strategy_version,
+                    'monitor_started': monitor_started,
+                    'order_monitor_enabled': order_monitor_enabled,
+                    'pending_buys_count': len(pending_buys),
+                    'pending_sells_count': len(pending_sells),
+                    'buy_prices': buy_prices,
+                    'sell_prices': sell_prices,
+                    'thread_alive': thread_alive,
+                    'last_error': last_error,
+                    'error_count': error_count,
+                    'last_error_time': last_error_time,
+                    'last_warning': last_warning,
+                    'warning_count': warning_count,
+                    'start_timestamp': start_timestamp,
+                    'rate_limit_status': rate_limit_status,
+                    'market_info': market_info,
+                    'seconds_until_close': seconds_until_close,
+                    'buy_min_price_diff_percent': min(buy_price_diffs) if buy_price_diffs else None,
+                    'buy_max_price_diff_percent': max(buy_price_diffs) if buy_price_diffs else None,
+                    'buy_avg_price_diff_percent': sum(buy_price_diffs) / len(buy_price_diffs) if buy_price_diffs else None,
+                    'sell_min_price_diff_percent': min(sell_price_diffs) if sell_price_diffs else None,
+                    'sell_max_price_diff_percent': max(sell_price_diffs) if sell_price_diffs else None,
+                    'sell_avg_price_diff_percent': sum(sell_price_diffs) / len(sell_price_diffs) if sell_price_diffs else None
+                })
+        
+        # 再处理v1机器人（跳过已处理的v2机器人）
+        if isinstance(v1_data, dict):
+            for bot_key, b in v1_data.get('bots', {}).items():
+                if bot_key in processed_keys:
+                    continue
+                # 从 bot_key 中提取 symbol（格式: exchange:symbol）
+                sym = b.get('config', {}).get('symbol', bot_key)
+                
+                # 检查线程状态
+                thread = b.get('thread')
+                thread_alive = thread.is_alive() if thread else False
+                
+                # v1机器人
+                strategy_version = b.get('config', {}).get('strategy_version', 'v1')
+                
+                # v1 数据
+                is_running = bool(b.get('running'))
+                current_price = b.get('current_price')
+                target_price = b.get('target_price')
+                last_error = b.get('last_error')
+                error_count = b.get('error_count', 0)
+                last_error_time = b.get('last_error_time')
+                last_warning = b.get('last_warning')
+                pending_buys = b.get('pending_buys', [])
+                pending_sells = b.get('pending_sells', [])
+                monitor_started = b.get('monitor_started', False)
+                order_monitor_enabled = b.get('order_monitor_enabled', False)
+                warning_count = b.get('warning_count', 0)
                 
                 # 判断机器人健康状态
                 is_healthy = is_running and thread_alive and monitor_started and not last_error and not last_warning
