@@ -3121,11 +3121,37 @@
         })
           .then((r) => r.json())
           .then((data) => {
+            // 显示基本消息
             showResponseToast(data);
-            if (data.success) {
-              loadBatchConfigs();
-              loadBots();
+            
+            // 如果有详细结果，显示失败项
+            if (data.results && data.failed_count > 0) {
+              const failedItems = data.results.filter(r => !r.success);
+              if (failedItems.length > 0) {
+                const failedDetails = failedItems.slice(0, 5).map(r => 
+                  `${r.config_name}: ${r.message}`
+                ).join('\n');
+                console.warn('批量停止失败详情:\n' + failedDetails);
+              }
             }
+            
+            // 立即清理缓存中已停止的机器人
+            if (data.results) {
+              data.results.forEach(result => {
+                if (result.success && result.bot_key) {
+                  // 从缓存中删除已停止的机器人
+                  delete botsCache[result.bot_key];
+                }
+              });
+            }
+            
+            // 刷新批量配置列表和机器人列表
+            loadBatchConfigs();
+            loadBots();
+          })
+          .catch((error) => {
+            showToast('批量停止请求失败: ' + error.message, 'error');
+            console.error('批量停止错误:', error);
           });
       }
       

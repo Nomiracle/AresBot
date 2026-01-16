@@ -1149,69 +1149,173 @@ def register_routes(app):
         if not configs:
             return jsonify({'success': False, 'message': '未找到选中的配置'}), 404
         
+        # 导入 v2 机器人管理接口
+        from trading_system.api import user_bots as v2_user_bots, stop_trading_bot
+        
         success_count = 0
-        error_messages = []
+        failed_count = 0
+        results = []
         
         for config in configs:
+            config_name = config.get('config_name', '未命名')
             try:
-                # 直接调用停止逻辑
                 exchange_name = config['exchange'].lower()
                 symbol = config['symbol']
                 bot_key = f"{exchange_name}:{symbol}"
+                strategy_version = config.get('strategy_version', 'v1')
                 
-                user_data = user_bots.get(username, {})
-                bot = None
-                if isinstance(user_data, dict):
-                    bot = user_data.get('bots', {}).get(bot_key)
+                # 先尝试从 v2 查找
+                v2_data = v2_user_bots.get(username, {})
+                v2_bot = None
+                if isinstance(v2_data, dict):
+                    v2_bot = v2_data.get('bots', {}).get(bot_key)
                 
-                if not bot:
-                    error_messages.append(f"{config['config_name']}: 机器人不存在")
+                # 再尝试从 v1 查找
+                v1_data = user_bots.get(username, {})
+                v1_bot = None
+                if isinstance(v1_data, dict):
+                    v1_bot = v1_data.get('bots', {}).get(bot_key)
+                
+                # 判断机器人是否存在
+                if not v2_bot and not v1_bot:
+                    failed_count += 1
+                    results.append({
+                        'config_name': config_name,
+                        'bot_key': bot_key,
+                        'success': False,
+                        'message': '机器人不存在或未运行'
+                    })
                     continue
                 
-                # 停止机器人
-                bot['running'] = False
-                
-                # 取消订单
-                exchange = bot.get('exchange')
-                if exchange:
+                # 停止 v2 机器人
+                if v2_bot and 'context' in v2_bot:
                     try:
-                        open_orders = exchange.get_open_orders()
-                        if open_orders:
-                            for order in open_orders:
-                                try:
-                                    order_id = str(order.get('orderId') or order.get('id'))
-                                    exchange.cancel_order(order_id=order_id)
-                                except Exception:
-                                    pass
-                    except Exception:
-                        pass
-                    
-                    # 清理连接
-                    if hasattr(exchange, 'cleanup'):
-                        exchange.cleanup()
-                    else:
-                        exchange.stop_ws()
+                        # 调用 v2 停止接口
+                        stop_trading_bot(username, bot_key)
+                        
+                        # 取消订单
+                        exchange = v2_bot.get('exchange')
+                        if exchange:
+                            try:
+                                open_orders = exchange.get_open_orders()
+                                if open_orders:
+                                    for order in open_orders:
+                                        try:
+                                            order_id = str(order.get('orderId') or order.get('id'))
+                                            exchange.cancel_order(order_id=order_id)
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                pass
+                            
+                            # 清理连接
+                            if hasattr(exchange, 'cleanup'):
+                                exchange.cleanup()
+                            else:
+                                exchange.stop_ws()
+                        
+                        # 从内存中删除
+                        if bot_key in v2_data.get('bots', {}):
+                            del v2_data['bots'][bot_key]
+                        
+                        success_count += 1
+                        results.append({
+                            'config_name': config_name,
+                            'bot_key': bot_key,
+                            'success': True,
+                            'message': 'v2 机器人已停止'
+                        })
+                        continue
+                    except Exception as e:
+                        failed_count += 1
+                        results.append({
+                            'config_name': config_name,
+                            'bot_key': bot_key,
+                            'success': False,
+                            'message': f'v2 停止失败: {str(e)}'
+                        })
+                        print(f"[{datetime.now().isoformat()}] v2 批量停止失败 - {config_name}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        continue
                 
-                # 从内存中删除
-                if isinstance(user_data, dict) and 'bots' in user_data:
-                    if bot_key in user_data['bots']:
-                        del user_data['bots'][bot_key]
-                
-                success_count += 1
+                # 停止 v1 机器人
+                if v1_bot:
+                    try:
+                        # 停止机器人
+                        v1_bot['running'] = False
+                        
+                        # 取消订单
+                        exchange = v1_bot.get('exchange')
+                        if exchange:
+                            try:
+                                open_orders = exchange.get_open_orders()
+                                if open_orders:
+                                    for order in open_orders:
+                                        try:
+                                            order_id = str(order.get('orderId') or order.get('id'))
+                                            exchange.cancel_order(order_id=order_id)
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                pass
+                            
+                            # 清理连接
+                            if hasattr(exchange, 'cleanup'):
+                                exchange.cleanup()
+                            else:
+                                exchange.stop_ws()
+                        
+                        # 从内存中删除
+                        if bot_key in v1_data.get('bots', {}):
+                            del v1_data['bots'][bot_key]
+                        
+                        success_count += 1
+                        results.append({
+                            'config_name': config_name,
+                            'bot_key': bot_key,
+                            'success': True,
+                            'message': 'v1 机器人已停止'
+                        })
+                    except Exception as e:
+                        failed_count += 1
+                        results.append({
+                            'config_name': config_name,
+                            'bot_key': bot_key,
+                            'success': False,
+                            'message': f'v1 停止失败: {str(e)}'
+                        })
+                        print(f"[{datetime.now().isoformat()}] v1 批量停止失败 - {config_name}: {e}")
+                        import traceback
+                        traceback.print_exc()
                     
             except Exception as e:
-                error_messages.append(f"{config['config_name']}: {str(e)}")
-                print(f"[{datetime.now().isoformat()}] 批量停止失败 - {config['config_name']}: {e}")
+                failed_count += 1
+                results.append({
+                    'config_name': config_name,
+                    'bot_key': bot_key if 'bot_key' in locals() else 'unknown',
+                    'success': False,
+                    'message': f'异常: {str(e)}'
+                })
+                print(f"[{datetime.now().isoformat()}] 批量停止异常 - {config_name}: {e}")
                 import traceback
                 traceback.print_exc()
         
+        # 构建返回消息
         message = f"成功停止 {success_count}/{len(configs)} 个机器人"
-        if error_messages:
-            message += f"。失败: {', '.join(error_messages[:3])}"
-            if len(error_messages) > 3:
-                message += f" 等{len(error_messages)}个"
+        if failed_count > 0:
+            failed_names = [r['config_name'] for r in results if not r['success']][:3]
+            message += f"，失败 {failed_count} 个: {', '.join(failed_names)}"
+            if failed_count > 3:
+                message += f" 等"
         
-        return jsonify({'success': success_count > 0, 'message': message})
+        return jsonify({
+            'success': success_count > 0,
+            'message': message,
+            'stopped_count': success_count,
+            'failed_count': failed_count,
+            'results': results
+        })
 
     @app.route('/api/configs/batch_delete', methods=['POST'])
     def api_configs_batch_delete():
