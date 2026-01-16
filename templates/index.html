@@ -2656,6 +2656,9 @@
 
       function deleteBotSymbol(symbol, exchange) {
         if (!confirm(`确定删除 ${exchange.toUpperCase()} 交易所的 ${symbol} 机器人吗？\n\n此操作将：\n✓ 停止机器人运行\n✓ 取消所有未完成订单\n✓ 从列表中移除机器人\n\n此操作不可撤销！`)) return;
+        
+        const bot_key = `${exchange.toLowerCase()}:${symbol}`;
+        
         fetch("/api/bot/stop", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2664,7 +2667,12 @@
           .then(r => r.json())
           .then(data => {
             showResponseToast(data);
-            if (data.success) loadBots();
+            if (data.success) {
+              // 立即从缓存中删除机器人
+              delete botsCache[bot_key];
+              // 刷新列表
+              loadBots();
+            }
           });
       }
 

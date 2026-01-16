@@ -997,7 +997,7 @@ def register_routes(app):
         bot_key = f"{exchange_name}:{symbol}"
         
         # 同时从 v1 和 v2 查找机器人
-        from trading_system.api import user_bots as v2_user_bots
+        from trading_system.api import user_bots as v2_user_bots, stop_trading_bot
         
         v1_data = user_bots.get(username, {})
         v2_data = v2_user_bots.get(username, {})
@@ -1021,15 +1021,16 @@ def register_routes(app):
         exchange_name_upper = bot.get('config', {}).get('exchange', 'binance').upper()
         log_prefix = f"[{username}-{exchange_name_upper}-{symbol}]"
         
-        # 停止机器人运行
-        bot['running'] = False
-        
-        # 如果是 v2，需要停止 TradingContext 的运行标志
+        # 如果是 v2，使用统一的停止函数
         if is_v2:
-            context = bot.get('context')
-            if context:
-                context.stop_trading()
+            try:
+                stop_trading_bot(username, bot_key)
                 print(f"[{datetime.now().isoformat()}] {log_prefix} 🛑 停止 v2 交易循环")
+            except Exception as e:
+                print(f"[{datetime.now().isoformat()}] {log_prefix} ⚠️ 停止 v2 机器人失败: {e}")
+        else:
+            # v1 机器人直接设置 running 标志
+            bot['running'] = False
         
         print(f"[{datetime.now().isoformat()}] {log_prefix} 🛑 停止机器人运行")
         
