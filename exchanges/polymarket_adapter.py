@@ -366,6 +366,172 @@ class NativePolymarketSpot(BaseExchange):
             print(f"{self._get_log_prefix()} ⚠️ 获取 token 余额失败: {e}")
             return 0.0
     
+    def _get_last_filled_buy_price(self, asset_id: str) -> Optional[float]:
+        """从历史订单获取最近一次买入价
+        
+        Args:
+            asset_id: token_id
+        
+        Returns:
+            float: 最近买入价，获取失败返回 None
+        """
+        try:
+            # 查询历史订单（已成交的买单）
+            orders = self.client.get_orders(OpenOrderParams(asset_id=asset_id))
+            
+            # 过滤出已成交的买单
+            filled_buy_orders = []
+            for order in orders:
+                status = order.get('status', '').upper()
+                side = order.get('side', '').upper()
+                # MATCHED 表示已成交
+                if status == 'MATCHED' and side == 'BUY':
+                    filled_buy_orders.append(order)
+            
+            if not filled_buy_orders:
+                # 没有历史买单，fallback 到 self._last_buy_price
+                if self._last_buy_price > 0:
+                    return self._last_buy_price
+                return None
+            
+            # 按时间排序，取最近一笔（假设订单有 created_at 或类似字段）
+            # 如果没有时间字段，直接取第一笔
+            sorted_orders = sorted(
+                filled_buy_orders,
+                key=lambda x: x.get('created_at', x.get('timestamp', 0)),
+                reverse=True
+            )
+            
+            latest_order = sorted_orders[0]
+            price = float(latest_order.get('price', 0))
+            
+            if price > 0:
+                return price
+            
+            # 如果价格无效，fallback
+            if self._last_buy_price > 0:
+                return self._last_buy_price
+            
+            return None
+            
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ⚠️ 获取历史买入价失败: {e}")
+            # 异常时 fallback 到 self._last_buy_price
+            if self._last_buy_price > 0:
+                return self._last_buy_price
+            return None
+    
+    def get_open_positionv2(self, asset_id: str = None) -> List['PositionInfo']:
+        """获取当前持仓信息（v2 版本）
+        
+        Args:
+            asset_id: token_id，为 None 时使用当前 self.symbol
+        
+        Returns:
+            List[PositionInfo]: 持仓列表（Polymarket 现货模式，将 token 余额映射为持仓）
+        """
+        try:
+            from trading_system.domain import PositionInfo
+            
+            target_asset_id = asset_id if asset_id is not None else self.symbol
+            
+            # 获取 token 余额
+            token_balance = self.get_token_balance(target_asset_id)
+            
+            # 余额小于阈值，视为无持仓
+            if token_balance < 1:
+                return []
+            
+            # 获取买入价格
+            entry_price = self._get_last_filled_buy_price(target_asset_id)
+            
+            # 如果获取不到买入价，使用 0.01 作为默认值（避免验证失败）
+            if entry_price is None or entry_price <= 0:
+                entry_price = 0.01
+            
+            # 创建 PositionInfo 对象（Polymarket token 视为 long 持仓）
+            position = PositionInfo(
+                symbol=target_asset_id,
+                side='long',
+                contracts=token_balance,
+                entry_price=entry_price,
+                unrealized_pnl=0.0,
+                info={
+                    'asset_id': target_asset_id,
+                    'token_id': target_asset_id,
+                    'token_balance': token_balance,
+                    'timestamp': int(time.time()),
+                    'source': 'polymarket_v2'
+                }
+            )
+            
+            print(f"{self._get_log_prefix()} 📊 持仓信息(v2): 数量={token_balance:.2f}, 买入价={entry_price:.4f}")
+            return [position]
+            
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ❌ 获取持仓信息失败(v2): {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
+    def get_open_ordersv2(self, asset_id: str = None) -> List['ExchangeOrder']:
+        """获取未完成订单（v2 版本）
+        
+        返回真实未完成订单（不含虚拟卖单）
+        
+        Args:
+            asset_id: 指定的 asset_id，为 None 时使用当前 self.symbol
+        
+        Returns:
+            List[ExchangeOrder]: 真实未完成订单列表
+        """
+        try:
+            from trading_system.domain import ExchangeOrder
+            
+            # 清理过期的已取消订单缓存
+            self._cleanup_cancelled_cache()
+            
+            target_asset_id = asset_id if asset_id is not None else self.symbol
+            print(f"{self._get_log_prefix()} 🔍 查询未完成订单(v2) (asset_id={target_asset_id})...")
+            
+            # 查询真实未完成订单
+            orders = self.client.get_orders(OpenOrderParams(asset_id=target_asset_id))
+            
+            open_orders = []
+            filtered_orders = []
+            
+            for order in orders:
+                status = order.get('status', '').upper()
+                order_id = order.get('id')
+                
+                if status == 'LIVE':
+                    # 过滤掉本地已标记为取消的订单
+                    if self._is_order_cancelled(order_id):
+                        filtered_orders.append(order_id)
+                        continue
+                    
+                    # 标准化订单并转换为 ExchangeOrder
+                    normalized = self._normalize_order(order)
+                    try:
+                        exchange_order = ExchangeOrder.from_dict(normalized)
+                        open_orders.append(exchange_order)
+                    except Exception as convert_error:
+                        print(f"{self._get_log_prefix()} ⚠️ 订单转换失败: {order_id}, 错误: {convert_error}")
+                        continue
+            
+            if filtered_orders:
+                print(f"{self._get_log_prefix()} ⚠️ 过滤了 {len(filtered_orders)} 个已取消但 API 仍返回的订单")
+            
+            print(f"{self._get_log_prefix()} ✅ 找到 {len(open_orders)} 个未完成订单(v2)")
+            return open_orders
+            
+        except Exception as e:
+            print(f"{self._get_log_prefix()} ❌ 查询未完成订单失败(v2): {e}")
+            import traceback
+            traceback.print_exc()
+            # 异常时返回空列表，不让系统崩溃
+            return []
+    #https://docs.polymarket.com/developers/CLOB/orders/create-order-batch#status
     def _normalize_order(self, order: Dict) -> Dict:
         """标准化订单格式"""
         status_map = {
