@@ -39,6 +39,18 @@ class ExchangeFactory:
         'bpx': 'ccxt_backpack_spot',
     }
     
+    # 市场互斥组映射：不同 exchange_id 但指向同一市场/账户的归为一组
+    MARKET_GROUP_MAP = {
+        'ccxt_binance_futures': 'binance_futures',
+        'ccxt_binance_futures_short': 'binance_futures',
+        'ccxt_binance_spot': 'binance_spot',
+        'ccxt_backpack_spot': 'backpack_spot',
+        'native_polymarket_spot': 'polymarket_spot',
+        'native_updown_15m': 'polymarket_updown_15m',
+        'native_btc_updown_15m': 'polymarket_updown_15m',
+        'native_updown_4h': 'polymarket_updown_4h',
+    }
+    
     @classmethod
     def get_exchange_id_map(cls) -> Dict[str, type]:
         """获取交易所ID到适配器类的映射"""
@@ -47,6 +59,19 @@ class ExchangeFactory:
             info = adapter_class.get_exchange_info()
             id_map[info['id']] = adapter_class
         return id_map
+    
+    @classmethod
+    def get_market_group(cls, exchange_name: str) -> str:
+        """获取交易所的市场互斥组
+        
+        Args:
+            exchange_name: 交易所名称（可能是别名）
+            
+        Returns:
+            market_group: 市场组名称，同组内的交易所不能同时运行
+        """
+        exchange_name = cls.ALIAS_MAP.get(exchange_name.lower(), exchange_name.lower())
+        return cls.MARKET_GROUP_MAP.get(exchange_name, exchange_name)
     
     @classmethod
     def create(cls, exchange_name: str, api_key: str, api_secret: str, 

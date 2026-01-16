@@ -234,6 +234,64 @@ def register_routes(app):
             
             # 使用锁保护整个启动流程
             with bot_lock:
+                # 互斥启动检查：检查是否有同市场组的机器人正在运行
+                import hashlib
+                market_group = ExchangeFactory.get_market_group(exchange_name)
+                api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:8]
+                account_scope = f"{'testnet' if testnet else 'real'}_{api_key_hash}"
+                mutex_key = (username, market_group, symbol, account_scope)
+                
+                for existing_username, user_data in user_bots.items():
+                    if existing_username != username:
+                        continue
+                    if not isinstance(user_data, dict):
+                        continue
+                    
+                    for existing_bot_key, bot in user_data.get('bots', {}).items():
+                        if not bot.get('running'):
+                            continue
+                        
+                        existing_config = bot.get('config', {})
+                        existing_exchange = existing_config.get('exchange', 'binance').lower()
+                        existing_symbol = existing_config.get('symbol', '')
+                        existing_testnet = bool(existing_config.get('testnet', 1))
+                        
+                        existing_credential_id = existing_config.get('credential_id')
+                        if existing_credential_id:
+                            from database import get_credential_by_id
+                            existing_cred = get_credential_by_id(user_id, existing_credential_id)
+                            if existing_cred:
+                                existing_api_key = existing_cred['api_key']
+                            else:
+                                continue
+                        else:
+                            existing_api_key = existing_config.get('api_key', '')
+                        
+                        if not existing_api_key:
+                            continue
+                        
+                        existing_market_group = ExchangeFactory.get_market_group(existing_exchange)
+                        existing_api_key_hash = hashlib.sha256(existing_api_key.encode()).hexdigest()[:8]
+                        existing_account_scope = f"{'testnet' if existing_testnet else 'real'}_{existing_api_key_hash}"
+                        existing_mutex_key = (existing_username, existing_market_group, existing_symbol, existing_account_scope)
+                        
+                        if mutex_key == existing_mutex_key:
+                            from database import get_user_config_list_with_details
+                            existing_exchange_info = ExchangeFactory.get_exchange_id_map().get(existing_exchange, {})
+                            existing_exchange_display = getattr(existing_exchange_info, 'get_exchange_info', lambda: {'name': existing_exchange})().get('name', existing_exchange)
+                            
+                            current_exchange_info = ExchangeFactory.get_exchange_id_map().get(exchange_name, {})
+                            current_exchange_display = getattr(current_exchange_info, 'get_exchange_info', lambda: {'name': exchange_name})().get('name', exchange_name)
+                            
+                            error_msg = (
+                                f"❌ 互斥启动冲突：\n"
+                                f"已运行机器人: {existing_exchange_display} - {existing_symbol} ({'测试网' if existing_testnet else '实盘'})\n"
+                                f"尝试启动: {current_exchange_display} - {symbol} ({'测试网' if testnet else '实盘'})\n"
+                                f"冲突原因: 同一账户({account_scope})、同一市场组({market_group})、同一交易对({symbol})\n"
+                                f"建议操作: 请先停止 {existing_exchange_display} 机器人，再启动 {current_exchange_display} 机器人"
+                            )
+                            print(f"[{datetime.now().isoformat()}] {error_msg}")
+                            return False, error_msg, None
                 # 初始化用户数据结构
                 if username not in user_bots or not isinstance(user_bots.get(username), dict):
                     user_bots[username] = {'bots': {}}
