@@ -2332,7 +2332,7 @@
                         ${bot.running ? uptimeBadge + monitorBadge + orderMonitorBadge + threadBadge + pendingBadge : '<span class="bot-status-badge badge-secondary">停止</span>'}${rateLimitDisplay}
                       </div>
                       <div style="font-size: 11px; color: #555; margin-top: 2px;">
-                        现价 <strong>${cp}</strong> | 挂单 ${ordersDisplay} | 仓 <strong>${positionSize}</strong> | 偏${bot.config.offset_percent}%/卖+${bot.config.sell_offset_percent || 0.5}%${bot.config.sell_decay_count > 0 ? '/衰减' + bot.config.sell_decay_count : ''} | 量${bot.config.quantity} | ${bot.config.interval}s | 格${bot.config.order_grid || 1} | ${mode}${thresholdDisplay}${priceDiffDisplay}
+                        <strong style="color: ${bot.config.strategy_version === 'v2' ? '#667eea' : '#6c757d'};">${bot.config.strategy_version === 'v2' ? '动态网格V2' : '动态网格V1'}</strong> | 现价 <strong>${cp}</strong> | 挂单 ${ordersDisplay} | 仓 <strong>${positionSize}</strong> | 偏${bot.config.offset_percent}%/卖+${bot.config.sell_offset_percent || 0.5}%${bot.config.sell_decay_count > 0 ? '/衰减' + bot.config.sell_decay_count : ''} | 量${bot.config.quantity} | ${bot.config.interval}s | 格${bot.config.order_grid || 1} | ${mode}${thresholdDisplay}${priceDiffDisplay}
                       </div>
                       ${marketInfoDisplay}${errorDisplay}${warningDisplay}
                     </div>
@@ -2764,9 +2764,14 @@
                                exchangeDisplayValue.includes('涨跌') ||
                                exchangeDisplayValue.includes('15分钟');
           
+          // 策略版本标识
+          const strategyVersion = config.strategy_version || 'v1';
+          const strategyLabel = strategyVersion === 'v2' ? '动态网格V2' : '动态网格V1';
+          
           if (isPolymarket) {
             // Polymarket 特定参数
             paramsHtml = `
+              <strong style="color: ${strategyVersion === 'v2' ? '#667eea' : '#6c757d'};">${strategyLabel}</strong> | 
               偏移:${config.offset_percent}% | 
               卖加:${config.sell_offset_percent || 0.5}% | 
               数量:${config.quantity} | 
@@ -2791,6 +2796,7 @@
           } else {
             // 其他交易所参数
             paramsHtml = `
+              <strong style="color: ${strategyVersion === 'v2' ? '#667eea' : '#6c757d'};">${strategyLabel}</strong> | 
               偏移:${config.offset_percent}% | 
               卖加:${config.sell_offset_percent || 0.5}% | 
               数量:${config.quantity} | 
