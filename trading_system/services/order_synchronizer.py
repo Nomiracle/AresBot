@@ -21,6 +21,12 @@ class OrderSynchronizer:
             context: 交易上下文
         """
         self.context = context
+        # 买单缺失计数器：防止因接口延迟误删有效订单
+        self._missing_buy_counts: Dict[str, int] = {}
+        # 卖单缺失计数器：防止因接口延迟误删有效订单
+        self._missing_sell_counts: Dict[str, int] = {}
+        # 缺失阈值：订单连续缺失N轮才允许删除
+        self._missing_threshold = 2
     
     def sync_from_exchange(
         self,
@@ -118,13 +124,38 @@ class OrderSynchronizer:
             
             print(f"{log_prefix} ✅ 恢复 {len(missing_order_ids)} 笔买单")
         
-        # 清理已取消/成交的买单
+        # 清理已取消/成交的买单（带防抖机制）
         removed_order_ids = managed_order_ids - exchange_order_ids
+        
+        # 保护：若交易所返回空列表但本地有订单，疑似接口异常，跳过清理
+        if not exchange_order_ids and managed_order_ids:
+            print(f"{log_prefix} ⚠️ 交易所返回0笔买单但本地有{len(managed_order_ids)}笔，疑似接口延迟/失败，跳过清理")
+            return
+        
+        # 更新缺失计数
+        for order_id in managed_order_ids:
+            if order_id in exchange_order_ids:
+                # 订单恢复出现，清除缺失记录
+                if order_id in self._missing_buy_counts:
+                    del self._missing_buy_counts[order_id]
+            else:
+                # 订单缺失，累加计数
+                self._missing_buy_counts[order_id] = self._missing_buy_counts.get(order_id, 0) + 1
+        
+        # 仅删除连续缺失达到阈值的订单
         for order_id in removed_order_ids:
             order_sm = self.context.order_manager.get_order(order_id)
             if order_sm and order_sm.state == OrderState.PLACED:
-                self.context.order_manager.remove_order(order_id)
-                print(f"{log_prefix} 🧹 清理已完成买单: {order_id}")
+                missing_count = self._missing_buy_counts.get(order_id, 0)
+                
+                if missing_count >= self._missing_threshold:
+                    self.context.order_manager.remove_order(order_id)
+                    # 清理缺失记录
+                    if order_id in self._missing_buy_counts:
+                        del self._missing_buy_counts[order_id]
+                    print(f"{log_prefix} 🧹 清理已完成买单: {order_id} (连续缺失{missing_count}轮, reason=exchange_missing_consecutive)")
+                else:
+                    print(f"{log_prefix} ⏸️ 买单 {order_id} 缺失{missing_count}轮，未达阈值{self._missing_threshold}，暂不清理")
     
     def _sync_sell_orders(
         self,
@@ -209,26 +240,51 @@ class OrderSynchronizer:
             
             print(f"{log_prefix} ✅ 恢复 {len(missing_order_ids)} 笔卖单")
         
-        # 清理已取消/成交的卖单（保留虚拟订单检查以防御未实现v2的交易所）
-        if managed_order_ids and exchange_order_ids:
-            now = datetime.now()
-            cleanup_grace_seconds = 3.0
-            removed_order_ids = managed_order_ids - exchange_order_ids
-            for order_id in removed_order_ids:
-                order_sm = self.context.order_manager.get_order(order_id)
-                if order_sm and order_sm.state == OrderState.PLACED:
-                    # 跳过虚拟订单（持仓映射的订单，如 pos_long_BTCUSDT）
-                    if order_id.startswith('pos_'):
-                        print(f"{log_prefix} ⏭️ 跳过虚拟订单清理: {order_id}")
+        # 清理已取消/成交的卖单（带防抖机制）
+        removed_order_ids = managed_order_ids - exchange_order_ids
+        
+        # 保护：若交易所返回空列表但本地有订单，疑似接口异常，跳过清理
+        if not exchange_order_ids and managed_order_ids:
+            print(f"{log_prefix} ⚠️ 交易所返回0笔卖单但本地有{len(managed_order_ids)}笔，疑似接口延迟/失败，跳过清理")
+            return
+        
+        # 更新缺失计数
+        for order_id in managed_order_ids:
+            if order_id in exchange_order_ids:
+                # 订单恢复出现，清除缺失记录
+                if order_id in self._missing_sell_counts:
+                    del self._missing_sell_counts[order_id]
+            else:
+                # 订单缺失，累加计数
+                self._missing_sell_counts[order_id] = self._missing_sell_counts.get(order_id, 0) + 1
+        
+        # 仅删除连续缺失达到阈值的订单
+        now = datetime.now()
+        cleanup_grace_seconds = 3.0
+        for order_id in removed_order_ids:
+            order_sm = self.context.order_manager.get_order(order_id)
+            if order_sm and order_sm.state == OrderState.PLACED:
+                # 跳过虚拟订单（持仓映射的订单，如 pos_long_BTCUSDT）
+                if order_id.startswith('pos_'):
+                    print(f"{log_prefix} ⏭️ 跳过虚拟订单清理: {order_id}")
+                    continue
+                
+                # 新挂卖单可能尚未出现在交易所开放订单列表，给宽限期避免误清理
+                try:
+                    created_at = order_sm.metrics.created_at
+                    if created_at and (now - created_at).total_seconds() < cleanup_grace_seconds:
+                        print(f"{log_prefix} ⏳ 卖单 {order_id} 刚创建，跳过清理")
                         continue
-                    
-                    # 新挂卖单可能尚未出现在交易所开放订单列表，给宽限期避免误清理
-                    try:
-                        created_at = order_sm.metrics.created_at
-                        if created_at and (now - created_at).total_seconds() < cleanup_grace_seconds:
-                            print(f"{log_prefix} ⏳ 卖单 {order_id} 刚创建，跳过清理")
-                            continue
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
+                
+                missing_count = self._missing_sell_counts.get(order_id, 0)
+                
+                if missing_count >= self._missing_threshold:
                     self.context.order_manager.remove_order(order_id)
-                    print(f"{log_prefix} 🧹 清理已完成卖单: {order_id}")
+                    # 清理缺失记录
+                    if order_id in self._missing_sell_counts:
+                        del self._missing_sell_counts[order_id]
+                    print(f"{log_prefix} 🧹 清理已完成卖单: {order_id} (连续缺失{missing_count}轮, reason=exchange_missing_consecutive)")
+                else:
+                    print(f"{log_prefix} ⏸️ 卖单 {order_id} 缺失{missing_count}轮，未达阈值{self._missing_threshold}，暂不清理")
