@@ -19,7 +19,7 @@ class TradingConfig:
     sell_decay_count: int = 0
     reprice_threshold_percent: float = 0.01
     simulate_trading: int = 0
-    stop_loss_delay: int = 600
+    stop_loss_delay: int = 120
     min_price_threshold: float = 1.0
     
     def validate(self) -> List[str]:

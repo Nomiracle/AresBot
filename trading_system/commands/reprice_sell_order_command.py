@@ -177,6 +177,9 @@ class RepriceSellOrderCommand(TradingCommand):
             if new_order_id and new_order_id != self.order_sm.info.order_id:
                 print(f"{log_prefix} 🔄 [改价卖单] 订单ID变化，创建新订单")
                 
+                # 保存旧订单的买单成交时间（用于止损）
+                old_filled_at = self.order_sm.metrics.filled_at
+                
                 # 旧订单标记为已取消
                 self.order_sm.transition_to(OrderState.CANCELLED, "改价时取消")
                 
@@ -189,10 +192,16 @@ class RepriceSellOrderCommand(TradingCommand):
                     price=target_price,
                     quantity=aligned_qty,
                     grid_index=self.order_sm.info.grid_index,
-                    buy_price=self.order_sm.info.buy_price  # 保留买入价格
+                    buy_price=self.order_sm.info.buy_price,  # 保留买入价格
+                    buy_order_id=self.order_sm.info.buy_order_id  # 保留买单ID
                 )
                 new_order_sm = OrderStateMachine(new_order_info, OrderState.PENDING)
                 new_order_sm.transition_to(OrderState.PLACED, "改价后新订单")
+                
+                # 传递买单成交时间到新订单（用于止损计时）
+                if old_filled_at is not None:
+                    new_order_sm.metrics.filled_at = old_filled_at
+                    print(f"{log_prefix} 🕐 [改价卖单] 已传递买单成交时间: {old_filled_at}")
                 
                 # 添加新订单到管理器
                 self.context.order_manager.add_order(new_order_sm)
