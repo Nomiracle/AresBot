@@ -4,7 +4,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Set
+from typing import Optional, Set, List, Tuple
 
 
 @dataclass
@@ -24,6 +24,11 @@ class RuntimeState:
     
     processed_filled_orders: Set[str] = field(default_factory=set)
     repricing_order_id: Optional[str] = None
+    
+    # 风控状态：亏损交易记录 [(order_id, closed_time, pnl), ...]
+    loss_trades: List[Tuple[str, datetime, float]] = field(default_factory=list)
+    # 风控状态：冷却期截止时间
+    cooldown_until: Optional[datetime] = None
     
     def record_error(self, error: str) -> None:
         """

@@ -5,7 +5,7 @@
 import time
 import math
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 
 from ..domain import (
@@ -158,9 +158,10 @@ class TradingLoopOrchestrator:
                     # 修复grid_index重复
                     self._fix_duplicate_grid_index()
                     
-                    # 补单
+                    # 补单（冷却期检查）
                     if self.context.needs_more_orders() and not self.context.runtime.is_placing_order:
-                        self._place_missing_orders()
+                        if self._check_cooldown_before_trading():
+                            self._place_missing_orders()
                     
                 except Exception as e:
                     print(f"{log_prefix} ⚠️ 查询订单失败: {e}")
@@ -310,6 +311,11 @@ class TradingLoopOrchestrator:
             print(f"{log_prefix} ⏭️ [去重] 买单 {order_id} 已处理")
             return
         
+        # 冷却期检查：禁止挂新卖单
+        if not self._check_cooldown_before_trading():
+            print(f"{log_prefix} 🚫 冷却期禁止挂卖单")
+            return
+        
         # 标记已处理
         self.context.runtime.mark_order_processed(order_id)
         
@@ -414,6 +420,9 @@ class TradingLoopOrchestrator:
         
         # 更新数据库
         self._update_sell_order_in_db(event, order_id)
+        
+        # 统计亏损交易并触发风控检查
+        self._record_trade_and_check_risk_control(order_id, buy_price, sell_price, sell_qty)
     
     def _calculate_dynamic_sell_offset(self) -> float:
         """计算动态卖出偏移"""
@@ -844,3 +853,155 @@ class TradingLoopOrchestrator:
                 
             except Exception as e:
                 print(f"{log_prefix} ❌ 为持仓创建卖单失败: {e}")
+    
+    def _record_trade_and_check_risk_control(self, order_id: str, buy_price: Optional[float], sell_price: float, quantity: float) -> None:
+        """记录交易并检查风控触发条件"""
+        log_prefix = self.context.get_log_prefix()
+        
+        if buy_price is None or buy_price <= 0 or sell_price <= 0:
+            return
+        
+        # 计算PnL
+        pnl = (float(sell_price) - float(buy_price)) * float(quantity)
+        
+        # 仅记录亏损交易
+        if pnl < 0:
+            now = datetime.now()
+            self.context.runtime.loss_trades.append((order_id, now, pnl))
+            print(f"{log_prefix} 📉 记录亏损交易: order_id={order_id}, pnl={pnl:.6f}, time={now}")
+            
+            # 触发风控检查
+            self._check_and_trigger_risk_control()
+    
+    def _check_and_trigger_risk_control(self) -> None:
+        """检查并触发风控规则：5分钟内亏损3笔"""
+        log_prefix = self.context.get_log_prefix()
+        now = datetime.now()
+        
+        # 清理5分钟外的记录
+        window_seconds = 5 * 60
+        self.context.runtime.loss_trades = [
+            (oid, t, pnl) for oid, t, pnl in self.context.runtime.loss_trades
+            if (now - t).total_seconds() <= window_seconds
+        ]
+        
+        loss_count = len(self.context.runtime.loss_trades)
+        remaining = max(0, 3 - loss_count)
+        
+        print(f"{log_prefix} 🔍 风控统计: loss_count_5m={loss_count}, remaining_to_trigger={remaining}")
+        
+        # 判断是否触发
+        if loss_count >= 3:
+            loss_trade_ids = [oid for oid, _, _ in self.context.runtime.loss_trades]
+            print(f"{log_prefix} 🚨 触发风控: 5分钟内亏损交易达到3笔, trade_ids={loss_trade_ids}")
+            
+            # 执行风控动作
+            self._execute_risk_control_actions(loss_trade_ids)
+    
+    def _execute_risk_control_actions(self, loss_trade_ids: list) -> None:
+        """执行风控动作：撤单、平仓、设置冷却期"""
+        log_prefix = self.context.get_log_prefix()
+        now = datetime.now()
+        
+        # 收集撤单前的持仓信息（从卖单获取）
+        positions_to_close = []
+        sell_orders = self.context.order_manager.get_active_orders(OrderSide.SELL)
+        for order_sm in sell_orders:
+            qty = float(order_sm.info.quantity)
+            entry_price = float(order_sm.info.buy_price) if order_sm.info.buy_price else 0
+            if qty > 0 and entry_price > 0:
+                positions_to_close.append((qty, entry_price))
+        
+        # A. 撤单：取消所有挂单
+        cancel_count = 0
+        all_orders = self.context.order_manager.get_all_orders()
+        for order_sm in all_orders:
+            try:
+                self.context.exchange.cancel_order(order_sm.info.order_id)
+                order_sm.transition_to(OrderState.CANCELLED, "风控撤单")
+                self.context.order_manager.remove_order(order_sm.info.order_id)
+                cancel_count += 1
+                print(f"{log_prefix} ✅ 风控撤单: {order_sm.info.order_id}")
+            except Exception as e:
+                print(f"{log_prefix} ⚠️ 风控撤单失败 {order_sm.info.order_id}: {e}")
+        
+        # B. 强制平仓：对所有持仓执行市价平仓
+        close_count = 0
+        close_failed = []
+        current_price = self.context.market.current_price
+        
+        for qty, entry_price in positions_to_close:
+            try:
+                if current_price is None or current_price <= 0:
+                    current_price = entry_price
+                
+                # 使用当前价格限价单模拟市价单
+                order_result = self.context.exchange.order_limit_sell(
+                    quantity=qty,
+                    price=f"{float(current_price)}",
+                    current_price=float(current_price),
+                    entry_price=entry_price
+                )
+                
+                force_close_order_id = str((order_result or {}).get('orderId') or (order_result or {}).get('id'))
+                if force_close_order_id:
+                    close_count += 1
+                    print(f"{log_prefix} ✅ 风控强制平仓: qty={qty}, price={current_price}, order_id={force_close_order_id}")
+                else:
+                    close_failed.append(f"qty={qty}(无订单ID)")
+            except Exception as e:
+                close_failed.append(f"qty={qty}({str(e)})")
+                print(f"{log_prefix} ❌ 风控平仓失败 qty={qty}: {e}")
+        
+        # C. 设置冷却期：1小时
+        cooldown_duration_seconds = 60 * 60
+        self.context.runtime.cooldown_until = now + timedelta(seconds=cooldown_duration_seconds)
+        
+        # 清空触发缓存
+        self.context.runtime.loss_trades.clear()
+        
+        # 输出日志
+        print(f"{log_prefix} 🛡️ 风控执行完成:")
+        print(f"{log_prefix}   - triggered=true")
+        print(f"{log_prefix}   - loss_trade_ids={loss_trade_ids}")
+        print(f"{log_prefix}   - cancel_orders_done={cancel_count}")
+        print(f"{log_prefix}   - force_close_done={close_count}")
+        if close_failed:
+            print(f"{log_prefix}   - force_close_failed={close_failed}")
+        print(f"{log_prefix}   - cooldown_until={self.context.runtime.cooldown_until}")
+        
+        # 发送钉钉通知
+        try:
+            message = f"🚨 风控触发警告\n\n"
+            message += f"交易对: {self.context.config.symbol}\n"
+            message += f"触发原因: 5分钟内亏损交易达到3笔\n"
+            message += f"亏损交易ID: {', '.join(loss_trade_ids[:3])}\n"
+            message += f"撤单数量: {cancel_count}\n"
+            message += f"平仓数量: {close_count}\n"
+            if close_failed:
+                message += f"平仓失败: {len(close_failed)}笔\n"
+            message += f"冷却期至: {self.context.runtime.cooldown_until.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            message += f"冷却时长: 1小时"
+            
+            self.notification_service.send_notification(message)
+            print(f"{log_prefix} 📢 风控通知已发送")
+        except Exception as notify_e:
+            print(f"{log_prefix} ⚠️ 发送风控通知失败: {notify_e}")
+    
+    def _is_in_cooldown(self) -> bool:
+        """检查是否处于冷却期"""
+        if self.context.runtime.cooldown_until is None:
+            return False
+        
+        now = datetime.now()
+        return now < self.context.runtime.cooldown_until
+    
+    def _check_cooldown_before_trading(self) -> bool:
+        """交易前检查冷却期，返回True表示允许交易"""
+        if not self._is_in_cooldown():
+            return True
+        
+        log_prefix = self.context.get_log_prefix()
+        remaining = (self.context.runtime.cooldown_until - datetime.now()).total_seconds()
+        print(f"{log_prefix} 🚫 冷却期禁止交易: cooldown_active_after_3_losses_in_5m, 剩余{remaining:.0f}秒")
+        return False
