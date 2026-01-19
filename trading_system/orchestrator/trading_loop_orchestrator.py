@@ -527,36 +527,47 @@ class TradingLoopOrchestrator:
 
         # 任意一个配置存在才启用止损检查
         if stop_loss_delay is None and min_price_threshold is None:
+            print(f"{log_prefix} 🔍 [止损调试] 止损检查未启用: stop_loss_delay={stop_loss_delay}, min_price_threshold={min_price_threshold}")
             return
 
         current_price = self.context.market.current_price
         if current_price is None or current_price <= 0:
+            print(f"{log_prefix} 🔍 [止损调试] 当前价格无效: current_price={current_price}")
             return
 
         is_short = self._is_short_mode()
         now = datetime.now()
 
         sell_orders = self.context.order_manager.get_active_orders(OrderSide.SELL)
+        print(f"{log_prefix} 🔍 [止损调试] 开始检查: 卖单数量={len(sell_orders)}, is_short={is_short}, stop_loss_delay={stop_loss_delay}s, min_price_threshold={min_price_threshold}%")
+        
         for order_sm in sell_orders:
             sell_order_id = order_sm.info.order_id
 
             if sell_order_id in self._stop_loss_triggered_sell_orders:
+                print(f"{log_prefix} 🔍 [止损调试] 订单 {sell_order_id} 已触发过止损，跳过")
                 continue
 
             entry_price = order_sm.info.buy_price
             if entry_price is None:
+                print(f"{log_prefix} 🔍 [止损调试] 订单 {sell_order_id} 买入价格为空，跳过")
                 continue
 
             # 条件A：距离成交时间（买单成交时间写入到卖单 metrics.filled_at）
             hit_by_time = False
+            elapsed_seconds = None
             if stop_loss_delay is not None:
                 filled_at = order_sm.metrics.filled_at
                 if filled_at is not None:
                     try:
-                        elapsed = (now - filled_at).total_seconds()
-                        hit_by_time = elapsed > float(stop_loss_delay)
-                    except Exception:
+                        elapsed_seconds = (now - filled_at).total_seconds()
+                        hit_by_time = elapsed_seconds > float(stop_loss_delay)
+                        print(f"{log_prefix} 🔍 [止损调试] 订单 {sell_order_id} 超时检查: filled_at={filled_at}, elapsed={elapsed_seconds:.1f}s, threshold={stop_loss_delay}s, hit={hit_by_time}")
+                    except Exception as e:
                         hit_by_time = False
+                        print(f"{log_prefix} 🔍 [止损调试] 订单 {sell_order_id} 超时计算异常: {e}")
+                else:
+                    print(f"{log_prefix} 🔍 [止损调试] 订单 {sell_order_id} 买单成交时间为空 (filled_at=None)")
 
             # 条件B：亏损百分比
             hit_by_loss = False
@@ -565,8 +576,12 @@ class TradingLoopOrchestrator:
                 loss_percent = self._calculate_loss_percent(float(entry_price), float(current_price), is_short)
                 if loss_percent is not None:
                     hit_by_loss = loss_percent >= float(min_price_threshold)
+                    print(f"{log_prefix} 🔍 [止损调试] 订单 {sell_order_id} 亏损检查: entry_price={entry_price}, current_price={current_price}, loss={loss_percent:.4f}%, threshold={min_price_threshold}%, hit={hit_by_loss}")
+                else:
+                    print(f"{log_prefix} 🔍 [止损调试] 订单 {sell_order_id} 亏损计算失败")
 
             if not (hit_by_time or hit_by_loss):
+                print(f"{log_prefix} 🔍 [止损调试] 订单 {sell_order_id} 未触发止损条件")
                 continue
 
             reason = ""
