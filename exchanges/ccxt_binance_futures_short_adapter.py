@@ -93,10 +93,10 @@ class CcxtBinanceFuturesShort(CcxtBinanceFutures):
         
         方向检查：
         1. 做空平仓 = 买入，目标价应该 <= 当前价（挂低价等待回落）
-        2. 平仓价应该 < 开仓价（确保盈利）
         """
         try:
             target_price = float(price)
+            print(f"{self._get_log_prefix()} ℹ️ 做空平仓不做盈利校验: target_price={target_price}")
             
             # 价格方向检查（如果传入了 current_price 或 entry_price）
             current_price = kwargs.get('current_price')
@@ -111,15 +111,6 @@ class CcxtBinanceFuturesShort(CcxtBinanceFutures):
                             raise ValueError(
                                 f"做空平仓价格方向错误: 目标价={target_price:.6f} 明显高于当前价={current_price:.6f}，"
                                 f"做空平仓应该挂低价等待回落（目标价 <= 当前价）"
-                            )
-                    
-                    # 检查2：平仓价应该 < 开仓价（确保盈利）
-                    if entry_price is not None:
-                        entry_price = float(entry_price)
-                        if target_price >= entry_price:  # 0.1%容差（扣除手续费）
-                            raise ValueError(
-                                f"做空平仓价格风险: 平仓价={target_price:.6f} >= 开仓价={entry_price:.6f}，"
-                                f"做空盈利需要平仓价 < 开仓价（高卖低买）"
                             )
                 except ValueError:
                     raise  # 重新抛出价格方向错误
