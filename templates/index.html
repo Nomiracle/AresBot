@@ -1335,10 +1335,43 @@
           });
       }
 
+      function resolveExchangeId(exchangeValue) {
+        return exchangeIdMap[exchangeValue] || exchangeValue || "";
+      }
+
+      function normalizeExchangeId(exchangeId) {
+        return String(exchangeId || "").toLowerCase();
+      }
+
+      function isBinanceExchange(exchangeId) {
+        return normalizeExchangeId(exchangeId).includes("binance");
+      }
+
+      function isUpdownExchange(exchangeId) {
+        return normalizeExchangeId(exchangeId).includes("updown");
+      }
+
+      function isPolymarketSpotExchange(exchangeId) {
+        const normalized = normalizeExchangeId(exchangeId);
+        return normalized.includes("polymarket") && !normalized.includes("updown");
+      }
+
+      function shouldShowMinPriceThreshold(exchangeId) {
+        return (
+          isPolymarketSpotExchange(exchangeId) ||
+          isUpdownExchange(exchangeId) ||
+          isBinanceExchange(exchangeId)
+        );
+      }
+
+      function shouldShowStopLossDelay(exchangeId) {
+        return isUpdownExchange(exchangeId) || isBinanceExchange(exchangeId);
+      }
+
       // 交易所切换时更新 UI
       function updateExchangeUI() {
         const exchange = document.getElementById("exchange").value;
-        const exchangeId = exchangeIdMap[exchange] || exchange;  // 获取交易所 ID
+        const exchangeId = resolveExchangeId(exchange);  // 获取交易所 ID
         const apiKeyInput = document.getElementById("apiKey");
         const apiSecretInput = document.getElementById("apiSecret");
         const marketInfoBox = document.getElementById("marketInfoBox");
@@ -1352,23 +1385,27 @@
         apiKeyInput.placeholder = "输入 Binance API Key";
         apiSecretInput.placeholder = "输入 Binance API Secret";
         
+        const showMinPriceThreshold = shouldShowMinPriceThreshold(exchangeId);
+        const showMarketCloseThreshold = isUpdownExchange(exchangeId);
+        const showStopLossDelay = shouldShowStopLossDelay(exchangeId);
+
         // Polymarket 交易所显示搜索组件和价格阈值配置
-        if (exchangeId === 'native_polymarket_spot') {
+        if (isPolymarketSpotExchange(exchangeId)) {
           symbolGroup.style.display = 'block';
           marketInfoBox.style.display = 'none';
           polymarketSearchContainer.style.display = 'block';
-          minPriceThresholdGroup.style.display = 'block';
-          marketCloseThresholdGroup.style.display = 'none';
-          stopLossDelayGroup.style.display = 'none';
+          minPriceThresholdGroup.style.display = showMinPriceThreshold ? 'block' : 'none';
+          marketCloseThresholdGroup.style.display = showMarketCloseThreshold ? 'block' : 'none';
+          stopLossDelayGroup.style.display = showStopLossDelay ? 'block' : 'none';
         }
         // UpDown 交易所显示两个阈值配置
-        else if (exchangeId === 'native_updown_15m' || exchangeId === 'native_updown_4h') {
+        else if (isUpdownExchange(exchangeId)) {
           symbolGroup.style.display = 'block';
           marketInfoBox.style.display = 'none';
           polymarketSearchContainer.style.display = 'none';
-          minPriceThresholdGroup.style.display = 'block';
-          marketCloseThresholdGroup.style.display = 'block';
-          stopLossDelayGroup.style.display = 'block';
+          minPriceThresholdGroup.style.display = showMinPriceThreshold ? 'block' : 'none';
+          marketCloseThresholdGroup.style.display = showMarketCloseThreshold ? 'block' : 'none';
+          stopLossDelayGroup.style.display = showStopLossDelay ? 'block' : 'none';
           // 重新加载交易对列表
           loadTradingPairs();
         }
@@ -1377,9 +1414,9 @@
           symbolGroup.style.display = 'block';
           marketInfoBox.style.display = 'block';
           polymarketSearchContainer.style.display = 'none';
-          minPriceThresholdGroup.style.display = 'none';
-          marketCloseThresholdGroup.style.display = 'none';
-          stopLossDelayGroup.style.display = 'none';
+          minPriceThresholdGroup.style.display = showMinPriceThreshold ? 'block' : 'none';
+          marketCloseThresholdGroup.style.display = showMarketCloseThreshold ? 'block' : 'none';
+          stopLossDelayGroup.style.display = showStopLossDelay ? 'block' : 'none';
           
           // 重新加载交易对列表（会根据当前交易所过滤）
           loadTradingPairs();
@@ -1751,12 +1788,17 @@
         };
         
         // Polymarket/UpDown15m 阈值参数
-        const exchangeId = exchangeIdMap[exchange] || exchange;
-        if (exchangeId === 'native_polymarket_spot' || exchangeId === 'native_updown_15m' || exchangeId === 'native_updown_4h') {
-          config.min_price_threshold = parseFloat(document.getElementById("minPriceThreshold").value);
+        const exchangeId = resolveExchangeId(exchange);
+        if (shouldShowMinPriceThreshold(exchangeId)) {
+          const minPriceValue = document.getElementById("minPriceThreshold").value;
+          config.min_price_threshold = minPriceValue ? parseFloat(minPriceValue) : null;
         }
-        if (exchangeId === 'native_updown_15m' || exchangeId === 'native_updown_4h') {
+        if (isUpdownExchange(exchangeId)) {
           config.market_close_threshold = parseInt(document.getElementById("marketCloseThreshold").value);
+        }
+        if (shouldShowStopLossDelay(exchangeId)) {
+          const stopLossDelayValue = document.getElementById("stopLossDelay").value;
+          config.stop_loss_delay = stopLossDelayValue ? parseInt(stopLossDelayValue) : null;
         }
 
         fetch("/api/start", {
@@ -1809,13 +1851,15 @@
         };
         
         // Polymarket/UpDown15m 阈值参数
-        const exchangeId = exchangeIdMap[exchange] || exchange;
-        if (exchangeId === 'native_polymarket_spot' || exchangeId === 'native_updown_15m' || exchangeId === 'native_updown_4h') {
-          config.min_price_threshold = parseFloat(document.getElementById("minPriceThreshold").value);
+        const exchangeId = resolveExchangeId(exchange);
+        if (shouldShowMinPriceThreshold(exchangeId)) {
+          const minPriceValue = document.getElementById("minPriceThreshold").value;
+          config.min_price_threshold = minPriceValue ? parseFloat(minPriceValue) : null;
         }
-        if (exchangeId === 'native_updown_15m' || exchangeId === 'native_updown_4h') {
+        if (isUpdownExchange(exchangeId)) {
           config.market_close_threshold = parseInt(document.getElementById("marketCloseThreshold").value);
-          // 添加止损延迟时间
+        }
+        if (shouldShowStopLossDelay(exchangeId)) {
           const stopLossDelayValue = document.getElementById("stopLossDelay").value;
           config.stop_loss_delay = stopLossDelayValue ? parseInt(stopLossDelayValue) : null;
         }
@@ -1856,24 +1900,23 @@
                 
                 // 更新其他 UI 元素（不依赖密钥选择器）
                 const exchange = data.config.exchange;
-                const polymarketGroup = document.getElementById("polymarketSearchGroup");
+                const polymarketGroup = document.getElementById("polymarketSearchContainer");
                 const minPriceThresholdGroup = document.getElementById("minPriceThresholdGroup");
                 const marketCloseThresholdGroup = document.getElementById("marketCloseThresholdGroup");
                 const stopLossDelayGroup = document.getElementById("stopLossDelayGroup");
                 
                 // 只在元素存在时更新显示状态（某些页面可能没有这些元素）
                 if (polymarketGroup && minPriceThresholdGroup && marketCloseThresholdGroup && stopLossDelayGroup) {
-                  if (exchange === 'polymarket' || exchange === 'polymarket_updown15m' || exchange === 'polymarket_updown4h') {
-                    polymarketGroup.style.display = 'block';
-                    minPriceThresholdGroup.style.display = 'block';
-                    marketCloseThresholdGroup.style.display = 'block';
-                    stopLossDelayGroup.style.display = 'block';
-                  } else {
-                    polymarketGroup.style.display = 'none';
-                    minPriceThresholdGroup.style.display = 'none';
-                    marketCloseThresholdGroup.style.display = 'none';
-                    stopLossDelayGroup.style.display = 'none';
-                  }
+                  const exchangeId = resolveExchangeId(exchange);
+                  const showMinPriceThreshold = shouldShowMinPriceThreshold(exchangeId);
+                  const showMarketCloseThreshold = isUpdownExchange(exchangeId);
+                  const showStopLossDelay = shouldShowStopLossDelay(exchangeId);
+                  const showPolymarketSearch = isPolymarketSpotExchange(exchangeId);
+
+                  polymarketGroup.style.display = showPolymarketSearch ? 'block' : 'none';
+                  minPriceThresholdGroup.style.display = showMinPriceThreshold ? 'block' : 'none';
+                  marketCloseThresholdGroup.style.display = showMarketCloseThreshold ? 'block' : 'none';
+                  stopLossDelayGroup.style.display = showStopLossDelay ? 'block' : 'none';
                 }
                 
                 loadTradingPairs();
@@ -2953,6 +2996,7 @@
                                exchangeDisplayValue.includes('polymarket') || 
                                exchangeDisplayValue.includes('涨跌') ||
                                exchangeDisplayValue.includes('15分钟');
+          const isBinance = exchangeValue.includes('binance') || exchangeDisplayValue.includes('binance');
           
           // 策略版本标识
           const strategyVersion = config.strategy_version || 'v1';
@@ -2994,6 +3038,14 @@
               网格:${config.order_grid || 1} | 
               模式:${config.simulate_trading ? '模拟' : '实盘'}
             `;
+            if (isBinance) {
+              if (config.min_price_threshold !== null && config.min_price_threshold !== undefined) {
+                paramsHtml += ` | 最低价:${config.min_price_threshold}`;
+              }
+              if (config.stop_loss_delay !== null && config.stop_loss_delay !== undefined) {
+                paramsHtml += ` | 止损延迟:${config.stop_loss_delay}s`;
+              }
+            }
           }
           
           html += `
